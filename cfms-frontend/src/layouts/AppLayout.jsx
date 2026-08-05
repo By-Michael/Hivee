@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard, Users, Receipt, Wallet, FolderKanban, FileText,
@@ -179,13 +180,13 @@ export default function AppLayout({ role }) {
         <div className={`flex items-center ${navCollapsed ? 'justify-center' : ''}`}>
           <Brand collapsed={collapsed} navCollapsed={navCollapsed} />
         </div>
-        <div className={`mt-4 pb-4 border-b border-ink-50 flex justify-start`}>
+        <div className="mt-4 pb-4 border-b border-ink-50 flex justify-start">
           <button
             onClick={() => setCollapsed((v) => !v)}
             title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            className={`p-2 rounded-lg text-ink-400 hover:bg-ink-100 hover:text-ink-600 shrink-0 transition-transform duration-300 ease-in-out ${collapsed ? 'rotate-180' : ''}`}
+            className={`p-1.5 rounded-lg text-ink-400 hover:bg-ink-100 hover:text-ink-600 shrink-0 transition-transform duration-300 ease-in-out ${collapsed ? 'rotate-180' : ''}`}
           >
-            <PanelLeftClose className="h-4.5 w-4.5" />
+            <PanelLeftClose className="h-[19px] w-[19px]" />
           </button>
         </div>
         <nav className="mt-2 flex-1 space-y-1 overflow-y-auto">
@@ -245,35 +246,39 @@ export default function AppLayout({ role }) {
           <button onClick={() => setOpen(true)} className="lg:hidden p-2 rounded-lg hover:bg-ink-100 text-ink-600">
             <Menu className="h-5 w-5" />
           </button>
-          <div className="hidden sm:flex items-center gap-2 flex-1 max-w-md relative" ref={searchRef}>
-            <div className="relative w-full">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-400" />
-              <input
-                value={query}
-                onChange={(e) => { setQuery(e.target.value); setSearchOpen(true) }}
-                onFocus={() => setSearchOpen(true)}
-                placeholder="Search residents, payments, projects…"
-                className="input pl-9 bg-ink-50/70 border-transparent focus:bg-white"
-              />
-            </div>
-            {searchOpen && query.trim() && (
-              <div className="absolute left-0 right-0 top-full mt-2 card p-1.5 max-h-80 overflow-y-auto z-40">
-                {searchResults.length === 0 ? (
-                  <p className="px-3 py-4 text-sm text-ink-400 text-center">No matches for "{query}"</p>
-                ) : (
-                  searchResults.map((r) => (
-                    <button key={r.id} onClick={() => goToResult(r)} className="w-full text-left flex items-center justify-between gap-3 rounded-lg px-3 py-2 hover:bg-brand-50 transition">
-                      <div>
-                        <p className="text-sm font-medium text-ink-800">{r.label}</p>
-                        <p className="text-xs text-ink-400">{r.sub}</p>
-                      </div>
-                      <span className="badge bg-ink-100 text-ink-500 shrink-0">{r.group}</span>
-                    </button>
-                  ))
-                )}
+          <div className="hidden sm:block flex-1" />
+          {typeof document !== 'undefined' && createPortal(
+            <div className="hidden sm:flex items-center gap-2 w-full max-w-md fixed top-3 left-1/2 -translate-x-1/2 z-30" ref={searchRef}>
+              <div className="relative w-full">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-400" />
+                <input
+                  value={query}
+                  onChange={(e) => { setQuery(e.target.value); setSearchOpen(true) }}
+                  onFocus={() => setSearchOpen(true)}
+                  placeholder="Search residents, payments, projects…"
+                  className="input pl-9 bg-ink-50/70 border-transparent focus:bg-white"
+                />
               </div>
-            )}
-          </div>
+              {searchOpen && query.trim() && (
+                <div className="absolute left-0 right-0 top-full mt-2 card p-1.5 max-h-80 overflow-y-auto z-40">
+                  {searchResults.length === 0 ? (
+                    <p className="px-3 py-4 text-sm text-ink-400 text-center">No matches for "{query}"</p>
+                  ) : (
+                    searchResults.map((r) => (
+                      <button key={r.id} onClick={() => goToResult(r)} className="w-full text-left flex items-center justify-between gap-3 rounded-lg px-3 py-2 hover:bg-brand-50 transition">
+                        <div>
+                          <p className="text-sm font-medium text-ink-800">{r.label}</p>
+                          <p className="text-xs text-ink-400">{r.sub}</p>
+                        </div>
+                        <span className="badge bg-ink-100 text-ink-500 shrink-0">{r.group}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>,
+            document.body
+          )}
           <div className="flex-1 sm:hidden" />
 
           <div className="flex items-center gap-1 ml-auto">
@@ -375,8 +380,8 @@ function Brand({ collapsed, navCollapsed }) {
         <Landmark className="h-5 w-5 text-white" strokeWidth={2.3} />
       </div>
       <div className={`overflow-hidden whitespace-nowrap transition-all duration-300 ease-in-out ${collapsed ? 'max-w-0 opacity-0' : 'max-w-[180px] opacity-100'}`}>
-        <p className="font-display font-bold text-ink-900 leading-tight">CFMS</p>
-        <p className="text-[11px] text-ink-400 leading-tight">Community Fund Manager</p>
+        <p className="font-display font-bold text-sm text-ink-900 leading-tight">CFMS</p>
+        <p className="text-[10px] text-ink-400 leading-tight">Community Fund Manager</p>
       </div>
     </div>
   )

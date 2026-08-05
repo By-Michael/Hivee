@@ -22,10 +22,17 @@ export default function Login() {
     }
   }
 
-  function fillDemo(role) {
+  async function fillDemo(role) {
     const d = demoLogins.find((x) => x.role === role)
     setEmail(d.email)
     setPassword(d.password)
+    try {
+      const u = await login(d.email, d.password)
+      const dest = location.state?.from || (u.role === 'admin' ? '/admin' : '/resident')
+      navigate(dest, { replace: true })
+    } catch {
+      // error shown via context
+    }
   }
 
   return (
@@ -116,10 +123,25 @@ export default function Login() {
           </form>
 
           <div className="mt-6 rounded-2xl border border-dashed border-brand-200 bg-brand-50/60 p-4">
-            <p className="text-xs font-semibold text-brand-700 mb-2">Try the demo</p>
+            <p className="text-xs font-semibold text-brand-700 mb-1">Try the demo</p>
+            <p className="text-[11px] text-ink-400 mb-2">One click, no typing — signs you straight in.</p>
             <div className="flex gap-2">
-              <button onClick={() => fillDemo('admin')} className="btn-secondary flex-1 !py-2 text-xs">Admin login</button>
-              <button onClick={() => fillDemo('resident')} className="btn-secondary flex-1 !py-2 text-xs">Resident login</button>
+              <button
+                type="button"
+                disabled={loading}
+                onClick={() => fillDemo('admin')}
+                className="btn-secondary flex-1 !py-2 text-xs disabled:opacity-60"
+              >
+                {loading ? 'Signing in…' : 'Admin login'}
+              </button>
+              <button
+                type="button"
+                disabled={loading}
+                onClick={() => fillDemo('resident')}
+                className="btn-secondary flex-1 !py-2 text-xs disabled:opacity-60"
+              >
+                {loading ? 'Signing in…' : 'Resident login'}
+              </button>
             </div>
           </div>
         </div>
