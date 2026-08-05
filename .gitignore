@@ -1,0 +1,45 @@
+# ---- Dependencies ----
+node_modules/
+cfms-backend/node_modules/
+cfms-frontend/node_modules/
+
+# ---- Env / secrets ----
+.env
+.env.local
+.env.*.local
+cfms-backend/.env
+cfms-frontend/.env
+
+# ---- Build output ----
+dist/
+build/
+cfms-frontend/dist/
+
+# ---- Vite cache ----
+.vite/
+cfms-frontend/.vite/
+cfms-frontend/node_modules/.vite/
+
+# ---- Uploads (receipts etc.) ----
+cfms-backend/uploads/*
+!cfms-backend/uploads/.gitkeep
+
+# ---- Logs ----
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+
+# ---- Prisma ----
+cfms-backend/prisma/*.db
+cfms-backend/prisma/migrations/dev/
+
+# ---- OS / editor junk ----
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# ---- Test/coverage ----
+coverage/
+test/
