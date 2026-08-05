@@ -71,17 +71,19 @@ export function PageHeader({ title, subtitle, action }) {
   )
 }
 
-export function Modal({ open, onClose, title, children, wide }) {
+export function Modal({ open, onClose, title, children, wide, dismissible = true }) {
   if (!open) return null
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-ink-900/40 backdrop-blur-sm" onClick={onClose} />
+      <div className="absolute inset-0 bg-ink-900/40 backdrop-blur-sm" onClick={dismissible ? onClose : undefined} />
       <div className={`relative w-full ${wide ? 'max-w-2xl' : 'max-w-md'} card p-6 animate-fade-up max-h-[90vh] overflow-y-auto`}>
         <div className="flex items-center justify-between mb-5">
           <h3 className="text-lg font-bold text-ink-900">{title}</h3>
-          <button onClick={onClose} className="rounded-lg p-1.5 text-ink-400 hover:bg-ink-100 hover:text-ink-700 transition">
-            <X className="h-5 w-5" />
-          </button>
+          {dismissible && (
+            <button onClick={onClose} className="rounded-lg p-1.5 text-ink-400 hover:bg-ink-100 hover:text-ink-700 transition">
+              <X className="h-5 w-5" />
+            </button>
+          )}
         </div>
         {children}
       </div>

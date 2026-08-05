@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Plus, Search, Pencil, Trash2, Users, Phone, Mail, Copy, Check } from 'lucide-react'
+import { Plus, Search, Pencil, Trash2, Users, Phone, Mail, Copy, Check, AlertTriangle } from 'lucide-react'
 import { useData } from '../../context/DataContext'
 import { PageHeader, Badge, Modal, EmptyState, formatDate } from '../../components/ui'
 import { getMeta, setMeta } from '../../lib/adapters'
@@ -161,13 +161,6 @@ export default function Residents() {
             <label className="label">Email</label>
             <input required type="email" className="input" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
           </div>
-          {!editing && (
-            <div className="rounded-xl bg-brand-50/60 border border-brand-100 px-3.5 py-3">
-              <p className="text-xs font-semibold text-brand-700 uppercase tracking-wide">One-time password</p>
-              <p className="mt-1 font-mono text-sm text-ink-800">{form.tempPassword}</p>
-              <p className="mt-1 text-xs text-ink-500">Valid for 24 hours — share it with the resident now. They'll be asked to set their own password the first time they sign in.</p>
-            </div>
-          )}
           <div className="flex gap-2 pt-2">
             <button type="button" onClick={() => setModal(false)} className="btn-secondary flex-1">Cancel</button>
             <button type="submit" className="btn-primary flex-1">{editing ? 'Save changes' : 'Add resident'}</button>
@@ -176,17 +169,21 @@ export default function Residents() {
       </Modal>
 
       {/* Post-create: confirm temp password was captured */}
-      <Modal open={!!created} onClose={() => setCreated(null)} title="Resident added">
+      <Modal open={!!created} onClose={() => setCreated(null)} title="Resident added" dismissible={false}>
         {created && (
           <div className="space-y-4">
             <p className="text-sm text-ink-600">{created.name} has been added. Share this one-time password with them — it's valid for 24 hours.</p>
             <div className="flex items-center gap-2 rounded-xl bg-ink-50 px-3.5 py-2.5">
               <span className="font-mono text-sm flex-1">{created.tempPassword}</span>
-              <button onClick={copyPassword} className="p-1.5 rounded-lg text-ink-400 hover:bg-white hover:text-brand-600">
+              <button type="button" onClick={copyPassword} className="p-1.5 rounded-lg text-ink-400 hover:bg-white hover:text-brand-600" title="Copy password">
                 {copied ? <Check className="h-4 w-4 text-emerald-500" /> : <Copy className="h-4 w-4" />}
               </button>
             </div>
-            <button onClick={() => setCreated(null)} className="btn-primary w-full">Done</button>
+            <div className="flex items-start gap-2 rounded-xl bg-amber-50 border border-amber-200 px-3.5 py-2.5">
+              <AlertTriangle className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
+              <p className="text-xs text-amber-700">Once you confirm this message box, you won't be able to see this password again. Make sure you've copied it or shared it with the resident.</p>
+            </div>
+            <button onClick={() => setCreated(null)} className="btn-primary w-full">I've saved this password</button>
           </div>
         )}
       </Modal>
