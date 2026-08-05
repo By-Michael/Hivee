@@ -72,7 +72,7 @@
     @apply bg-brand-gradient text-white shadow-glow hover:text-white;
   }
   .sidebar-link.collapsed {
-    @apply justify-center px-0;
+    @apply justify-center px-0 gap-0;
   }
 }
 

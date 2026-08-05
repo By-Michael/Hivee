@@ -3,7 +3,7 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard, Users, Receipt, Wallet, FolderKanban, FileText,
   BarChart3, LogOut, Menu, X, Bell, Search, Landmark, ChevronDown,
-  PanelLeftClose, PanelLeftOpen, UserCog, AlertCircle, CheckCircle2, Clock,
+  PanelLeftClose, UserCog, AlertCircle, CheckCircle2, Clock,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { useData } from '../context/DataContext'
@@ -35,6 +35,7 @@ export default function AppLayout({ role }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [notifOpen, setNotifOpen] = useState(false)
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('cfms_sidebar_collapsed') === '1')
+  const [navCollapsed, setNavCollapsed] = useState(collapsed)
   const [query, setQuery] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
   const { user, logout } = useAuth()
@@ -47,6 +48,11 @@ export default function AppLayout({ role }) {
 
   useEffect(() => {
     localStorage.setItem('cfms_sidebar_collapsed', collapsed ? '1' : '0')
+    if (collapsed) {
+      const t = setTimeout(() => setNavCollapsed(true), 300)
+      return () => clearTimeout(t)
+    }
+    setNavCollapsed(false)
   }, [collapsed])
 
   // Close dropdowns on outside click.
@@ -169,36 +175,41 @@ export default function AppLayout({ role }) {
   return (
     <div className="min-h-screen flex">
       {/* Sidebar - desktop */}
-      <aside className={`hidden lg:flex lg:flex-col shrink-0 border-r border-ink-100 bg-white/80 backdrop-blur-xl py-6 h-screen sticky top-0 transition-all duration-200 ${collapsed ? 'w-20 px-2' : 'w-72 px-4'}`}>
-        <div className="flex items-center justify-between">
-          <Brand collapsed={collapsed} />
+      <aside className={`hidden lg:flex lg:flex-col shrink-0 border-r border-ink-100 bg-white/80 backdrop-blur-xl py-6 h-screen sticky top-0 transition-[width,padding] duration-300 ease-in-out ${collapsed ? 'w-20 px-2' : 'w-72 px-4'}`}>
+        <div className={`flex items-center ${navCollapsed ? 'justify-center' : ''}`}>
+          <Brand collapsed={collapsed} navCollapsed={navCollapsed} />
         </div>
-        <nav className="mt-8 flex-1 space-y-1 overflow-y-auto">
+        <div className={`mt-4 pb-4 border-b border-ink-50 flex justify-start`}>
+          <button
+            onClick={() => setCollapsed((v) => !v)}
+            title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            className={`p-2 rounded-lg text-ink-400 hover:bg-ink-100 hover:text-ink-600 shrink-0 transition-transform duration-300 ease-in-out ${collapsed ? 'rotate-180' : ''}`}
+          >
+            <PanelLeftClose className="h-4.5 w-4.5" />
+          </button>
+        </div>
+        <nav className="mt-2 flex-1 space-y-1 overflow-y-auto">
           {nav.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
               end={item.end}
               title={collapsed ? item.label : undefined}
-              className={({ isActive }) => `sidebar-link ${collapsed ? 'collapsed' : ''} ${isActive ? 'active' : ''}`}
+              className={({ isActive }) => `sidebar-link ${navCollapsed ? 'collapsed' : ''} ${isActive ? 'active' : ''}`}
             >
               <item.icon className="h-4.5 w-4.5 shrink-0" strokeWidth={2} />
-              {!collapsed && item.label}
+              <span className={`overflow-hidden whitespace-nowrap transition-all duration-300 ease-in-out ${collapsed ? 'max-w-0 opacity-0' : 'max-w-[160px] opacity-100'}`}>
+                {item.label}
+              </span>
             </NavLink>
           ))}
         </nav>
         <div className="shrink-0 space-y-2 pt-2 border-t border-ink-50">
-          <button
-            onClick={() => setCollapsed((v) => !v)}
-            title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            className={`sidebar-link ${collapsed ? 'collapsed' : ''} w-full text-ink-500`}
-          >
-            {collapsed ? <PanelLeftOpen className="h-4.5 w-4.5 shrink-0" /> : <PanelLeftClose className="h-4.5 w-4.5 shrink-0" />}
-            {!collapsed && 'Collapse'}
-          </button>
-          <button onClick={handleLogout} title={collapsed ? 'Sign out' : undefined} className={`sidebar-link ${collapsed ? 'collapsed' : ''} w-full text-rose-500 hover:bg-rose-50 hover:text-rose-600`}>
+          <button onClick={handleLogout} title={collapsed ? 'Sign out' : undefined} className={`sidebar-link ${navCollapsed ? 'collapsed' : ''} w-full text-rose-500 hover:bg-rose-50 hover:text-rose-600`}>
             <LogOut className="h-4.5 w-4.5 shrink-0" />
-            {!collapsed && 'Sign out'}
+            <span className={`overflow-hidden whitespace-nowrap transition-all duration-300 ease-in-out ${collapsed ? 'max-w-0 opacity-0' : 'max-w-[160px] opacity-100'}`}>
+              Sign out
+            </span>
           </button>
         </div>
       </aside>
@@ -265,6 +276,7 @@ export default function AppLayout({ role }) {
           </div>
           <div className="flex-1 sm:hidden" />
 
+          <div className="flex items-center gap-1 ml-auto">
           <div className="relative" ref={notifRef}>
             <button onClick={() => setNotifOpen((v) => !v)} className="relative p-2 rounded-lg hover:bg-ink-100 text-ink-500">
               <Bell className="h-5 w-5" />
@@ -273,7 +285,7 @@ export default function AppLayout({ role }) {
               )}
             </button>
             {notifOpen && (
-              <div className="absolute right-0 mt-2 w-80 card p-1.5 z-40 max-h-96 overflow-y-auto">
+              <div className="absolute right-0 mt-2 w-80 card p-1.5 z-40 max-h-96 overflow-y-auto select-none">
                 <div className="px-3 py-2 border-b border-ink-50 flex items-center justify-between">
                   <p className="text-sm font-semibold text-ink-800">Notifications</p>
                   <span className="text-xs text-ink-400">{notifications.length}</span>
@@ -305,7 +317,7 @@ export default function AppLayout({ role }) {
           </div>
 
           <div className="relative" ref={menuRef}>
-            <button onClick={() => setMenuOpen((v) => !v)} className="flex items-center gap-2.5 pl-2 pr-1 py-1 rounded-xl hover:bg-ink-100 transition">
+            <button onClick={() => setMenuOpen((v) => !v)} className="flex items-center gap-2.5 pl-2 pr-1 py-1 rounded-xl hover:bg-ink-100 transition select-none">
               <Avatar user={user} />
               <div className="hidden sm:block text-left">
                 <p className="text-sm font-semibold text-ink-800 leading-tight">{user?.name}</p>
@@ -314,7 +326,7 @@ export default function AppLayout({ role }) {
               <ChevronDown className="h-4 w-4 text-ink-400 hidden sm:block" />
             </button>
             {menuOpen && (
-              <div className="absolute right-0 mt-2 w-52 card p-1.5 z-40">
+              <div className="absolute right-0 mt-2 w-52 card p-1.5 z-40 select-none">
                 <div className="px-3 py-2 border-b border-ink-50">
                   <p className="text-sm font-medium text-ink-800 truncate">{user?.name}</p>
                   <p className="text-xs text-ink-400 truncate">{user?.community}</p>
@@ -330,6 +342,7 @@ export default function AppLayout({ role }) {
                 </button>
               </div>
             )}
+          </div>
           </div>
         </header>
         <main className="flex-1 px-4 py-6 sm:px-8 sm:py-8 max-w-[1400px] w-full mx-auto">
@@ -355,18 +368,16 @@ function Avatar({ user }) {
   )
 }
 
-function Brand({ collapsed }) {
+function Brand({ collapsed, navCollapsed }) {
   return (
-    <div className={`flex items-center gap-2.5 ${collapsed ? 'justify-center w-full' : 'px-1'}`}>
+    <div className={`flex items-center transition-all duration-300 ease-in-out ${navCollapsed ? 'justify-center w-full gap-0' : 'px-1 gap-2.5'}`}>
       <div className="h-10 w-10 rounded-2xl bg-brand-gradient flex items-center justify-center shadow-glow shrink-0">
         <Landmark className="h-5 w-5 text-white" strokeWidth={2.3} />
       </div>
-      {!collapsed && (
-        <div>
-          <p className="font-display font-bold text-ink-900 leading-tight">CFMS</p>
-          <p className="text-[11px] text-ink-400 leading-tight">Community Fund Manager</p>
-        </div>
-      )}
+      <div className={`overflow-hidden whitespace-nowrap transition-all duration-300 ease-in-out ${collapsed ? 'max-w-0 opacity-0' : 'max-w-[180px] opacity-100'}`}>
+        <p className="font-display font-bold text-ink-900 leading-tight">CFMS</p>
+        <p className="text-[11px] text-ink-400 leading-tight">Community Fund Manager</p>
+      </div>
     </div>
   )
 }
