@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Camera, KeyRound, Mail, Phone, ShieldCheck, Loader2, Users2, Clock, XCircle, Search, Check } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import { useData } from '../../context/DataContext'
-import { PageHeader, Modal } from '../../components/ui'
+import { PageHeader, Modal, notify } from '../../components/ui'
 import api, { endpoints } from '../../lib/api'
 
 // Every sensitive profile change (password, phone, picture) goes through a
@@ -87,7 +87,7 @@ export default function Profile() {
       await cancelCommitteeTransfer(myOutgoingRequest.id)
       setMyOutgoingRequest(null)
     } catch (err) {
-      alert(err?.response?.data?.message || err.message || 'Could not cancel the request.')
+      notify(err?.response?.data?.message || err.message || 'Could not cancel the request.')
     } finally {
       setCancelling(false)
     }

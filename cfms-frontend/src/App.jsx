@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import { useAuth } from './context/AuthContext'
 import AppLayout from './layouts/AppLayout'
 import Login from './pages/Login'
+import { Toaster } from './components/ui'
 
 import AdminDashboard from './pages/admin/Dashboard'
 import AdminResidents from './pages/admin/Residents'
@@ -42,7 +43,9 @@ export default function App() {
   }
 
   return (
-    <Routes>
+    <>
+      <Toaster />
+      <Routes>
       <Route path="/login" element={user ? <Navigate to={user.role === 'admin' ? '/admin' : '/resident'} replace /> : <Login />} />
 
       <Route path="/admin" element={<Protected role="admin"><AppLayout role="admin" /></Protected>}>
@@ -70,6 +73,7 @@ export default function App() {
       </Route>
 
       <Route path="*" element={<Navigate to={user ? (user.role === 'admin' ? '/admin' : '/resident') : '/login'} replace />} />
-    </Routes>
+      </Routes>
+    </>
   )
 }

@@ -10,7 +10,7 @@ import {
 import { useAuth } from '../context/AuthContext'
 import { useData } from '../context/DataContext'
 import { useTheme } from '../context/ThemeContext'
-import { currency, formatDate, Modal, PageSkeleton } from '../components/ui'
+import { currency, formatDate, Modal, PageSkeleton, notify } from '../components/ui'
 
 const adminNav = [
   { to: '/admin', label: 'Dashboard', icon: LayoutDashboard, end: true },
@@ -81,7 +81,7 @@ export default function AppLayout({ role }) {
       loadTransferItems()
       setConfirmAction(null)
     } catch (err) {
-      alert(err?.response?.data?.message || err.message || 'Could not submit your response.')
+      notify(err?.response?.data?.message || err.message || 'Could not submit your response.')
     } finally {
       setConfirmSubmitting(false)
     }

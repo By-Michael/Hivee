@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState } from 'react'
 import api, { endpoints } from '../lib/api'
+import { notify } from '../components/ui'
 
 const AuthContext = createContext(null)
 
@@ -56,10 +57,14 @@ export function AuthProvider({ children }) {
   // Fired by the api client when a 401 survives a refresh attempt (refresh
   // cookie missing/expired/revoked) — the session is genuinely over, so
   // reflect that in state instead of leaving stale user data around while
-  // every subsequent request silently 401s.
+  // every subsequent request silently 401s. Only shown when there *was* a
+  // logged-in user, so it never fires spuriously on the login page itself.
   useEffect(() => {
     function handleExpired() {
-      setUser(null)
+      setUser((prev) => {
+        if (prev) notify('Your session expired. Please sign in again.', 'info')
+        return null
+      })
     }
     window.addEventListener('cfms:session-expired', handleExpired)
     return () => window.removeEventListener('cfms:session-expired', handleExpired)

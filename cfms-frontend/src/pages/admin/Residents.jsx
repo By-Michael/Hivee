@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react'
-import { Plus, Search, Pencil, Trash2, Users, Phone, Mail, Copy, Check, AlertTriangle, Eye, MapPin, IdCard, ReceiptText } from 'lucide-react'
+import { Plus, Search, Pencil, Trash2, Users, Phone, Mail, Copy, Check, AlertTriangle, Eye, MapPin, IdCard, ReceiptText, ShieldCheck } from 'lucide-react'
 import { useData } from '../../context/DataContext'
-import { PageHeader, Badge, Modal, EmptyState, formatDate, currency, ConfirmDialog } from '../../components/ui'
+import { useAuth } from '../../context/AuthContext'
+import { PageHeader, Badge, Modal, EmptyState, formatDate, currency, ConfirmDialog, notify } from '../../components/ui'
 
 const empty = { name: '', unit: '', phone: '', email: '', status: 'active', idNumber: '', ownerType: 'owner', address: '' }
 
@@ -14,10 +15,13 @@ function generateTempPassword() {
 
 export default function Residents() {
   const { residents, addResident, updateResident, removeResident, fetchResidentSummary } = useData()
+  const { user } = useAuth()
   const [query, setQuery] = useState('')
   const [modal, setModal] = useState(false)
   const [editing, setEditing] = useState(null)
   const [form, setForm] = useState(empty)
+  const [formSaving, setFormSaving] = useState(false)
+  const [formError, setFormError] = useState('')
   const [created, setCreated] = useState(null) // { name, email, tempPassword }
   const [copied, setCopied] = useState(false)
 
@@ -39,10 +43,11 @@ export default function Residents() {
     return residents.filter((r) => [r.name, r.unit, r.phone, r.email, r.idNumber].join(' ').toLowerCase().includes(q))
   }, [residents, query])
 
-  function openAdd() { setEditing(null); setForm({ ...empty, tempPassword: generateTempPassword() }); setModal(true) }
+  function openAdd() { setEditing(null); setForm({ ...empty, tempPassword: generateTempPassword() }); setFormError(''); setModal(true) }
   function openEdit(r) {
     setEditing(r)
     setForm({ ...empty, ...r })
+    setFormError('')
     setModal(true)
   }
 
@@ -68,14 +73,27 @@ export default function Residents() {
 
   async function submit(e) {
     e.preventDefault()
-    if (editing) {
-      await updateResident(editing.id, form)
-      setModal(false)
-    } else {
-      const tempPassword = form.tempPassword || generateTempPassword()
-      await addResident({ ...form, password: tempPassword })
-      setModal(false)
-      setCreated({ name: form.name, email: form.email, tempPassword })
+    setFormSaving(true)
+    setFormError('')
+    try {
+      if (editing) {
+        await updateResident(editing.id, form)
+        setModal(false)
+        notify('Resident updated.', 'success')
+      } else {
+        const tempPassword = form.tempPassword || generateTempPassword()
+        await addResident({ ...form, password: tempPassword })
+        setModal(false)
+        setCreated({ name: form.name, email: form.email, tempPassword })
+      }
+    } catch (err) {
+      const status = err?.response?.status
+      const msg = status === 429
+        ? "You're doing that a bit too fast — please wait a moment and try again."
+        : (err?.response?.data?.message || err.message || 'Could not save this resident. Please try again.')
+      setFormError(msg)
+    } finally {
+      setFormSaving(false)
     }
   }
 
@@ -97,12 +115,27 @@ export default function Residents() {
     }
   }
 
+  function tryDelete(r) {
+    setDeleteError('')
+    if (r.isCommittee) {
+      setDeleteTarget(r)
+      setDeleteError(
+        r.userId === user?.id
+          ? "You're a committee member, so you can't delete yourself here. Go to Profile settings → \"Transfer committee status\" to hand your seat to another resident first."
+          : `${r.name} is a committee member and can't be removed from the residents panel.`
+      )
+      return
+    }
+    setDeleteTarget(r)
+  }
+
   function confirmDelete() {
     if (!deleteTarget) return
+    if (deleteTarget.isCommittee) return // blocked client-side; message already shown
     setDeleting(true)
     setDeleteError('')
     removeResident(deleteTarget.id)
-      .then(() => setDeleteTarget(null))
+      .then(() => { setDeleteTarget(null); notify('Resident removed.', 'success') })
       .catch((err) => {
         const status = err?.response?.status
         const msg = status === 429
@@ -130,7 +163,7 @@ export default function Residents() {
       <div className="card p-4 mb-5">
         <div className="relative max-w-sm">
           <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-400" />
-          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by name, unit, phone, ID…" className="input pl-10" />
+          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by name, house number, phone, ID…" className="input pl-10" />
         </div>
       </div>
 
@@ -140,7 +173,7 @@ export default function Residents() {
         ) : (
           <div className="table-wrap !border-0">
             <table className="data-table">
-              <thead><tr><th>Resident</th><th>Unit</th><th>ID No.</th><th>Type</th><th>Contact</th><th>Joined</th><th>Status</th><th className="text-right">Actions</th></tr></thead>
+              <thead><tr><th>Resident</th><th>House number</th><th>ID No.</th><th>Type</th><th>Contact</th><th>Joined</th><th>Status</th><th className="text-right">Actions</th></tr></thead>
               <tbody>
                 {filtered.map((r) => (
                   <tr key={r.id}>
@@ -149,7 +182,14 @@ export default function Residents() {
                         <div className="h-9 w-9 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center font-bold text-xs font-display">
                           {r.name.split(' ').map((n) => n[0]).slice(0, 2).join('')}
                         </div>
-                        <span className="font-medium text-ink-800">{r.name}</span>
+                        <span className="font-medium text-ink-800 flex items-center gap-1.5">
+                          {r.name}
+                          {r.isCommittee && (
+                            <span title="Committee member" className="inline-flex items-center gap-1 rounded-full bg-brand-50 text-brand-700 ring-1 ring-brand-200 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide">
+                              <ShieldCheck className="h-3 w-3" /> Committee
+                            </span>
+                          )}
+                        </span>
                       </button>
                     </td>
                     <td>{r.unit}</td>
@@ -167,7 +207,11 @@ export default function Residents() {
                       <div className="flex justify-end gap-1.5">
                         <button onClick={() => openInfo(r)} className="p-2 rounded-lg text-ink-400 hover:bg-brand-50 hover:text-brand-600" title="View details & missing payments"><Eye className="h-4 w-4" /></button>
                         <button onClick={() => openEdit(r)} className="p-2 rounded-lg text-ink-400 hover:bg-brand-50 hover:text-brand-600" title="Quick edit"><Pencil className="h-4 w-4" /></button>
-                        <button onClick={() => setDeleteTarget(r)} className="p-2 rounded-lg text-ink-400 hover:bg-rose-50 hover:text-rose-500" title="Remove resident"><Trash2 className="h-4 w-4" /></button>
+                        <button
+                          onClick={() => tryDelete(r)}
+                          className={`p-2 rounded-lg ${r.isCommittee ? 'text-ink-200 cursor-not-allowed' : 'text-ink-400 hover:bg-rose-50 hover:text-rose-500'}`}
+                          title={r.isCommittee ? "Committee members can't be removed here" : 'Remove resident'}
+                        ><Trash2 className="h-4 w-4" /></button>
                       </div>
                     </td>
                   </tr>
@@ -180,13 +224,16 @@ export default function Residents() {
 
       <Modal open={modal} onClose={() => setModal(false)} title={editing ? 'Edit resident' : 'Add resident'} wide>
         <form onSubmit={submit} className="space-y-5">
+          {formError && (
+            <div className="rounded-xl bg-rose-50 border border-rose-200 px-3.5 py-2.5 text-xs text-rose-700">{formError}</div>
+          )}
           <div>
             <label className="label">Full name</label>
             <input required className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="label">Unit</label>
+              <label className="label">House number</label>
               <input required className="input" value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })} placeholder="A-204" />
             </div>
             <div>
@@ -224,8 +271,8 @@ export default function Residents() {
             <input className="input" value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} placeholder="Optional" />
           </div>
           <div className="flex gap-2 pt-2">
-            <button type="button" onClick={() => setModal(false)} className="btn-secondary flex-1">Cancel</button>
-            <button type="submit" className="btn-primary flex-1">{editing ? 'Save changes' : 'Add resident'}</button>
+            <button type="button" onClick={() => setModal(false)} disabled={formSaving} className="btn-secondary flex-1">Cancel</button>
+            <button type="submit" disabled={formSaving} className="btn-primary flex-1">{formSaving ? 'Saving…' : (editing ? 'Save changes' : 'Add resident')}</button>
           </div>
         </form>
       </Modal>
@@ -262,7 +309,7 @@ export default function Residents() {
               </div>
               <div>
                 <p className="font-semibold text-ink-900">{infoResident.name}</p>
-                <p className="text-xs text-ink-400">Unit {infoResident.unit} · Joined {formatDate(infoResident.joined)}</p>
+                <p className="text-xs text-ink-400">House {infoResident.unit} · Joined {formatDate(infoResident.joined)}</p>
               </div>
               <div className="ml-auto"><Badge status={infoForm.status} /></div>
             </div>
@@ -279,7 +326,7 @@ export default function Residents() {
                   <input required className="input" value={infoForm.name} onChange={(e) => setInfoForm({ ...infoForm, name: e.target.value })} />
                 </div>
                 <div>
-                  <label className="label">Unit</label>
+                  <label className="label">House number</label>
                   <input required className="input" value={infoForm.unit} onChange={(e) => setInfoForm({ ...infoForm, unit: e.target.value })} />
                 </div>
               </div>
@@ -359,11 +406,13 @@ export default function Residents() {
 
       <ConfirmDialog
         open={!!deleteTarget}
-        title="Remove resident?"
-        message={deleteTarget ? `This will permanently remove "${deleteTarget.name}" and their records. This action cannot be undone.` : ''}
+        title={deleteTarget?.isCommittee ? 'Cannot remove committee member' : 'Remove resident?'}
+        message={deleteTarget && !deleteTarget.isCommittee ? `This will permanently remove "${deleteTarget.name}" and their records. This action cannot be undone.` : ''}
+        confirmLabel={deleteTarget?.isCommittee ? 'OK' : 'Delete'}
+        danger={!deleteTarget?.isCommittee}
         loading={deleting}
         error={deleteError}
-        onConfirm={confirmDelete}
+        onConfirm={deleteTarget?.isCommittee ? () => { setDeleteTarget(null); setDeleteError('') } : confirmDelete}
         onCancel={() => { setDeleteTarget(null); setDeleteError('') }}
       />
     </div>

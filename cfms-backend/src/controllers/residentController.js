@@ -12,6 +12,23 @@ const createResident = catchAsync(async (req, res) => {
   const existing = await prisma.user.findUnique({ where: { email } });
   if (existing) throw new AppError('Email already in use', 409);
 
+  // Unit number, ID number, and phone must each be unique within the
+  // community — two residents can't share a unit, ID, or phone number.
+  const [unitClash, idClash, phoneClash] = await Promise.all([
+    unitNumber
+      ? prisma.resident.findFirst({ where: { unitNumber, user: { communityId: req.communityId } } })
+      : null,
+    idNumber
+      ? prisma.resident.findFirst({ where: { idNumber, user: { communityId: req.communityId } } })
+      : null,
+    phone
+      ? prisma.resident.findFirst({ where: { phone, user: { communityId: req.communityId } } })
+      : null,
+  ]);
+  if (unitClash) throw new AppError('That unit / house number is already assigned to another resident', 409);
+  if (idClash) throw new AppError('That ID number is already registered to another resident', 409);
+  if (phoneClash) throw new AppError('That phone number is already registered to another resident', 409);
+
   const passwordHash = await bcrypt.hash(password, 12);
 
   const user = await prisma.user.create({
@@ -51,7 +68,7 @@ const createResident = catchAsync(async (req, res) => {
 const listResidents = catchAsync(async (req, res) => {
   const residents = await prisma.resident.findMany({
     where: { user: { communityId: req.communityId } },
-    include: { user: { select: { id: true, fullName: true, email: true, createdAt: true } } },
+    include: { user: { select: { id: true, fullName: true, email: true, createdAt: true, role: true } } },
     orderBy: { joinedAt: 'desc' },
   });
   res.json({ success: true, data: residents });
@@ -60,7 +77,7 @@ const listResidents = catchAsync(async (req, res) => {
 const getResident = catchAsync(async (req, res) => {
   const resident = await prisma.resident.findFirst({
     where: { id: req.params.id, user: { communityId: req.communityId } },
-    include: { user: { select: { id: true, fullName: true, email: true } } },
+    include: { user: { select: { id: true, fullName: true, email: true, role: true } } },
   });
   if (!resident) throw new AppError('Resident not found', 404);
   res.json({ success: true, data: resident });
@@ -73,7 +90,7 @@ const getResidentSummary = catchAsync(async (req, res) => {
   const resident = await prisma.resident.findFirst({
     where: { id: req.params.id, user: { communityId: req.communityId } },
     include: {
-      user: { select: { id: true, fullName: true, email: true, createdAt: true } },
+      user: { select: { id: true, fullName: true, email: true, createdAt: true, role: true } },
       payments: {
         include: { fee: { select: { id: true, name: true, amount: true, frequency: true } } },
         orderBy: { paidAt: 'desc' },
@@ -107,6 +124,24 @@ const updateResident = catchAsync(async (req, res) => {
     const existing = await prisma.user.findUnique({ where: { email } });
     if (existing) throw new AppError('Email already in use', 409);
   }
+
+  // Same uniqueness rules as create — excluding this resident's own
+  // current record, so saving a resident's unchanged unit/ID/phone
+  // doesn't falsely flag a clash against itself.
+  const [unitClash, idClash, phoneClash] = await Promise.all([
+    unitNumber
+      ? prisma.resident.findFirst({ where: { unitNumber, id: { not: resident.id }, user: { communityId: req.communityId } } })
+      : null,
+    idNumber
+      ? prisma.resident.findFirst({ where: { idNumber, id: { not: resident.id }, user: { communityId: req.communityId } } })
+      : null,
+    phone
+      ? prisma.resident.findFirst({ where: { phone, id: { not: resident.id }, user: { communityId: req.communityId } } })
+      : null,
+  ]);
+  if (unitClash) throw new AppError('That unit / house number is already assigned to another resident', 409);
+  if (idClash) throw new AppError('That ID number is already registered to another resident', 409);
+  if (phoneClash) throw new AppError('That phone number is already registered to another resident', 409);
 
   const userUpdate = {};
   if (fullName !== undefined) userUpdate.fullName = fullName;
@@ -143,6 +178,16 @@ const deleteResident = catchAsync(async (req, res) => {
     include: { user: true },
   });
   if (!resident) throw new AppError('Resident not found', 404);
+
+  // Committee members (User.role === 'ADMIN') keep a Resident record even
+  // after taking a committee seat, so they still appear in this list —
+  // but they can't be removed from here.
+  if (resident.user.role === 'ADMIN') {
+    if (resident.userId === req.user.id) {
+      throw new AppError("You're a committee member, so you can't delete yourself here. Use Profile settings to transfer your committee seat to another resident first.", 422);
+    }
+    throw new AppError('This person is a committee member and can\'t be removed from the residents panel.', 422);
+  }
 
   // Deleting the User cascades to Resident (see schema onDelete: Cascade).
   await prisma.user.delete({ where: { id: resident.userId } });

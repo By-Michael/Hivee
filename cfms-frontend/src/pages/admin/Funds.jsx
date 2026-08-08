@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Plus, Pencil, Trash2, Landmark, TrendingUp, Target, Users } from 'lucide-react'
 import { useData } from '../../context/DataContext'
-import { PageHeader, Modal, currency, ConfirmDialog } from '../../components/ui'
+import { PageHeader, Modal, currency, ConfirmDialog, notify } from '../../components/ui'
 import { getMeta, setMeta } from '../../lib/adapters'
 
 const empty = { name: '', category: 'Security', goal: '' }
@@ -17,6 +17,7 @@ export default function Funds() {
   const [modal, setModal] = useState(false)
   const [editing, setEditing] = useState(null)
   const [form, setForm] = useState(empty)
+  const [saving, setSaving] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [deleting, setDeleting] = useState(false)
 
@@ -46,20 +47,24 @@ export default function Funds() {
     if (!deleteTarget) return
     setDeleting(true)
     removeFund(deleteTarget.id)
-      .then(() => setDeleteTarget(null))
-      .catch((err) => alert(err?.response?.data?.message || err.message))
+      .then(() => { setDeleteTarget(null); notify('Fund deleted.', 'success') })
+      .catch((err) => notify(err?.response?.data?.message || err.message))
       .finally(() => setDeleting(false))
   }
 
   function submit(e) {
     e.preventDefault()
+    setSaving(true)
     const payload = { name: form.name, category: form.category }
-    const action = editing ? updateFund(editing.id, payload) : addFund(payload)
+    const wasEditing = !!editing
+    const action = wasEditing ? updateFund(editing.id, payload) : addFund(payload)
     action.then((idMaybe) => {
-      const targetId = editing ? editing.id : idMaybe
+      const targetId = wasEditing ? editing.id : idMaybe
       if (targetId && form.goal !== '') setMeta('fundGoal', targetId, Number(form.goal))
       setModal(false)
-    }).catch((err) => alert(err?.response?.data?.message || err.message))
+      notify(wasEditing ? 'Fund updated.' : 'Fund added.', 'success')
+    }).catch((err) => notify(err?.response?.data?.message || err.message))
+      .finally(() => setSaving(false))
   }
 
   return (
@@ -146,8 +151,8 @@ export default function Funds() {
             Balance isn't set manually — it's calculated automatically from this fund's project budgets and logged expenses. "Collected" reflects verified payments against fees in this category.
           </p>
           <div className="flex gap-2 pt-2">
-            <button type="button" onClick={() => setModal(false)} className="btn-secondary flex-1">Cancel</button>
-            <button type="submit" className="btn-primary flex-1">{editing ? 'Save changes' : 'Add fund'}</button>
+            <button type="button" onClick={() => setModal(false)} disabled={saving} className="btn-secondary flex-1">Cancel</button>
+            <button type="submit" disabled={saving} className="btn-primary flex-1">{saving ? 'Saving…' : (editing ? 'Save changes' : 'Add fund')}</button>
           </div>
         </form>
       </Modal>

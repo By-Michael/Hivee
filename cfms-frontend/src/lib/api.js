@@ -100,6 +100,7 @@ export const endpoints = {
 
   payments: () => '/payments',
   payment: (id) => `/payments/${id}`,
+  paymentReceipt: (id) => `/payments/${id}/receipt`,
   paymentSelfVerify: () => '/payments/self-verify',
   paymentParseScreenshot: () => '/payments/parse-screenshot',
 

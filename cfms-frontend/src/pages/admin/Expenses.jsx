@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Plus, Trash2, FileText, Paperclip, Eye, Download, Upload, CheckCircle2, CircleDashed } from 'lucide-react'
 import { useData } from '../../context/DataContext'
-import { PageHeader, Modal, EmptyState, currency, formatDate, ConfirmDialog } from '../../components/ui'
+import { PageHeader, Modal, EmptyState, currency, formatDate, ConfirmDialog, notify } from '../../components/ui'
 import { fileUrl } from '../../lib/api'
 
 const empty = { projectId: '', description: '', amount: '', vendor: '', date: '', bankName: '', transactionReference: '', file: null }
@@ -38,6 +38,7 @@ export default function Expenses() {
       await addExpense({ ...form, amount: Number(form.amount) })
       setModal(false)
       setForm(empty)
+      notify('Expense logged.', 'success')
     } catch (err) {
       setError(err?.response?.data?.message || err.message || 'Could not log expense.')
     } finally {
@@ -50,8 +51,9 @@ export default function Expenses() {
     setUploadingFor(expenseId)
     try {
       await addReceipt({ expenseId, file })
+      notify('Receipt uploaded.', 'success')
     } catch (err) {
-      alert(err?.response?.data?.message || err.message || 'Upload failed.')
+      notify(err?.response?.data?.message || err.message || 'Upload failed.')
     } finally {
       setUploadingFor(null)
     }
@@ -61,8 +63,8 @@ export default function Expenses() {
     if (!deleteTarget) return
     setDeleting(true)
     removeExpense(deleteTarget.id)
-      .then(() => setDeleteTarget(null))
-      .catch((err) => alert(err?.response?.data?.message || err.message))
+      .then(() => { setDeleteTarget(null); notify('Expense deleted.', 'success') })
+      .catch((err) => notify(err?.response?.data?.message || err.message))
       .finally(() => setDeleting(false))
   }
 

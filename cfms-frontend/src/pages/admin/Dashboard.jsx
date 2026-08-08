@@ -38,7 +38,9 @@ export default function AdminDashboard() {
 
   const totalBalance = funds.reduce((s, f) => s + f.balance, 0)
   const paidThisPeriod = payments.filter((p) => p.status === 'paid').reduce((s, p) => s + p.amount, 0)
-  const pendingCount = payments.filter((p) => p.status === 'pending' || p.status === 'overdue').length
+  const pendingOnlyCount = payments.filter((p) => p.status === 'pending').length
+  const overdueOnlyCount = payments.filter((p) => p.status === 'overdue').length
+  const pendingCount = pendingOnlyCount + overdueOnlyCount
   const activeProjects = projects.filter((p) => p.status === 'in-progress').length
 
   const monthly = useMemo(() => buildMonthlySeries(payments, expenses), [payments, expenses])
@@ -64,10 +66,39 @@ export default function AdminDashboard() {
       />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
-        <StatCard icon={Landmark} label="Total fund balance" value={currency(totalBalance)} sub={`Across ${funds.length} fund${funds.length === 1 ? '' : 's'}`} accent="brand" />
-        <StatCard icon={Wallet} label="Collected this period" value={currency(paidThisPeriod)} sub={`${payments.filter(p=>p.status==='paid').length} payments recorded`} accent="green" trend={collectedTrend} />
-        <StatCard icon={Clock} label="Pending / overdue" value={pendingCount} sub="Needs follow-up" accent="amber" />
-        <StatCard icon={FolderKanban} label="Active projects" value={activeProjects} sub={`${projects.length} total projects`} accent="rose" />
+        <StatCard
+          icon={Landmark}
+          label="Total fund balance"
+          value={currency(totalBalance)}
+          sub={`Across ${funds.length} fund${funds.length === 1 ? '' : 's'}`}
+          accent="brand"
+          to="/admin/funds"
+        />
+        <StatCard
+          icon={Wallet}
+          label="Collected this month"
+          value={currency(paidThisPeriod)}
+          sub={`${payments.filter(p=>p.status==='paid').length} payments recorded`}
+          accent="green"
+          trend={collectedTrend}
+          to="/admin/payments"
+        />
+        <StatCard
+          icon={Clock}
+          label="Pending / overdue"
+          value={pendingCount}
+          sub={`${pendingOnlyCount} awaiting payment, ${overdueOnlyCount} past due`}
+          accent="amber"
+          to="/admin/payments"
+        />
+        <StatCard
+          icon={FolderKanban}
+          label="Active projects"
+          value={activeProjects}
+          sub={`${projects.length} total projects`}
+          accent="rose"
+          to="/admin/projects"
+        />
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-5 mb-6">

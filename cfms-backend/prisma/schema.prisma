@@ -121,6 +121,7 @@ model User {
   resident      Resident?
   refreshTokens RefreshToken[]
   verifiedPayments Payment[]  @relation("PaymentVerifiedBy")
+  recordedPayments Payment[]  @relation("PaymentRecordedBy")
   recordedExpenses Expense[]  @relation("ExpenseRecordedBy")
 
   transferRequestsInitiated CommitteeTransferRequest[]   @relation("TransferFrom")
@@ -221,7 +222,14 @@ model Fee {
 model Payment {
   id                 String        @id @default(uuid())
   residentId         String
-  feeId              String
+  // Exactly one of feeId / projectId is set — what this payment is *for*.
+  // Both nullable (rather than a single polymorphic column) so the existing
+  // FK integrity/cascade behaviour keeps working for whichever one is used.
+  // Enforced in the app layer (paymentValidators.js) since Postgres check
+  // constraints referencing two nullable columns aren't expressible in the
+  // Prisma schema directly.
+  feeId              String?
+  projectId          String?
   amount             Decimal       @db.Decimal(12, 2)
   paymentMethod      PaymentMethod @default(CASH)
   transactionReference String?
@@ -235,13 +243,27 @@ model Payment {
   status             PaymentStatus @default(PENDING)
   paidAt             DateTime      @default(now())
   verifiedBy         String?
+  // Optional photo/PDF of the physical receipt — only meaningful for
+  // committee-recorded (cash/in-person) payments; residents' bank transfers
+  // are verified against the bank instead.
+  receiptUrl         String?
+  // Set only when a committee member records this payment on a resident's
+  // behalf (cash-in-hand, no bank access, etc). Null for a resident's own
+  // self-verified payment. This is what gates the edit/delete buttons in
+  // the admin UI — self-verified bank payments stay append-only, but a
+  // manually-typed entry can be fixed or removed by the committee since a
+  // human, not a bank, is the source of truth for it.
+  recordedBy         String?
 
   resident Resident @relation(fields: [residentId], references: [id], onDelete: Cascade)
-  fee      Fee      @relation(fields: [feeId], references: [id], onDelete: Cascade)
+  fee      Fee?     @relation(fields: [feeId], references: [id], onDelete: Cascade)
+  project  Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
   verifier User?    @relation("PaymentVerifiedBy", fields: [verifiedBy], references: [id], onDelete: SetNull)
+  recorder User?    @relation("PaymentRecordedBy", fields: [recordedBy], references: [id], onDelete: SetNull)
 
   @@index([residentId])
   @@index([feeId])
+  @@index([projectId])
   // Every list/report/aggregate query filters or sorts on these — without
   // an index Postgres has to scan and sort the whole table, which gets
   // slower every month as more payments accumulate.
@@ -278,6 +300,7 @@ model Project {
   community Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
   fund      Fund      @relation(fields: [fundId], references: [id], onDelete: Cascade)
   expenses  Expense[]
+  payments  Payment[]
 
   @@index([communityId])
   @@index([fundId])

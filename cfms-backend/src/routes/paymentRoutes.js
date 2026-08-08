@@ -4,9 +4,10 @@ const authenticate = require('../middleware/authenticate');
 const authorize = require('../middleware/authorize');
 const tenantScope = require('../middleware/tenantScope');
 const validate = require('../middleware/validate');
-const { screenshotUpload } = require('../config/upload');
+const { screenshotUpload, upload } = require('../config/upload');
 const {
   createPaymentSchema,
+  updatePaymentSchema,
   updatePaymentStatusSchema,
   idParamSchema,
   selfVerifyPaymentSchema,
@@ -40,6 +41,29 @@ router.patch(
   authorize('ADMIN'),
   validate(updatePaymentStatusSchema),
   ctrl.updatePaymentStatus
+);
+// Edit/delete: ADMIN only, and further restricted inside the controller to
+// payments that were recorded manually (recordedBy set) — see comments
+// there for why self-verified bank payments stay append-only.
+router.patch(
+  '/:id',
+  authorize('ADMIN'),
+  validate(updatePaymentSchema),
+  ctrl.updatePayment
+);
+router.delete(
+  '/:id',
+  authorize('ADMIN'),
+  validate(idParamSchema),
+  ctrl.deletePayment
+);
+// Optional receipt photo/PDF for a manually-recorded (cash/in-person) payment.
+router.post(
+  '/:id/receipt',
+  authorize('ADMIN'),
+  validate(idParamSchema),
+  upload.single('receipt'),
+  ctrl.uploadPaymentReceipt
 );
 
 module.exports = router;

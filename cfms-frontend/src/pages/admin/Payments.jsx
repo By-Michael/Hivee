@@ -1,9 +1,9 @@
-import { useMemo, useState } from 'react'
-import { Plus, Search, Wallet, Filter, ChevronDown, Check, X as XIcon } from 'lucide-react'
+import { useMemo, useRef, useState } from 'react'
+import { Plus, Search, Wallet, Filter, Check, X as XIcon, Paperclip, Pencil, Trash2, FileText } from 'lucide-react'
 import { useData } from '../../context/DataContext'
-import { PageHeader, Modal, EmptyState, currency, formatDate, ConfirmDialog, Badge } from '../../components/ui'
+import { PageHeader, Modal, EmptyState, currency, formatDate, ConfirmDialog, notify } from '../../components/ui'
 
-const empty = { residentId: '', feeId: '', amount: '', method: 'Bank Transfer', status: 'paid', reference: '' }
+const empty = { residentId: '', targetType: 'fee', feeId: '', projectId: '', amount: '', method: 'Bank Transfer', reference: '', receiptFile: null }
 
 function ResidentPicker({ residents, value, onChange }) {
   const [term, setTerm] = useState('')
@@ -55,17 +55,127 @@ function ResidentPicker({ residents, value, onChange }) {
   )
 }
 
+// Shared body for both "Record payment" (create) and "Edit payment"
+// (update) — same fields, different submit handler/labels from the caller.
+function PaymentForm({ form, setForm, fees, projects, residents, showResidentPicker, fileInputRef, existingReceiptUrl }) {
+  const selectedFee = fees.find((f) => f.id === form.feeId)
+
+  return (
+    <>
+      {showResidentPicker && (
+        <div>
+          <label className="label">Resident</label>
+          <ResidentPicker residents={residents} value={form.residentId} onChange={(id) => setForm({ ...form, residentId: id })} />
+        </div>
+      )}
+
+      <div>
+        <label className="label">Paying for</label>
+        <div className="flex gap-2 mb-2">
+          {['fee', 'project'].map((t) => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => setForm({ ...form, targetType: t, feeId: '', projectId: '', amount: t === 'project' ? form.amount : '' })}
+              className={`badge capitalize border ${form.targetType === t ? 'bg-brand-gradient text-white border-transparent' : 'bg-white text-ink-500 border-ink-200 hover:border-brand-300'}`}
+            >
+              {t === 'fee' ? 'A fee' : 'A project'}
+            </button>
+          ))}
+        </div>
+        {form.targetType === 'fee' ? (
+          <select required className="input" value={form.feeId} onChange={(e) => {
+            const fee = fees.find((f) => f.id === e.target.value)
+            setForm({ ...form, feeId: e.target.value, amount: fee ? String(fee.amount) : form.amount })
+          }}>
+            <option value="">Select fee</option>
+            {fees.map((f) => <option key={f.id} value={f.id}>{f.name} · {currency(f.amount)}</option>)}
+          </select>
+        ) : (
+          <select required className="input" value={form.projectId} onChange={(e) => setForm({ ...form, projectId: e.target.value })}>
+            <option value="">Select project</option>
+            {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+        )}
+        {form.targetType === 'project' && projects.length === 0 && (
+          <p className="mt-1.5 text-xs text-amber-600">No projects set up yet — add one under Projects first.</p>
+        )}
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="label">Amount (ETB)</label>
+          <input
+            type="number" min="0" required={form.targetType === 'project'} className="input"
+            placeholder={form.targetType === 'fee' ? 'Auto from fee' : 'Enter amount'}
+            value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })}
+          />
+        </div>
+        <div>
+          <label className="label">Method</label>
+          <select className="input" value={form.method} onChange={(e) => setForm({ ...form, method: e.target.value })}>
+            <option>Bank Transfer</option>
+            <option>Cash</option>
+            <option>Mobile Money</option>
+          </select>
+        </div>
+      </div>
+
+      <div>
+        <label className="label">Transaction reference <span className="text-ink-400 font-normal normal-case">(optional)</span></label>
+        <input
+          className="input font-mono" placeholder="e.g. FT24219XXXXX — leave blank to auto-generate"
+          value={form.reference} onChange={(e) => setForm({ ...form, reference: e.target.value })}
+        />
+      </div>
+
+      <div>
+        <label className="label">Receipt photo <span className="text-ink-400 font-normal normal-case">(optional)</span></label>
+        <div className="flex items-center gap-2">
+          <button type="button" onClick={() => fileInputRef.current?.click()} className="btn-secondary !py-2 text-sm">
+            <Paperclip className="h-3.5 w-3.5" /> {form.receiptFile ? 'Change file' : 'Attach receipt'}
+          </button>
+          <input
+            ref={fileInputRef} type="file" accept="image/jpeg,image/png,image/webp,application/pdf" className="hidden"
+            onChange={(e) => setForm({ ...form, receiptFile: e.target.files?.[0] || null })}
+          />
+          {form.receiptFile ? (
+            <span className="text-xs text-ink-500 truncate max-w-[14rem]">{form.receiptFile.name}</span>
+          ) : existingReceiptUrl ? (
+            <a href={existingReceiptUrl} target="_blank" rel="noreferrer" className="text-xs text-brand-700 flex items-center gap-1">
+              <FileText className="h-3.5 w-3.5" /> Current receipt
+            </a>
+          ) : null}
+        </div>
+        <p className="mt-1.5 text-xs text-ink-400">A photo of a cash slip or bank receipt, in case the entry ever needs to be double-checked.</p>
+      </div>
+
+      <p className="text-xs text-ink-400">
+        Recorded here because you (the committee) received it directly — cash in hand or a receipt shown to you.
+        It's saved as verified immediately, since you're recording it after the fact.
+      </p>
+    </>
+  )
+}
+
 export default function Payments() {
-  const { payments, residents, fees, addPayment, updatePayment } = useData()
+  const { payments, residents, fees, projects, addPayment, updatePayment, editPayment, removePayment } = useData()
   const [query, setQuery] = useState('')
-  const [status, setStatus] = useState('all')
   const [modal, setModal] = useState(false)
   const [form, setForm] = useState(empty)
+  const [saving, setSaving] = useState(false)
   const [rejectTarget, setRejectTarget] = useState(null)
   const [rejecting, setRejecting] = useState(false)
   const [verifyingId, setVerifyingId] = useState(null)
   const [year, setYear] = useState('all')
   const [month, setMonth] = useState('all')
+  const [editTarget, setEditTarget] = useState(null)
+  const [editForm, setEditForm] = useState(empty)
+  const [editSaving, setEditSaving] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState(null)
+  const [deleting, setDeleting] = useState(false)
+  const fileInputRef = useRef(null)
+  const editFileInputRef = useRef(null)
 
   const residentOf = (id) => residents.find((r) => r.id === id)
   const feeOf = (id) => fees.find((f) => f.id === id)
@@ -83,28 +193,65 @@ export default function Payments() {
 
   const filtered = useMemo(() => {
     return payments.filter((p) => {
-      const matchesStatus = status === 'all' || p.status === status
       const q = query.toLowerCase()
-      const matchesQuery = [residentOf(p.residentId)?.name, feeOf(p.feeId)?.name, p.reference].join(' ').toLowerCase().includes(q)
+      const label = p.feeId ? feeOf(p.feeId)?.name : p.projectName
+      const matchesQuery = [residentOf(p.residentId)?.name, label, p.reference].join(' ').toLowerCase().includes(q)
       const d = p.date ? new Date(p.date) : null
       const matchesYear = year === 'all' || (d && String(d.getFullYear()) === year)
       const matchesMonth = month === 'all' || (d && String(d.getMonth()) === month)
-      return matchesStatus && matchesQuery && matchesYear && matchesMonth
+      return matchesQuery && matchesYear && matchesMonth
     }).sort((a, b) => new Date(b.date) - new Date(a.date))
-  }, [payments, query, status, year, month, residents, fees])
+  }, [payments, query, year, month, residents, fees])
 
   function submit(e) {
     e.preventDefault()
+    setSaving(true)
     const fee = fees.find((f) => f.id === form.feeId)
     addPayment({ ...form, amount: Number(form.amount) || fee?.amount || 0, reference: form.reference || `TRX-${Math.floor(Math.random() * 90000 + 10000)}` })
-      .then(() => { setModal(false); setForm(empty) })
-      .catch((err) => alert(err?.response?.data?.message || err.message))
+      .then(() => { setModal(false); setForm(empty); notify('Payment recorded.', 'success') })
+      .catch((err) => notify(err?.response?.data?.message || err.message))
+      .finally(() => setSaving(false))
+  }
+
+  function openEdit(p) {
+    setEditForm({
+      residentId: p.residentId,
+      targetType: p.feeId ? 'fee' : 'project',
+      feeId: p.feeId || '',
+      projectId: p.projectId || '',
+      amount: String(p.amount),
+      method: p.method,
+      reference: p.reference,
+      receiptFile: null,
+      receiptUrl: p.receiptUrl,
+    })
+    setEditTarget(p)
+  }
+
+  function submitEdit(e) {
+    e.preventDefault()
+    if (!editTarget) return
+    setEditSaving(true)
+    editPayment(editTarget.id, editForm)
+      .then(() => { setEditTarget(null); notify('Payment updated.', 'success') })
+      .catch((err) => notify(err?.response?.data?.message || err.message))
+      .finally(() => setEditSaving(false))
+  }
+
+  function confirmDelete() {
+    if (!deleteTarget) return
+    setDeleting(true)
+    removePayment(deleteTarget.id)
+      .then(() => { setDeleteTarget(null); notify('Payment deleted.', 'success') })
+      .catch((err) => notify(err?.response?.data?.message || err.message))
+      .finally(() => setDeleting(false))
   }
 
   function verify(payment) {
     setVerifyingId(payment.id)
     updatePayment(payment.id, { status: 'paid' })
-      .catch((err) => alert(err?.response?.data?.message || err.message))
+      .then(() => notify('Payment verified.', 'success'))
+      .catch((err) => notify(err?.response?.data?.message || err.message))
       .finally(() => setVerifyingId(null))
   }
 
@@ -112,8 +259,8 @@ export default function Payments() {
     if (!rejectTarget) return
     setRejecting(true)
     updatePayment(rejectTarget.id, { status: 'rejected' })
-      .then(() => setRejectTarget(null))
-      .catch((err) => alert(err?.response?.data?.message || err.message))
+      .then(() => { setRejectTarget(null); notify('Payment rejected.', 'success') })
+      .catch((err) => notify(err?.response?.data?.message || err.message))
       .finally(() => setRejecting(false))
   }
 
@@ -134,12 +281,6 @@ export default function Payments() {
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <Filter className="h-4 w-4 text-ink-400" />
-          {['all', 'paid', 'pending', 'overdue'].map((s) => (
-            <button key={s} onClick={() => setStatus(s)}
-              className={`badge capitalize border ${status === s ? 'bg-brand-gradient text-white border-transparent' : 'bg-white text-ink-500 border-ink-200 hover:border-brand-300'}`}>
-              {s}
-            </button>
-          ))}
           <select
             value={year}
             onChange={(e) => setYear(e.target.value)}
@@ -169,17 +310,30 @@ export default function Payments() {
         ) : (
           <div className="table-wrap !border-0">
             <table className="data-table">
-              <thead><tr><th>Resident</th><th>Fee</th><th>Amount</th><th>Method</th><th>Reference</th><th>Date</th><th>Status</th><th /></tr></thead>
+              <thead><tr><th>Resident</th><th>For</th><th>Amount</th><th>Method</th><th>Reference</th><th>Date</th><th /></tr></thead>
               <tbody>
                 {filtered.map((p) => (
                   <tr key={p.id}>
                     <td className="font-medium text-ink-800">{residentOf(p.residentId)?.name}</td>
-                    <td>{feeOf(p.feeId)?.name}</td>
+                    <td>
+                      {p.feeId ? feeOf(p.feeId)?.name : (
+                        <span className="inline-flex items-center gap-1">
+                          <span className="badge bg-violet-50 text-violet-700 ring-1 ring-violet-200 !py-0.5">Project</span>
+                          {p.projectName}
+                        </span>
+                      )}
+                    </td>
                     <td className="font-semibold">{currency(p.amount)}</td>
                     <td>{p.method}</td>
-                    <td className="font-mono text-xs text-ink-400">{p.reference}</td>
+                    <td className="font-mono text-xs text-ink-400">
+                      {p.reference}
+                      {p.receiptUrl && (
+                        <a href={p.receiptUrl} target="_blank" rel="noreferrer" title="View receipt" className="ml-1.5 text-brand-600 inline-flex align-middle">
+                          <Paperclip className="h-3 w-3" />
+                        </a>
+                      )}
+                    </td>
                     <td>{formatDate(p.date)}</td>
-                    <td><Badge status={p.status} /></td>
                     <td>
                       {p.status === 'pending' ? (
                         <div className="flex items-center gap-1">
@@ -199,6 +353,23 @@ export default function Payments() {
                             <XIcon className="h-4 w-4" />
                           </button>
                         </div>
+                      ) : p.recordedBy ? (
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => openEdit(p)}
+                            className="p-2 rounded-lg text-ink-400 hover:bg-brand-50 hover:text-brand-700"
+                            title="Edit payment"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                          <button
+                            onClick={() => setDeleteTarget(p)}
+                            className="p-2 rounded-lg text-ink-400 hover:bg-rose-50 hover:text-rose-500"
+                            title="Delete payment"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
                       ) : (
                         <span className="text-xs text-ink-300">—</span>
                       )}
@@ -213,38 +384,23 @@ export default function Payments() {
 
       <Modal open={modal} onClose={() => setModal(false)} title="Record payment" wide>
         <form onSubmit={submit} className="space-y-5">
-          <div>
-            <label className="label">Resident</label>
-            <ResidentPicker residents={residents} value={form.residentId} onChange={(id) => setForm({ ...form, residentId: id })} />
-          </div>
-          <div>
-            <label className="label">Fee</label>
-            <select required className="input" value={form.feeId} onChange={(e) => setForm({ ...form, feeId: e.target.value })}>
-              <option value="">Select fee</option>
-              {fees.map((f) => <option key={f.id} value={f.id}>{f.name} · {currency(f.amount)}</option>)}
-            </select>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="label">Amount (ETB)</label>
-              <input type="number" min="0" className="input" placeholder="Auto from fee" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} />
-            </div>
-            <div>
-              <label className="label">Method</label>
-              <select className="input" value={form.method} onChange={(e) => setForm({ ...form, method: e.target.value })}>
-                <option>Bank Transfer</option>
-                <option>Cash</option>
-                <option>Mobile Money</option>
-              </select>
-            </div>
-          </div>
-          <p className="text-xs text-ink-400 -mt-1">
-            Recorded payments are the ones you've actually received in cash or with proof, so they're marked paid automatically — no status to pick.
-            Residents who haven't paid simply won't have a matching record here.
-          </p>
+          <PaymentForm form={form} setForm={setForm} fees={fees} projects={projects} residents={residents} showResidentPicker fileInputRef={fileInputRef} />
           <div className="flex gap-2 pt-2">
-            <button type="button" onClick={() => setModal(false)} className="btn-secondary flex-1">Cancel</button>
-            <button type="submit" className="btn-primary flex-1">Record payment</button>
+            <button type="button" onClick={() => setModal(false)} disabled={saving} className="btn-secondary flex-1">Cancel</button>
+            <button type="submit" disabled={saving} className="btn-primary flex-1">{saving ? 'Saving…' : 'Record payment'}</button>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal open={!!editTarget} onClose={() => setEditTarget(null)} title="Edit payment" wide>
+        <form onSubmit={submitEdit} className="space-y-5">
+          <p className="text-xs text-ink-500 -mt-1">
+            Editing {residentOf(editTarget?.residentId)?.name}'s payment recorded on {formatDate(editTarget?.date)}.
+          </p>
+          <PaymentForm form={editForm} setForm={setEditForm} fees={fees} projects={projects} residents={residents} showResidentPicker={false} fileInputRef={editFileInputRef} existingReceiptUrl={editForm.receiptUrl} />
+          <div className="flex gap-2 pt-2">
+            <button type="button" onClick={() => setEditTarget(null)} disabled={editSaving} className="btn-secondary flex-1">Cancel</button>
+            <button type="submit" disabled={editSaving} className="btn-primary flex-1">{editSaving ? 'Saving…' : 'Save changes'}</button>
           </div>
         </form>
       </Modal>
@@ -257,6 +413,16 @@ export default function Payments() {
         loading={rejecting}
         onConfirm={confirmReject}
         onCancel={() => setRejectTarget(null)}
+      />
+
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title="Delete this payment?"
+        message="This removes the record entirely — use this only to fix a mistaken manual entry (wrong resident, duplicate, etc). It's still kept in the audit log for reference. This can't be undone."
+        confirmLabel="Delete payment"
+        loading={deleting}
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleteTarget(null)}
       />
     </div>
   )

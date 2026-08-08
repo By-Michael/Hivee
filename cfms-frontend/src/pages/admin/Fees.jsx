@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Plus, Pencil, Trash2, Receipt as ReceiptIcon } from 'lucide-react'
 import { useData } from '../../context/DataContext'
-import { PageHeader, Modal, EmptyState, currency, ConfirmDialog } from '../../components/ui'
+import { PageHeader, Modal, EmptyState, currency, ConfirmDialog, notify } from '../../components/ui'
 
 const empty = { name: '', amount: '', frequency: 'monthly', category: 'Security' }
 
@@ -10,6 +10,7 @@ export default function Fees() {
   const [modal, setModal] = useState(false)
   const [editing, setEditing] = useState(null)
   const [form, setForm] = useState(empty)
+  const [saving, setSaving] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [deleting, setDeleting] = useState(false)
 
@@ -20,16 +21,21 @@ export default function Fees() {
     if (!deleteTarget) return
     setDeleting(true)
     removeFee(deleteTarget.id)
-      .then(() => setDeleteTarget(null))
-      .catch((err) => alert(err?.response?.data?.message || err.message))
+      .then(() => { setDeleteTarget(null); notify('Fee deleted.', 'success') })
+      .catch((err) => notify(err?.response?.data?.message || err.message))
       .finally(() => setDeleting(false))
   }
 
   function submit(e) {
     e.preventDefault()
+    setSaving(true)
     const payload = { ...form, amount: Number(form.amount) }
-    const action = editing ? updateFee(editing.id, payload) : addFee(payload)
-    action.then(() => setModal(false)).catch((err) => alert(err?.response?.data?.message || err.message))
+    const wasEditing = !!editing
+    const action = wasEditing ? updateFee(editing.id, payload) : addFee(payload)
+    action
+      .then(() => { setModal(false); notify(wasEditing ? 'Fee updated.' : 'Fee added.', 'success') })
+      .catch((err) => notify(err?.response?.data?.message || err.message))
+      .finally(() => setSaving(false))
   }
 
   return (
@@ -112,8 +118,8 @@ export default function Fees() {
             )}
           </div>
           <div className="flex gap-2 pt-2">
-            <button type="button" onClick={() => setModal(false)} className="btn-secondary flex-1">Cancel</button>
-            <button type="submit" className="btn-primary flex-1">{editing ? 'Save changes' : 'Add fee'}</button>
+            <button type="button" onClick={() => setModal(false)} disabled={saving} className="btn-secondary flex-1">Cancel</button>
+            <button type="submit" disabled={saving} className="btn-primary flex-1">{saving ? 'Saving…' : (editing ? 'Save changes' : 'Add fee')}</button>
           </div>
         </form>
       </Modal>

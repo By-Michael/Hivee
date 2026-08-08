@@ -80,6 +80,11 @@ export function residentToUI(r) {
     status: RESIDENT_STATUS_TO_UI[r.status] || 'active',
     joined: r.joinedAt,
     userId: r.userId ?? r.user?.id,
+    // True when this resident record belongs to a committee member (a
+    // resident who was promoted to ADMIN). Committee members keep their
+    // resident row, so they still show up in this list, but they can't be
+    // removed from here — see Residents.jsx.
+    isCommittee: (r.user?.role ?? r.role) === 'ADMIN',
   }
 }
 
@@ -145,7 +150,9 @@ export function paymentToUI(p) {
   return {
     id: p.id,
     residentId: p.residentId,
-    feeId: p.feeId,
+    feeId: p.feeId || '',
+    projectId: p.projectId || '',
+    projectName: p.project?.name || '',
     amount: Number(p.amount),
     date: p.paidAt,
     method: PAYMENT_METHOD_TO_UI[p.paymentMethod] || 'Cash',
@@ -153,17 +160,39 @@ export function paymentToUI(p) {
     reference: p.transactionReference || '',
     payerName: p.payerName || '',
     reason: p.reason || '',
+    receiptUrl: p.receiptUrl || '',
+    // Manually typed in by a committee member (vs. a resident's own
+    // bank-verified self-payment) — this is what the UI uses to decide
+    // whether to show edit/delete buttons for a row.
+    recordedBy: p.recordedBy || '',
+    recordedByName: p.recorder?.fullName || '',
   }
 }
 
 export function paymentToCreateAPI(form) {
   return {
     residentId: form.residentId || undefined,
-    feeId: form.feeId,
+    feeId: form.targetType === 'project' ? undefined : form.feeId,
+    projectId: form.targetType === 'project' ? form.projectId : undefined,
     amount: Number(form.amount),
     paymentMethod: PAYMENT_METHOD_TO_API[form.method] || 'CASH',
     transactionReference: form.reference || undefined,
   }
+}
+
+// Only for editing a manually-recorded payment (see paymentController.js
+// updatePayment) — every field optional, only send what actually changed.
+export function paymentToUpdateAPI(form) {
+  const body = {}
+  if (form.targetType === 'project') {
+    if (form.projectId) body.projectId = form.projectId
+  } else if (form.feeId) {
+    body.feeId = form.feeId
+  }
+  if (form.amount !== undefined && form.amount !== '') body.amount = Number(form.amount)
+  if (form.method) body.paymentMethod = PAYMENT_METHOD_TO_API[form.method] || 'CASH'
+  if (form.reference !== undefined) body.transactionReference = form.reference || ''
+  return body
 }
 
 // -------------------------------- funds -----------------------------------

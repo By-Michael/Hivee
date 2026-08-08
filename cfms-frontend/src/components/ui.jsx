@@ -1,14 +1,89 @@
-import { X } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { X, AlertTriangle, CheckCircle2, Info } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 
-export function StatCard({ icon: Icon, label, value, sub, trend, accent = 'brand' }) {
+// ---------------------------------------------------------------------------
+// In-app toast notifications — replaces native window.alert()/confirm()
+// popups (which look like a browser chrome dialog, break the site's own
+// look, and block the whole tab) with a small dismissible banner that stays
+// inside the app. Call `notify('message', 'error' | 'success' | 'info')`
+// from anywhere; <Toaster/> (mounted once in App.jsx) renders whatever is
+// currently queued.
+// ---------------------------------------------------------------------------
+let toastId = 0
+export function notify(message, type = 'error') {
+  if (!message) return
+  window.dispatchEvent(new CustomEvent('cfms:toast', { detail: { id: ++toastId, message, type } }))
+}
+
+const TOAST_STYLES = {
+  error: { icon: AlertTriangle, cls: 'bg-rose-50 border-rose-200 text-rose-700' },
+  success: { icon: CheckCircle2, cls: 'bg-emerald-50 border-emerald-200 text-emerald-700' },
+  info: { icon: Info, cls: 'bg-brand-50 border-brand-200 text-brand-700' },
+}
+
+export function Toaster() {
+  const [toasts, setToasts] = useState([])
+
+  useEffect(() => {
+    function onToast(e) {
+      const t = e.detail
+      setToasts((prev) => [...prev, t])
+      setTimeout(() => setToasts((prev) => prev.filter((x) => x.id !== t.id)), 5000)
+    }
+    window.addEventListener('cfms:toast', onToast)
+    return () => window.removeEventListener('cfms:toast', onToast)
+  }, [])
+
+  function dismiss(id) {
+    setToasts((prev) => prev.filter((t) => t.id !== id))
+  }
+
+  if (toasts.length === 0) return null
+
+  return (
+    <div className="fixed z-[100] top-4 right-4 flex flex-col gap-2 w-full max-w-sm pointer-events-none">
+      {toasts.map((t) => {
+        const style = TOAST_STYLES[t.type] || TOAST_STYLES.error
+        const Icon = style.icon
+        return (
+          <div
+            key={t.id}
+            className={`pointer-events-auto flex items-start gap-2.5 rounded-xl border px-4 py-3 shadow-lg animate-fade-up ${style.cls}`}
+          >
+            <Icon className="h-4 w-4 mt-0.5 shrink-0" />
+            <p className="text-sm font-medium flex-1">{t.message}</p>
+            <button onClick={() => dismiss(t.id)} className="shrink-0 opacity-60 hover:opacity-100">
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+export function StatCard({ icon: Icon, label, value, sub, trend, accent = 'brand', to, onClick }) {
   const accents = {
     brand: 'from-brand-500 to-brand-600',
     green: 'from-emerald-500 to-emerald-600',
     amber: 'from-amber-500 to-amber-600',
     rose: 'from-rose-500 to-rose-600',
   }
+  const navigate = useNavigate()
+  const isInteractive = Boolean(to || onClick)
+  const handleActivate = () => {
+    if (onClick) onClick()
+    else if (to) navigate(to)
+  }
   return (
-    <div className="card p-5 hover:shadow-glow transition-shadow duration-300 group">
+    <div
+      className={`card p-5 hover:shadow-glow transition-shadow duration-300 group${isInteractive ? ' cursor-pointer hover:-translate-y-0.5 hover:ring-1 hover:ring-brand-200 transition-all' : ''}`}
+      role={isInteractive ? 'button' : undefined}
+      tabIndex={isInteractive ? 0 : undefined}
+      onClick={isInteractive ? handleActivate : undefined}
+      onKeyDown={isInteractive ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleActivate() } } : undefined}
+    >
       <div className="flex items-start justify-between">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-ink-400">{label}</p>
@@ -48,7 +123,7 @@ export function Badge({ status }) {
   }
   const dot = {
     paid: 'bg-emerald-500', active: 'bg-emerald-500', completed: 'bg-emerald-500', verified: 'bg-emerald-500',
-    pending: 'bg-amber-500', 'in-progress': 'bg-brand-500', planned: 'bg-ink-400', inactive: 'bg-ink-400',
+    pending: 'bg-amber-500', 'in-progress': 'bg-brand-500', planned: 'bg-ink-400', inactive: 'bg-rose-500',
     overdue: 'bg-rose-500', rejected: 'bg-rose-500', cancelled: 'bg-rose-500', unverified: 'bg-amber-500',
   }
   return (

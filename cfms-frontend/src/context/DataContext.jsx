@@ -4,7 +4,7 @@ import { useAuth } from './AuthContext'
 import {
   residentToUI, residentToCreateAPI, residentToUpdateAPI, missingPaymentToUI,
   feeToUI, feeToAPI,
-  paymentToUI, paymentToCreateAPI,
+  paymentToUI, paymentToCreateAPI, paymentToUpdateAPI,
   fundToUI, fundToAPI,
   projectToUI, projectToAPI,
   expenseToUI, expenseToAPI,
@@ -139,22 +139,28 @@ export function DataProvider({ children }) {
     }
   }, [user, refresh])
 
-  // Actions call the real API, then re-fetch the affected slice from the
-  // server so the UI always reflects what's actually persisted.
+  // Actions call the real API, then re-sync in the background so the UI
+  // reflects what's actually persisted. Previously every action AWAITED
+  // the full refresh() (8 parallel endpoints) before resolving, so every
+  // "Save"/"Add" button across the whole site sat there for the entire
+  // refetch before the modal closed — slow, and with no feedback in the
+  // meantime it looked like nothing had happened. The actual write is
+  // what the caller needs to wait on; re-syncing the rest of the app's
+  // data can happen right after, without blocking the UI on it.
   const actions = useMemo(() => ({
     // ---- residents (ADMIN only on the backend) ----
     addResident: async (form) => {
       const { data: created } = await api.post(endpoints.residents(), residentToCreateAPI(form))
-      await refresh()
+      refresh({ silent: true })
       return created.data.resident?.id
     },
     updateResident: async (id, patch) => {
       await api.patch(endpoints.resident(id), residentToUpdateAPI(patch))
-      await refresh()
+      refresh({ silent: true })
     },
     removeResident: async (id) => {
       await api.delete(endpoints.resident(id))
-      await refresh()
+      refresh({ silent: true })
     },
     // Full detail for the admin's resident-info popup: profile fields plus
     // every fee this resident is missing a payment for.
@@ -175,49 +181,65 @@ export function DataProvider({ children }) {
     // ---- fees ----
     addFee: async (form) => {
       await api.post(endpoints.fees(), feeToAPI(form))
-      await refresh()
+      refresh({ silent: true })
     },
     updateFee: async (id, patch) => {
       await api.patch(endpoints.fee(id), feeToAPI(patch))
-      await refresh()
+      refresh({ silent: true })
     },
     removeFee: async (id) => {
       await api.delete(endpoints.fee(id))
-      await refresh()
+      refresh({ silent: true })
     },
 
     // ---- payments ----
-    // The backend always creates payments as PENDING and only lets an
-    // ADMIN verify/reject them afterwards via a separate endpoint. The
-    // UI's "Status" selector at creation time is honored by issuing that
-    // follow-up call so the recorded outcome still matches what the
-    // admin picked.
+    // A committee member recording a payment (cash-in-hand, no bank access,
+    // etc.) has, by definition, already received the money — the backend
+    // marks it VERIFIED straight away, so there's no separate follow-up
+    // status call needed here any more. If a receipt file was attached in
+    // the form, it's uploaded as a second call once the payment exists.
     addPayment: async (form) => {
       const { data: created } = await api.post(endpoints.payments(), paymentToCreateAPI(form))
-      const wantStatus = form.status === 'paid' ? 'VERIFIED' : form.status === 'overdue' ? 'REJECTED' : null
-      if (wantStatus) {
-        await api.patch(`${endpoints.payment(created.data.id)}/status`, { status: wantStatus })
+      if (form.receiptFile) {
+        const body = new FormData()
+        body.append('receipt', form.receiptFile)
+        await api.post(endpoints.paymentReceipt(created.data.id), body, { headers: { 'Content-Type': 'multipart/form-data' } })
       }
-      await refresh()
+      refresh({ silent: true })
+      return created.data.id
     },
+    // Verify/reject a pending payment (unchanged behaviour).
     updatePayment: async (id, patch) => {
       if (patch.status) {
         const map = { paid: 'VERIFIED', pending: 'PENDING', overdue: 'REJECTED', rejected: 'REJECTED' }
         await api.patch(`${endpoints.payment(id)}/status`, { status: map[patch.status] || 'PENDING' })
       }
-      await refresh()
+      refresh({ silent: true })
     },
-    removePayment: async () => {
-      // The backend has no payment-delete endpoint by design (financial
-      // records are append-only) — reject to VERIFIED/REJECTED instead.
-      throw new Error('Payments cannot be deleted. Use verify/reject instead.')
+    // Edit a manually-recorded payment. The backend rejects this for a
+    // resident's own self-verified (bank) payment — see paymentController.js.
+    editPayment: async (id, form) => {
+      await api.patch(endpoints.payment(id), paymentToUpdateAPI(form))
+      if (form.receiptFile) {
+        const body = new FormData()
+        body.append('receipt', form.receiptFile)
+        await api.post(endpoints.paymentReceipt(id), body, { headers: { 'Content-Type': 'multipart/form-data' } })
+      }
+      refresh({ silent: true })
+    },
+    // Delete a manually-recorded payment. Same recordedBy restriction as
+    // editPayment — a resident's bank-verified payment can never be
+    // deleted here, only rejected via updatePayment/status.
+    removePayment: async (id) => {
+      await api.delete(endpoints.payment(id))
+      refresh({ silent: true })
     },
     // Resident self-serve flow: submit a bank txn ID and get verified
     // against the bank instantly (no admin step). Throws on mismatch/
     // failure so the caller can show the error inline and let them retry.
-    submitSelfPayment: async ({ feeId, txnId, payerName, reason }) => {
-      const { data } = await api.post(endpoints.paymentSelfVerify(), { feeId, txnId, payerName, reason })
-      await refresh()
+    submitSelfPayment: async ({ feeId, txnId, payerName, reason, amount }) => {
+      const { data } = await api.post(endpoints.paymentSelfVerify(), { feeId, txnId, payerName, reason, amount })
+      refresh({ silent: true })
       return paymentToUI(data.data)
     },
     // Best-effort autofill from a payment screenshot — never trusted
@@ -234,36 +256,36 @@ export function DataProvider({ children }) {
     // ---- community settings (ADMIN only on the backend) ----
     updateCommunity: async (form) => {
       await api.patch(endpoints.communityMe(), communityToUpdateAPI(form))
-      await refresh()
+      refresh({ silent: true })
     },
 
     // ---- funds ----
     addFund: async (form) => {
       const { data: created } = await api.post(endpoints.funds(), fundToAPI(form))
-      await refresh()
+      refresh({ silent: true })
       return created.data.id
     },
     updateFund: async (id, patch) => {
       await api.patch(endpoints.fund(id), fundToAPI(patch))
-      await refresh()
+      refresh({ silent: true })
     },
     removeFund: async (id) => {
       await api.delete(endpoints.fund(id))
-      await refresh()
+      refresh({ silent: true })
     },
 
     // ---- projects ----
     addProject: async (form) => {
       await api.post(endpoints.projects(), projectToAPI(form))
-      await refresh()
+      refresh({ silent: true })
     },
     updateProject: async (id, patch) => {
       await api.patch(endpoints.project(id), projectToAPI(patch))
-      await refresh()
+      refresh({ silent: true })
     },
     removeProject: async (id) => {
       await api.delete(endpoints.project(id))
-      await refresh()
+      refresh({ silent: true })
     },
 
     // ---- expenses ----
@@ -275,16 +297,16 @@ export function DataProvider({ children }) {
         body.append('receipt', form.file)
         await api.post('/expenses/receipts', body, { headers: { 'Content-Type': 'multipart/form-data' } })
       }
-      await refresh()
+      refresh({ silent: true })
       return created.data.id
     },
     updateExpense: async (id, patch) => {
       await api.patch(endpoints.expense(id), expenseToAPI(patch))
-      await refresh()
+      refresh({ silent: true })
     },
     removeExpense: async (id) => {
       await api.delete(endpoints.expense(id))
-      await refresh()
+      refresh({ silent: true })
     },
 
     // ---- receipts ----
@@ -296,16 +318,16 @@ export function DataProvider({ children }) {
       body.append('expenseId', form.expenseId)
       body.append('receipt', form.file)
       await api.post('/expenses/receipts', body, { headers: { 'Content-Type': 'multipart/form-data' } })
-      await refresh()
+      refresh({ silent: true })
     },
     updateReceipt: async (id, patch) => {
       // SCHEMA GAP: "verified" isn't a real column — stored client-side.
       if (typeof patch.verified === 'boolean') setMeta('receiptVerified', id, patch.verified)
-      await refresh()
+      refresh({ silent: true })
     },
     removeReceipt: async (id) => {
       await api.delete(endpoints.receipt(id))
-      await refresh()
+      refresh({ silent: true })
     },
 
     refreshAll: () => refresh(),
@@ -321,12 +343,12 @@ export function DataProvider({ children }) {
     },
     respondAsCommitteeMember: async (id, decision) => {
       const { data } = await api.patch(endpoints.committeeTransferCommitteeResponse(id), { decision })
-      await refresh()
+      refresh({ silent: true })
       return data.data
     },
     respondAsTransferRecipient: async (id, decision) => {
       const { data } = await api.patch(endpoints.committeeTransferRecipientResponse(id), { decision })
-      await refresh()
+      refresh({ silent: true })
       return data.data
     },
     cancelCommitteeTransfer: async (id) => {
