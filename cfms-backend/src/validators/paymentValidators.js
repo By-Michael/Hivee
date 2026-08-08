@@ -20,4 +20,18 @@ const updatePaymentStatusSchema = z.object({
 
 const idParamSchema = z.object({ params: z.object({ id: z.string().uuid() }) });
 
-module.exports = { createPaymentSchema, updatePaymentStatusSchema, idParamSchema };
+const selfVerifyPaymentSchema = z.object({
+  body: z.object({
+    feeId: z.string().uuid(),
+    txnId: z.string().min(1),
+    payerName: z.string().min(1),
+    reason: z.string().optional(),
+  }),
+});
+
+module.exports = {
+  createPaymentSchema,
+  updatePaymentStatusSchema,
+  idParamSchema,
+  selfVerifyPaymentSchema,
+};

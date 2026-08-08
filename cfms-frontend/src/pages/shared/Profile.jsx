@@ -1,9 +1,8 @@
-import { useRef, useState } from 'react'
-import { Camera, KeyRound, Mail, Phone, ShieldCheck, Loader2 } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Camera, KeyRound, Mail, Phone, ShieldCheck, Loader2, Users2, Clock, XCircle, Search, Check } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import { useData } from '../../context/DataContext'
-import { PageHeader } from '../../components/ui'
-import { getMeta, setMeta } from '../../lib/adapters'
+import { PageHeader, Modal } from '../../components/ui'
 import api, { endpoints } from '../../lib/api'
 
 // Every sensitive profile change (password, phone, picture) goes through a
@@ -18,7 +17,7 @@ function generateOtp() {
 
 export default function Profile() {
   const { user } = useAuth()
-  const { residents } = useData()
+  const { residents, requestCommitteeTransfer, fetchMyTransferItems, cancelCommitteeTransfer, refresh } = useData()
   const me = residents.find((r) => r.userId === user?.id || r.id === user?.residentId)
 
   const [pendingAction, setPendingAction] = useState(null) // { type, payload, otp }
@@ -35,6 +34,65 @@ export default function Profile() {
   const [pwError, setPwError] = useState('')
   const [pwLoading, setPwLoading] = useState(false)
 
+  // ---- committee seat transfer (committee members only) ----
+  const isCommittee = user?.role === 'admin'
+  const [transferOpen, setTransferOpen] = useState(false)
+  const [transferTarget, setTransferTarget] = useState('')
+  const [transferQuery, setTransferQuery] = useState('')
+  const [transferSubmitting, setTransferSubmitting] = useState(false)
+  const [transferError, setTransferError] = useState('')
+  const [transferConfirm, setTransferConfirm] = useState(false)
+  const [myOutgoingRequest, setMyOutgoingRequest] = useState(null)
+  const [cancelling, setCancelling] = useState(false)
+
+  useEffect(() => {
+    if (!isCommittee) return
+    let cancelled = false
+    fetchMyTransferItems().then((r) => {
+      if (!cancelled) setMyOutgoingRequest(r.asRequester?.[0] || null)
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [isCommittee, fetchMyTransferItems])
+
+  const eligibleResidents = residents.filter((r) => r.userId !== user?.id && r.status === 'active')
+  const filteredResidents = (() => {
+    const q = transferQuery.trim().toLowerCase()
+    if (!q) return eligibleResidents
+    return eligibleResidents.filter((r) => [r.name, r.unit, r.email].join(' ').toLowerCase().includes(q))
+  })()
+  const selectedResident = eligibleResidents.find((r) => r.id === transferTarget)
+
+  async function confirmTransfer() {
+    setTransferSubmitting(true)
+    setTransferError('')
+    try {
+      const created = await requestCommitteeTransfer(transferTarget)
+      setMyOutgoingRequest(created)
+      setTransferConfirm(false)
+      setTransferOpen(false)
+      setBanner('Transfer request sent. It needs every other committee member to approve, then the resident\u2019s acceptance.')
+      setTimeout(() => setBanner(''), 5000)
+    } catch (err) {
+      setTransferError(err?.response?.data?.message || err.message || 'Could not start the transfer.')
+      setTransferConfirm(false)
+    } finally {
+      setTransferSubmitting(false)
+    }
+  }
+
+  async function cancelOutgoing() {
+    if (!myOutgoingRequest) return
+    setCancelling(true)
+    try {
+      await cancelCommitteeTransfer(myOutgoingRequest.id)
+      setMyOutgoingRequest(null)
+    } catch (err) {
+      alert(err?.response?.data?.message || err.message || 'Could not cancel the request.')
+    } finally {
+      setCancelling(false)
+    }
+  }
+
   function beginVerifiedChange(type, payload) {
     const otp = generateOtp()
     setPendingAction({ type, payload, otp })
@@ -43,15 +101,21 @@ export default function Profile() {
     setSentNotice(`A 6-digit code was "sent" to ${user?.email}. Since no email service is connected in this environment, it's shown here instead: ${otp}`)
   }
 
-  function confirmOtp() {
+  async function confirmOtp() {
     if (!pendingAction) return
     if (otpInput.trim() !== pendingAction.otp) {
       setOtpError('That code doesn\u2019t match. Check the code and try again.')
       return
     }
     if (pendingAction.type === 'phone') {
-      setMeta('residentPhone', me.id, pendingAction.payload.phone)
-      setBanner('Phone number updated.')
+      try {
+        await api.patch(endpoints.myResidentProfile(), { phone: pendingAction.payload.phone })
+        await refresh()
+        setBanner('Phone number updated.')
+      } catch (err) {
+        setOtpError(err?.response?.data?.message || err.message || 'Could not update your phone number.')
+        return
+      }
     } else if (pendingAction.type === 'avatar') {
       localStorage.setItem(`cfms_avatar_${user.id}`, pendingAction.payload.dataUrl)
       setAvatar(pendingAction.payload.dataUrl)
@@ -62,11 +126,23 @@ export default function Profile() {
     setTimeout(() => setBanner(''), 4000)
   }
 
+  function applyAvatar(dataUrl) {
+    localStorage.setItem(`cfms_avatar_${user.id}`, dataUrl)
+    setAvatar(dataUrl)
+    setBanner('Profile picture updated.')
+    setTimeout(() => setBanner(''), 4000)
+  }
+
   function onPickFile(e) {
     const file = e.target.files?.[0]
     if (!file) return
     const reader = new FileReader()
-    reader.onload = () => beginVerifiedChange('avatar', { dataUrl: reader.result })
+    reader.onload = () => {
+      // Committee members can change their photo without email verification;
+      // it's only required for password and phone number changes.
+      if (isCommittee) applyAvatar(reader.result)
+      else beginVerifiedChange('avatar', { dataUrl: reader.result })
+    }
     reader.readAsDataURL(file)
   }
 
@@ -122,7 +198,7 @@ export default function Profile() {
           </div>
           <div>
             <p className="font-semibold text-ink-800">{user?.name}</p>
-            <p className="text-sm text-ink-400 capitalize">{user?.role} · {user?.community}</p>
+            <p className="text-sm text-ink-400 capitalize">{user?.role === 'admin' ? 'Committee member' : user?.role} · {user?.community}</p>
           </div>
         </div>
 
@@ -165,6 +241,114 @@ export default function Profile() {
           {pwLoading ? 'Updating…' : 'Change password'}
         </button>
       </form>
+
+      {/* Committee seat transfer */}
+      {isCommittee && (
+        <div className="card p-5 mb-5 space-y-3">
+          <h3 className="font-semibold text-ink-800 flex items-center gap-2"><Users2 className="h-4 w-4 text-brand-600" /> Transfer committee status</h3>
+          <p className="text-sm text-ink-500">
+            Hand your committee seat to another resident. The transfer only goes through once every other
+            committee member approves, and the resident you choose accepts it too.
+          </p>
+
+          {myOutgoingRequest ? (
+            <div className="rounded-xl bg-amber-50 border border-amber-100 px-4 py-3 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-sm text-amber-700">
+                <Clock className="h-4 w-4 shrink-0" />
+                <span>
+                  Pending &mdash; {myOutgoingRequest.status === 'PENDING_COMMITTEE' ? 'awaiting committee approval' : 'awaiting the resident\u2019s acceptance'} for{' '}
+                  <strong>{myOutgoingRequest.toResident?.user?.fullName}</strong>.
+                </span>
+              </div>
+              <button onClick={cancelOutgoing} disabled={cancelling} className="btn-secondary !py-1.5 !px-3 text-xs shrink-0">
+                <XCircle className="h-3.5 w-3.5" /> {cancelling ? 'Cancelling…' : 'Cancel'}
+              </button>
+            </div>
+          ) : (
+            <button onClick={() => { setTransferOpen(true); setTransferTarget(''); setTransferQuery(''); setTransferError('') }} className="btn-secondary">
+              <Users2 className="h-4 w-4" /> Start a transfer
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Transfer: pick resident */}
+      <Modal open={transferOpen} onClose={() => setTransferOpen(false)} title="Transfer committee status">
+        <div className="space-y-4">
+          <p className="text-sm text-ink-500">Search for the resident you want to become a committee member in your place.</p>
+          <div>
+            <label className="label">Resident</label>
+            {selectedResident ? (
+              <div className="flex items-center justify-between rounded-xl border border-brand-200 bg-brand-50/60 px-3.5 py-2.5">
+                <div className="flex items-center gap-2 text-sm">
+                  <Check className="h-4 w-4 text-brand-600 shrink-0" />
+                  <span className="font-medium text-ink-800">{selectedResident.name}</span>
+                  <span className="text-ink-400">· Unit {selectedResident.unit}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { setTransferTarget(''); setTransferQuery('') }}
+                  className="text-xs font-medium text-brand-600 hover:text-brand-700"
+                >
+                  Change
+                </button>
+              </div>
+            ) : (
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-400" />
+                <input
+                  autoFocus
+                  className="input pl-9"
+                  placeholder="Type a name, unit, or email…"
+                  value={transferQuery}
+                  onChange={(e) => setTransferQuery(e.target.value)}
+                />
+                {transferQuery.trim() && (
+                  <div className="mt-1.5 rounded-xl border border-ink-100 max-h-56 overflow-y-auto divide-y divide-ink-50">
+                    {filteredResidents.length === 0 ? (
+                      <p className="px-3.5 py-3 text-sm text-ink-400 text-center">No matching residents.</p>
+                    ) : (
+                      filteredResidents.map((r) => (
+                        <button
+                          key={r.id}
+                          type="button"
+                          onClick={() => { setTransferTarget(r.id); setTransferQuery('') }}
+                          className="w-full text-left px-3.5 py-2.5 hover:bg-brand-50 transition flex items-center justify-between"
+                        >
+                          <span className="text-sm font-medium text-ink-800">{r.name}</span>
+                          <span className="text-xs text-ink-400">Unit {r.unit}</span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+          {transferError && <p className="text-sm text-rose-600">{transferError}</p>}
+          <div className="flex gap-2 pt-2">
+            <button type="button" onClick={() => setTransferOpen(false)} className="btn-secondary flex-1">Cancel</button>
+            <button type="button" disabled={!transferTarget} onClick={() => setTransferConfirm(true)} className="btn-primary flex-1 disabled:opacity-40">Continue</button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Transfer: final confirmation */}
+      <Modal open={transferConfirm} onClose={() => setTransferConfirm(false)} title="Confirm transfer request">
+        <div className="space-y-4">
+          <p className="text-sm text-ink-500">
+            You\u2019re about to request handing your committee seat to{' '}
+            <strong className="text-ink-800">{selectedResident?.name}</strong>.
+            This can\u2019t be undone once everyone accepts &mdash; are you sure?
+          </p>
+          <div className="flex gap-2 pt-2">
+            <button type="button" onClick={() => setTransferConfirm(false)} className="btn-secondary flex-1">Go back</button>
+            <button type="button" disabled={transferSubmitting} onClick={confirmTransfer} className="btn-primary flex-1">
+              {transferSubmitting ? 'Sending…' : 'Yes, send request'}
+            </button>
+          </div>
+        </div>
+      </Modal>
 
       {/* OTP modal */}
       {pendingAction && (

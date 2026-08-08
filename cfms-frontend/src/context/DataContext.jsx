@@ -2,13 +2,14 @@ import { createContext, useContext, useEffect, useMemo, useState, useCallback } 
 import api, { endpoints } from '../lib/api'
 import { useAuth } from './AuthContext'
 import {
-  residentToUI, residentToCreateAPI, residentToUpdateAPI,
+  residentToUI, residentToCreateAPI, residentToUpdateAPI, missingPaymentToUI,
   feeToUI, feeToAPI,
   paymentToUI, paymentToCreateAPI,
   fundToUI, fundToAPI,
   projectToUI, projectToAPI,
   expenseToUI, expenseToAPI,
   receiptToUI,
+  communityToUI, communityToUpdateAPI,
   setMeta,
 } from '../lib/adapters'
 
@@ -30,72 +31,113 @@ export function DataProvider({ children }) {
   const [data, setData] = useState(EMPTY_DATA)
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState('')
+  // True once the first fetch (success or failure) after a login has
+  // finished. Lets the UI distinguish "still waiting on the very first
+  // load" (show a skeleton) from "a background/action refresh is in
+  // flight" (keep showing the page — see AppLayout).
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false)
 
   // Fetches everything the logged-in user's role is allowed to see,
   // straight from the real Express + PostgreSQL API, whenever the user
   // changes (login, logout, token refresh).
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (opts = {}) => {
     if (!user) return
-    setLoading(true)
+    // Background/silent refreshes (auto-poll, tab refocus) skip the
+    // loading flag so they never flash a spinner over content the user
+    // is already looking at.
+    if (!opts.silent) setLoading(true)
     setLoadError('')
     try {
       const isAdmin = user.rawRole === 'ADMIN' || user.rawRole === 'SUPER_ADMIN'
 
-      const [feesRes, fundsRes, projectsRes, expensesRes, paymentsRes] = await Promise.all([
+      // Everything the page needs is fetched in ONE parallel batch so the
+      // total wait is the slowest single request, not the sum of all of
+      // them. Previously the residents call ran *after* this batch
+      // (adding a full extra round trip) and each fund's summary was
+      // fetched one-by-one (an N+1 that scaled with fund count) — both
+      // are why data used to "pop in" late after everything else.
+      const [
+        feesRes, fundsRes, projectsRes, expensesRes, paymentsRes, communityRes, residentsRes, fundSummariesRes,
+      ] = await Promise.all([
         api.get(endpoints.fees()),
         api.get(endpoints.funds()),
         api.get(endpoints.projects()),
         api.get(endpoints.expenses()),
         api.get(endpoints.payments()),
+        // Every logged-in user (admin or resident) needs to read the
+        // community's payment account details — residents to see where to
+        // send money, admins to edit it — so this is fetched for both.
+        api.get(endpoints.communityMe()).catch(() => null),
+        // Residents: admins list the whole community; residents only get
+        // their own profile (list endpoint is admin-only on the backend).
+        (isAdmin ? api.get(endpoints.residents()) : api.get('/residents/me')).catch(() => null),
+        // Fund balances are derived (allocated vs. spent). A single bulk
+        // endpoint replaces the old per-fund summary request.
+        api.get(endpoints.fundSummaries()).catch(() => null),
       ])
 
-      // Residents: admins list the whole community; residents only get
-      // their own profile (list endpoint is admin-only on the backend).
-      let residentsRaw = []
-      if (isAdmin) {
-        const r = await api.get(endpoints.residents())
-        residentsRaw = r.data.data
-      } else {
-        try {
-          const r = await api.get('/residents/me')
-          residentsRaw = r.data.data ? [r.data.data] : []
-        } catch {
-          residentsRaw = []
-        }
-      }
+      const residentsRaw = isAdmin
+        ? (residentsRes?.data?.data || [])
+        : (residentsRes?.data?.data ? [residentsRes.data.data] : [])
 
-      // Fund balances are derived (allocated vs. spent), so fetch each
-      // fund's summary in parallel rather than storing a balance column.
       const fundsRaw = fundsRes.data.data
-      const summaries = await Promise.all(
-        fundsRaw.map((f) => api.get(`${endpoints.fund(f.id)}/summary`).then((r) => r.data.data).catch(() => null))
-      )
+      const summariesById = new Map((fundSummariesRes?.data?.data || []).map((s) => [s.fundId, s]))
 
       const expensesRaw = expensesRes.data.data
       const receiptsFlat = expensesRaw.flatMap((e) => (e.receipts || []).map(receiptToUI))
 
+      const communityRaw = communityRes?.data?.data
       setData({
-        community: { name: user.community, address: '', units: 0 },
+        community: communityRaw ? communityToUI(communityRaw) : { name: user.community, address: '', paymentBankName: '', paymentAccountName: '', paymentAccountNumber: '' },
         residents: residentsRaw.map(residentToUI),
         fees: feesRes.data.data.map(feeToUI),
         payments: paymentsRes.data.data.map(paymentToUI),
-        funds: fundsRaw.map((f, i) => fundToUI(f, summaries[i])),
+        funds: fundsRaw.map((f) => fundToUI(f, summariesById.get(f.id) || null)),
         projects: projectsRes.data.data.map(projectToUI),
         expenses: expensesRaw.map(expenseToUI),
         receipts: receiptsFlat,
       })
     } catch (err) {
-      setLoadError(err?.response?.data?.message || err.message || 'Failed to load data from the server.')
+      if (!opts.silent) setLoadError(err?.response?.data?.message || err.message || 'Failed to load data from the server.')
     } finally {
-      setLoading(false)
+      if (!opts.silent) setLoading(false)
+      if (!opts.silent) setHasLoadedOnce(true)
     }
   }, [user])
 
   useEffect(() => {
     if (bootstrapped && user) refresh()
-    if (!user) setData(EMPTY_DATA)
+    if (!user) { setData(EMPTY_DATA); setHasLoadedOnce(false) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, bootstrapped])
+
+  // Keep the dashboard feeling "alive": silently re-sync with the server
+  // periodically so balances, new payments, etc. show up without a manual
+  // refresh. Silent = no loading spinner, so it never interrupts typing.
+  // Kept fairly infrequent (and de-duped against focus events below)
+  // because each refresh fans out into many parallel API calls.
+  useEffect(() => {
+    if (!user) return
+    let lastRun = Date.now()
+    const t = setInterval(() => { lastRun = Date.now(); refresh({ silent: true }) }, 60000)
+    // Also refresh when the tab regains focus/visibility — catches
+    // changes made elsewhere while the user was away. Skipped if the
+    // interval already refreshed recently, to avoid a duplicate burst
+    // of requests right after the timer fires.
+    function onVisible() {
+      if (document.visibilityState === 'visible' && Date.now() - lastRun > 15000) {
+        lastRun = Date.now()
+        refresh({ silent: true })
+      }
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('focus', onVisible)
+    return () => {
+      clearInterval(t)
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('focus', onVisible)
+    }
+  }, [user, refresh])
 
   // Actions call the real API, then re-fetch the affected slice from the
   // server so the UI always reflects what's actually persisted.
@@ -113,6 +155,21 @@ export function DataProvider({ children }) {
     removeResident: async (id) => {
       await api.delete(endpoints.resident(id))
       await refresh()
+    },
+    // Full detail for the admin's resident-info popup: profile fields plus
+    // every fee this resident is missing a payment for.
+    fetchResidentSummary: async (id) => {
+      const { data } = await api.get(endpoints.residentSummary(id))
+      return {
+        resident: residentToUI(data.data.resident),
+        missingPayments: (data.data.missingPayments || []).map(missingPaymentToUI),
+      }
+    },
+
+    // ---- system audit log (read-only: every committee member can view) ----
+    fetchAuditLogs: async (params) => {
+      const { data } = await api.get(endpoints.auditLogs(), { params })
+      return data.data
     },
 
     // ---- fees ----
@@ -154,6 +211,30 @@ export function DataProvider({ children }) {
       // The backend has no payment-delete endpoint by design (financial
       // records are append-only) — reject to VERIFIED/REJECTED instead.
       throw new Error('Payments cannot be deleted. Use verify/reject instead.')
+    },
+    // Resident self-serve flow: submit a bank txn ID and get verified
+    // against the bank instantly (no admin step). Throws on mismatch/
+    // failure so the caller can show the error inline and let them retry.
+    submitSelfPayment: async ({ feeId, txnId, payerName, reason }) => {
+      const { data } = await api.post(endpoints.paymentSelfVerify(), { feeId, txnId, payerName, reason })
+      await refresh()
+      return paymentToUI(data.data)
+    },
+    // Best-effort autofill from a payment screenshot — never trusted
+    // directly, just prefills the form for the resident to confirm/edit.
+    parsePaymentScreenshot: async (file) => {
+      const body = new FormData()
+      body.append('screenshot', file)
+      const { data } = await api.post(endpoints.paymentParseScreenshot(), body, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
+      return data.data
+    },
+
+    // ---- community settings (ADMIN only on the backend) ----
+    updateCommunity: async (form) => {
+      await api.patch(endpoints.communityMe(), communityToUpdateAPI(form))
+      await refresh()
     },
 
     // ---- funds ----
@@ -228,9 +309,32 @@ export function DataProvider({ children }) {
     },
 
     refreshAll: () => refresh(),
+
+    // ---- committee seat transfer ----
+    fetchMyTransferItems: async () => {
+      const { data } = await api.get(endpoints.committeeTransferMine())
+      return data.data // { asApprover, asRecipient, asRequester }
+    },
+    requestCommitteeTransfer: async (toResidentId) => {
+      const { data } = await api.post(endpoints.committeeTransfers(), { toResidentId })
+      return data.data
+    },
+    respondAsCommitteeMember: async (id, decision) => {
+      const { data } = await api.patch(endpoints.committeeTransferCommitteeResponse(id), { decision })
+      await refresh()
+      return data.data
+    },
+    respondAsTransferRecipient: async (id, decision) => {
+      const { data } = await api.patch(endpoints.committeeTransferRecipientResponse(id), { decision })
+      await refresh()
+      return data.data
+    },
+    cancelCommitteeTransfer: async (id) => {
+      await api.delete(endpoints.committeeTransfer(id))
+    },
   }), [refresh])
 
-  return <DataContext.Provider value={{ ...data, ...actions, loading, loadError, refresh }}>{children}</DataContext.Provider>
+  return <DataContext.Provider value={{ ...data, ...actions, loading, loadError, hasLoadedOnce, refresh }}>{children}</DataContext.Provider>
 }
 
 export function useData() {

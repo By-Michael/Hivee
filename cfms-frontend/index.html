@@ -8,6 +8,20 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Sora:wght@500;600;700;800&display=swap" rel="stylesheet" />
+    <script>
+      // Applied synchronously, before any CSS/React loads, so the page
+      // never flashes the wrong theme. Reads the SAME key ThemeContext
+      // uses. If it's anything other than the literal string "dark",
+      // light is used — this is the single source of truth for "white
+      // is the default".
+      (function () {
+        try {
+          if (localStorage.getItem('cfms_theme') === 'dark') {
+            document.documentElement.classList.add('dark')
+          }
+        } catch (e) {}
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>

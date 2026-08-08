@@ -11,12 +11,15 @@ import AdminFunds from './pages/admin/Funds'
 import AdminProjects from './pages/admin/Projects'
 import AdminExpenses from './pages/admin/Expenses'
 import AdminReports from './pages/admin/Reports'
+import AdminAuditLog from './pages/admin/AuditLog'
+import AdminSettings from './pages/admin/Settings'
 
 import ResidentDashboard from './pages/resident/Dashboard'
 import ResidentPayments from './pages/resident/Payments'
 import ResidentFunds from './pages/resident/Funds'
 import ResidentProjects from './pages/resident/Projects'
 import ResidentExpenses from './pages/resident/Expenses'
+import ResidentReports from './pages/resident/Reports'
 
 import Profile from './pages/shared/Profile'
 
@@ -51,6 +54,8 @@ export default function App() {
         <Route path="projects" element={<AdminProjects />} />
         <Route path="expenses" element={<AdminExpenses />} />
         <Route path="reports" element={<AdminReports />} />
+        <Route path="audit-log" element={<AdminAuditLog />} />
+        <Route path="settings" element={<AdminSettings />} />
         <Route path="profile" element={<Profile />} />
       </Route>
 
@@ -60,6 +65,7 @@ export default function App() {
         <Route path="funds" element={<ResidentFunds />} />
         <Route path="projects" element={<ResidentProjects />} />
         <Route path="expenses" element={<ResidentExpenses />} />
+        <Route path="reports" element={<ResidentReports />} />
         <Route path="profile" element={<Profile />} />
       </Route>
 

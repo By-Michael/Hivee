@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Plus, Pencil, Trash2, FolderKanban, Calendar } from 'lucide-react'
 import { useData } from '../../context/DataContext'
-import { PageHeader, Modal, Badge, currency, formatDate, EmptyState } from '../../components/ui'
+import { PageHeader, Modal, Badge, currency, formatDate, EmptyState, ConfirmDialog } from '../../components/ui'
 
 const empty = { name: '', fundId: '', budget: '', status: 'planned', startDate: '', endDate: '' }
 
@@ -10,11 +10,22 @@ export default function Projects() {
   const [modal, setModal] = useState(false)
   const [editing, setEditing] = useState(null)
   const [form, setForm] = useState(empty)
+  const [deleteTarget, setDeleteTarget] = useState(null)
+  const [deleting, setDeleting] = useState(false)
 
   const fundOf = (id) => funds.find((f) => f.id === id)?.name || '—'
 
   function openAdd() { setEditing(null); setForm(empty); setModal(true) }
   function openEdit(p) { setEditing(p); setForm(p); setModal(true) }
+
+  function confirmDelete() {
+    if (!deleteTarget) return
+    setDeleting(true)
+    removeProject(deleteTarget.id)
+      .then(() => setDeleteTarget(null))
+      .catch((err) => alert(err?.response?.data?.message || err.message))
+      .finally(() => setDeleting(false))
+  }
 
   function submit(e) {
     e.preventDefault()
@@ -46,7 +57,7 @@ export default function Projects() {
                   </div>
                   <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                     <button onClick={() => openEdit(p)} className="p-1.5 rounded-lg text-ink-400 hover:bg-brand-50 hover:text-brand-600"><Pencil className="h-3.5 w-3.5" /></button>
-                    <button onClick={() => removeProject(p.id).catch((err) => alert(err?.response?.data?.message || err.message))} className="p-1.5 rounded-lg text-ink-400 hover:bg-rose-50 hover:text-rose-500"><Trash2 className="h-3.5 w-3.5" /></button>
+                    <button onClick={() => setDeleteTarget(p)} className="p-1.5 rounded-lg text-ink-400 hover:bg-rose-50 hover:text-rose-500"><Trash2 className="h-3.5 w-3.5" /></button>
                   </div>
                 </div>
                 <div className="mt-3"><Badge status={p.status} /></div>
@@ -116,6 +127,15 @@ export default function Projects() {
           </div>
         </form>
       </Modal>
+
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title="Delete project?"
+        message={deleteTarget ? `This will permanently delete "${deleteTarget.name}". This action cannot be undone.` : ''}
+        loading={deleting}
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   )
 }

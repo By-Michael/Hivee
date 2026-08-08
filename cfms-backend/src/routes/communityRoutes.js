@@ -11,8 +11,10 @@ router.use(authenticate);
 router.get('/', authorize('SUPER_ADMIN'), ctrl.listCommunities);
 router.get('/:id', authorize('SUPER_ADMIN'), ctrl.getCommunity);
 
-// Tenant self-service: the community's own ADMIN.
-router.get('/me/current', authorize('ADMIN'), ctrl.getMyCommunity);
+// Tenant self-service. Residents need read access too — they need to see
+// the community's payment account details (bank name/account/number) in
+// the "Make a payment" flow; only ADMIN can edit them.
+router.get('/me/current', authorize('ADMIN', 'RESIDENT'), ctrl.getMyCommunity);
 router.patch('/me/current', authorize('ADMIN'), ctrl.updateMyCommunity);
 
 module.exports = router;

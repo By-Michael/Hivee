@@ -100,6 +100,9 @@ async function main() {
       name: 'Greenwood Estate',
       address: '123 Greenwood Ave, Addis Ababa',
       contactInfo: 'committee@greenwood.example',
+      paymentBankName: 'Commercial Bank of Ethiopia',
+      paymentAccountName: 'Greenwood Estate Residents Committee',
+      paymentAccountNumber: '1000123456789',
     },
   });
 

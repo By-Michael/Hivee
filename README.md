@@ -45,7 +45,7 @@ UI still works, clearly commented as `SCHEMA GAP`:
 
 | UI field | Status |
 |---|---|
-| `resident.phone` | Not in `User`/`Resident` — client-only, per-browser. Recommend adding a `phone` column. |
+| `resident.phone`, `resident.idNumber`, `resident.address`, `resident.ownerType` | **No longer a gap** — these are now real columns on `Resident` (see migration below), edited from the admin Residents page and the resident-details popup. |
 | `fund.balance` | Not stored — computed live from `GET /funds/:id/summary` (allocated − spent across the fund's projects). This is real data, just derived rather than a stored counter. |
 | `fund.category` | Stored for real, in `Fund.description` (a free-text column being reused). |
 | `receipt.verified` | Not in `Receipt` — client-only. Recommend adding a `verified Boolean` column + an admin verify endpoint. |
@@ -54,6 +54,30 @@ UI still works, clearly commented as `SCHEMA GAP`:
 
 None of these block real usage — they're documented trade-offs from
 adapting a UI that predates the final schema, not missing functionality.
+
+## New in this revision
+
+- **System audit log** — every meaningful action a committee member (or
+  platform staff) takes — creating/updating/deleting residents, fees,
+  payments, funds, projects, expenses, and committee-seat transfers — is
+  written to a new append-only `AuditLog` table (`prisma/schema.prisma`,
+  `src/utils/audit.js`). `GET /api/v1/audit-logs` lets **any** committee
+  member (`ADMIN`) view the full trail for their community; there is
+  deliberately no PATCH/PUT/DELETE route for this resource, and the new
+  `/admin/audit-log` page in the frontend has no edit/delete controls.
+- **Resident info popup** — clicking a resident (or the new eye icon) on
+  the admin Residents page opens a detail view backed by a new
+  `GET /residents/:id/summary` endpoint. It returns the resident's full
+  profile plus a `missingPayments` list (every community fee this resident
+  has no verified/pending payment against). The same popup has an inline
+  edit form for email, phone, ID number, address, status, unit, and
+  owner/renter type — everything shown on the resident entry form except
+  the password, which is never returned or editable from this screen.
+- **Migration needed**: `Resident` gained four new optional columns
+  (`phone`, `idNumber`, `address`, `ownerType`) and a new `AuditLog` table
+  was added. Run `npx prisma migrate dev --name audit_log_and_resident_fields`
+  (or `db push` in dev) before starting the API against a real database.
+
 
 ## Verification performed in this environment
 

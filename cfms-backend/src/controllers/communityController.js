@@ -24,10 +24,10 @@ const getMyCommunity = catchAsync(async (req, res) => {
 });
 
 const updateMyCommunity = catchAsync(async (req, res) => {
-  const { name, address, contactInfo } = req.body;
+  const { name, address, contactInfo, paymentBankName, paymentAccountName, paymentAccountNumber } = req.body;
   const updated = await prisma.community.update({
     where: { id: req.user.communityId },
-    data: { name, address, contactInfo },
+    data: { name, address, contactInfo, paymentBankName, paymentAccountName, paymentAccountNumber },
   });
   res.json({ success: true, data: updated });
 });

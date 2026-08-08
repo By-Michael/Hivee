@@ -91,6 +91,63 @@ export function Modal({ open, onClose, title, children, wide, dismissible = true
   )
 }
 
+export function ConfirmDialog({ open, title = 'Are you sure?', message, confirmLabel = 'Delete', cancelLabel = 'Cancel', danger = true, loading = false, error = '', onConfirm, onCancel }) {
+  if (!open) return null
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-ink-900/40 backdrop-blur-sm" onClick={loading ? undefined : onCancel} />
+      <div className="relative w-full max-w-sm card p-6 animate-fade-up">
+        <h3 className="text-lg font-bold text-ink-900">{title}</h3>
+        {message && <p className="mt-2 text-sm text-ink-500">{message}</p>}
+        {error && (
+          <p className="mt-3 text-sm text-rose-600 bg-rose-50 ring-1 ring-rose-100 rounded-lg px-3 py-2">{error}</p>
+        )}
+        <div className="mt-6 flex items-center justify-end gap-3">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={loading}
+            className="rounded-xl px-4 py-2.5 text-sm font-semibold text-ink-600 hover:bg-ink-100 transition disabled:opacity-50"
+          >
+            {cancelLabel}
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={loading}
+            className={`rounded-xl px-4 py-2.5 text-sm font-semibold text-white transition disabled:opacity-50 ${danger ? 'bg-rose-600 hover:bg-rose-700' : 'bg-brand-600 hover:bg-brand-700'}`}
+          >
+            {loading ? 'Please wait…' : confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// Shown in place of a page's content while its first data load is still in
+// flight, so the user sees "this is loading" instead of a flash of empty
+// tables/zeroed stats that then suddenly pop to real numbers a moment
+// later. Only meant for the very first load — see AppLayout, which stops
+// showing this once the first fetch (success or failure) has completed.
+export function PageSkeleton() {
+  return (
+    <div className="animate-pulse" aria-busy="true" aria-label="Loading your data…">
+      <div className="h-7 w-56 rounded-lg bg-ink-100 mb-2" />
+      <div className="h-4 w-80 rounded-lg bg-ink-100 mb-6" />
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
+        {[0, 1, 2, 3].map((i) => (
+          <div key={i} className="card p-5 h-24 bg-ink-50" />
+        ))}
+      </div>
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
+        <div className="card p-5 xl:col-span-2 h-64 bg-ink-50" />
+        <div className="card p-5 h-64 bg-ink-50" />
+      </div>
+    </div>
+  )
+}
+
 export function EmptyState({ icon: Icon, title, subtitle, action }) {
   return (
     <div className="flex flex-col items-center justify-center py-16 px-6 text-center">

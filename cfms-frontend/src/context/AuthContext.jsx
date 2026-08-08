@@ -35,8 +35,8 @@ function normalizeUser(u) {
 // one still authenticates against the real API, same as typing them in by
 // hand; nothing here is a stand-in for real data.
 const DEMO_LOGINS = [
-  { role: 'admin', email: 'admin@greenwood.example', password: 'Password123!' },
-  { role: 'resident', email: 'bob@greenwood.example', password: 'Password123!' },
+  { role: 'admin', email: 'admin@greenwood.example', phone: '', password: 'Password123!' },
+  { role: 'resident', email: 'bob@greenwood.example', phone: '', password: 'Password123!' },
 ]
 
 export function AuthProvider({ children }) {
@@ -52,6 +52,18 @@ export function AuthProvider({ children }) {
     if (user) localStorage.setItem('cfms_user', JSON.stringify(user))
     else localStorage.removeItem('cfms_user')
   }, [user])
+
+  // Fired by the api client when a 401 survives a refresh attempt (refresh
+  // cookie missing/expired/revoked) — the session is genuinely over, so
+  // reflect that in state instead of leaving stale user data around while
+  // every subsequent request silently 401s.
+  useEffect(() => {
+    function handleExpired() {
+      setUser(null)
+    }
+    window.addEventListener('cfms:session-expired', handleExpired)
+    return () => window.removeEventListener('cfms:session-expired', handleExpired)
+  }, [])
 
   // On first load, if we already have an access token, re-validate it
   // against /auth/me instead of trusting the cached profile forever.
@@ -72,16 +84,16 @@ export function AuthProvider({ children }) {
       .finally(() => setBootstrapped(true))
   }, [])
 
-  async function login(email, password) {
+  async function login(identifier, password) {
     setLoading(true)
     setError('')
     try {
-      const { data } = await api.post(endpoints.login(), { email, password })
+      const { data } = await api.post(endpoints.login(), { identifier, password })
       localStorage.setItem('cfms_token', data.data.accessToken)
-      // login() doesn't include resident/community relations — fetch the
-      // full profile once so community name / residentId are available.
-      const me = await api.get(endpoints.me())
-      const safe = normalizeUser(me.data.data)
+      // The login response already includes resident/community relations
+      // (see authController.login), so no follow-up /auth/me round trip
+      // is needed before the data-loading batch can start.
+      const safe = normalizeUser(data.data.user)
       setUser(safe)
       return safe
     } catch (e) {

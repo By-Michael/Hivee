@@ -107,8 +107,24 @@ export default function AdminDashboard() {
           <p className="text-xs text-ink-400 mb-2">Balance share by fund</p>
           <ResponsiveContainer width="100%" height={190}>
             <PieChart>
-              <Pie data={fundSplit} dataKey="value" nameKey="name" innerRadius={54} outerRadius={78} paddingAngle={3}>
-                {fundSplit.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+              <Pie
+                data={fundSplit}
+                dataKey="value"
+                nameKey="name"
+                innerRadius={56}
+                outerRadius={78}
+                paddingAngle={3}
+                cornerRadius={7}
+                stroke="none"
+                startAngle={90}
+                endAngle={-270}
+                isAnimationActive
+                animationDuration={700}
+                animationEasing="ease-out"
+              >
+                {fundSplit.map((_, i) => (
+                  <Cell key={i} fill={COLORS[i % COLORS.length]} style={{ filter: 'drop-shadow(0 2px 6px rgba(16,30,66,0.18))' }} />
+                ))}
               </Pie>
               <Tooltip formatter={(v) => currency(v)} contentStyle={{ borderRadius: 12, border: '1px solid #eef1f8' }} />
             </PieChart>

@@ -12,6 +12,8 @@ router.use(authenticate, tenantScope);
 
 router.post('/', authorize('ADMIN'), validate(createFundSchema), ctrl.createFund);
 router.get('/', authorize('ADMIN', 'RESIDENT'), ctrl.listFunds);
+// Must be registered before '/:id' so "summaries" isn't swallowed as an id param.
+router.get('/summaries', authorize('ADMIN', 'RESIDENT'), ctrl.listFundSummaries);
 router.get('/:id', authorize('ADMIN', 'RESIDENT'), validate(idParamSchema), ctrl.getFund);
 router.get('/:id/summary', authorize('ADMIN', 'RESIDENT'), validate(idParamSchema), ctrl.getFundSummary);
 router.patch('/:id', authorize('ADMIN'), validate(updateFundSchema), ctrl.updateFund);

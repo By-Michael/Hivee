@@ -63,15 +63,20 @@ const PROJECT_STATUS_TO_API = { planned: 'PLANNED', 'in-progress': 'ONGOING', co
 const FUND_CATEGORIES = ['Security', 'Utilities', 'Maintenance', 'Development']
 
 // ------------------------------ residents -------------------------------
-// SCHEMA GAP: phone isn't modeled on User/Resident. Kept in the local meta
-// overlay, keyed by resident id, so the UI's phone field keeps working.
+// phone, idNumber, address, and ownerType are real columns on Resident.
+const OWNER_TYPE_TO_UI = { OWNER: 'owner', RENTER: 'renter' }
+const OWNER_TYPE_TO_API = { owner: 'OWNER', renter: 'RENTER' }
+
 export function residentToUI(r) {
   return {
     id: r.id,
     name: r.user?.fullName ?? r.fullName ?? '',
     unit: r.unitNumber ?? '',
-    phone: getMeta('residentPhone', r.id, ''),
+    phone: r.phone ?? '',
     email: r.user?.email ?? r.email ?? '',
+    idNumber: r.idNumber ?? '',
+    address: r.address ?? '',
+    ownerType: OWNER_TYPE_TO_UI[r.ownerType] || 'owner',
     status: RESIDENT_STATUS_TO_UI[r.status] || 'active',
     joined: r.joinedAt,
     userId: r.userId ?? r.user?.id,
@@ -85,14 +90,33 @@ export function residentToCreateAPI(form) {
     password: form.password,
     unitNumber: form.unit,
     status: RESIDENT_STATUS_TO_API[form.status] || 'ACTIVE',
+    phone: form.phone || undefined,
+    idNumber: form.idNumber || undefined,
+    address: form.address || undefined,
+    ownerType: OWNER_TYPE_TO_API[form.ownerType] || 'OWNER',
   }
 }
 
 export function residentToUpdateAPI(form) {
   return {
     fullName: form.name,
+    email: form.email || undefined,
     unitNumber: form.unit,
     status: RESIDENT_STATUS_TO_API[form.status] || 'ACTIVE',
+    phone: form.phone || undefined,
+    idNumber: form.idNumber || undefined,
+    address: form.address || undefined,
+    ownerType: OWNER_TYPE_TO_API[form.ownerType] || 'OWNER',
+  }
+}
+
+// Missing-payments summary returned by GET /residents/:id/summary
+export function missingPaymentToUI(m) {
+  return {
+    feeId: m.feeId,
+    name: m.name,
+    amount: Number(m.amount),
+    frequency: FEE_FREQ_TO_UI[m.frequency] || 'monthly',
   }
 }
 
@@ -127,6 +151,8 @@ export function paymentToUI(p) {
     method: PAYMENT_METHOD_TO_UI[p.paymentMethod] || 'Cash',
     status: PAYMENT_STATUS_TO_UI[p.status] || 'pending',
     reference: p.transactionReference || '',
+    payerName: p.payerName || '',
+    reason: p.reason || '',
   }
 }
 
@@ -191,10 +217,13 @@ export function expenseToUI(e) {
   return {
     id: e.id,
     projectId: e.projectId,
+    category: e.category || 'OTHER',
     description: e.description || '',
     amount: Number(e.amount),
     vendor: e.vendor || '',
     date: e.spentAt,
+    bankName: e.bankName || '',
+    transactionReference: e.transactionReference || '',
     receiptId: e.receipts?.[0]?.id,
   }
 }
@@ -202,10 +231,37 @@ export function expenseToUI(e) {
 export function expenseToAPI(form) {
   return {
     projectId: form.projectId || undefined,
+    category: form.category || 'OTHER',
     description: form.description,
     vendor: form.vendor,
     amount: Number(form.amount),
     spentAt: form.date || undefined,
+    bankName: form.bankName || undefined,
+    transactionReference: form.transactionReference || undefined,
+  }
+}
+
+// ------------------------------- community -------------------------------------
+export function communityToUI(c) {
+  return {
+    id: c.id,
+    name: c.name,
+    address: c.address || '',
+    contactInfo: c.contactInfo || '',
+    paymentBankName: c.paymentBankName || '',
+    paymentAccountName: c.paymentAccountName || '',
+    paymentAccountNumber: c.paymentAccountNumber || '',
+  }
+}
+
+export function communityToUpdateAPI(form) {
+  return {
+    name: form.name,
+    address: form.address || undefined,
+    contactInfo: form.contactInfo || undefined,
+    paymentBankName: form.paymentBankName || undefined,
+    paymentAccountName: form.paymentAccountName || undefined,
+    paymentAccountNumber: form.paymentAccountNumber || undefined,
   }
 }
 

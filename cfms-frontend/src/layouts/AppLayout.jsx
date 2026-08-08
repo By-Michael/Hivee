@@ -1,14 +1,16 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard, Users, Receipt, Wallet, FolderKanban, FileText,
   BarChart3, LogOut, Menu, X, Bell, Search, Landmark, ChevronDown,
-  PanelLeftClose, UserCog, AlertCircle, CheckCircle2, Clock,
+  PanelLeftClose, UserCog, AlertCircle, CheckCircle2, Clock, ShieldCheck,
+  Sun, Moon, Settings,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { useData } from '../context/DataContext'
-import { currency, formatDate } from '../components/ui'
+import { useTheme } from '../context/ThemeContext'
+import { currency, formatDate, Modal, PageSkeleton } from '../components/ui'
 
 const adminNav = [
   { to: '/admin', label: 'Dashboard', icon: LayoutDashboard, end: true },
@@ -19,6 +21,8 @@ const adminNav = [
   { to: '/admin/projects', label: 'Projects', icon: FolderKanban },
   { to: '/admin/expenses', label: 'Expenses', icon: FileText },
   { to: '/admin/reports', label: 'Reports', icon: BarChart3 },
+  { to: '/admin/audit-log', label: 'Audit Log', icon: ShieldCheck },
+  { to: '/admin/settings', label: 'Settings', icon: Settings },
 ]
 
 const residentNav = [
@@ -27,6 +31,7 @@ const residentNav = [
   { to: '/resident/funds', label: 'Community Funds', icon: Landmark },
   { to: '/resident/projects', label: 'Projects', icon: FolderKanban },
   { to: '/resident/expenses', label: 'Expenses', icon: FileText },
+  { to: '/resident/reports', label: 'Reports', icon: BarChart3 },
 ]
 
 export default function AppLayout({ role }) {
@@ -40,12 +45,47 @@ export default function AppLayout({ role }) {
   const [query, setQuery] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
   const { user, logout } = useAuth()
+  const { theme, toggleTheme } = useTheme()
   const data = useData()
-  const { residents, payments, projects, fees, expenses, funds } = data
+  const { residents, payments, projects, fees, expenses, funds, fetchMyTransferItems, respondAsCommitteeMember, respondAsTransferRecipient, loading, hasLoadedOnce } = data
   const navigate = useNavigate()
   const menuRef = useRef(null)
   const notifRef = useRef(null)
   const searchRef = useRef(null)
+  const [transferItems, setTransferItems] = useState({ asApprover: [], asRecipient: [] })
+  const [confirmAction, setConfirmAction] = useState(null) // { kind: 'approver'|'recipient', request, decision }
+  const [confirmSubmitting, setConfirmSubmitting] = useState(false)
+
+  const loadTransferItems = useCallback(() => {
+    if (!user) return
+    fetchMyTransferItems()
+      .then((r) => setTransferItems({ asApprover: r.asApprover || [], asRecipient: r.asRecipient || [] }))
+      .catch(() => {})
+  }, [user, fetchMyTransferItems])
+
+  useEffect(() => {
+    loadTransferItems()
+    const t = setInterval(loadTransferItems, 30000)
+    return () => clearInterval(t)
+  }, [loadTransferItems])
+
+  async function runConfirm() {
+    if (!confirmAction) return
+    setConfirmSubmitting(true)
+    try {
+      if (confirmAction.kind === 'approver') {
+        await respondAsCommitteeMember(confirmAction.request.id, confirmAction.decision)
+      } else {
+        await respondAsTransferRecipient(confirmAction.request.id, confirmAction.decision)
+      }
+      loadTransferItems()
+      setConfirmAction(null)
+    } catch (err) {
+      alert(err?.response?.data?.message || err.message || 'Could not submit your response.')
+    } finally {
+      setConfirmSubmitting(false)
+    }
+  }
 
   useEffect(() => {
     localStorage.setItem('cfms_sidebar_collapsed', collapsed ? '1' : '0')
@@ -75,6 +115,30 @@ export default function AppLayout({ role }) {
   // ---- Notifications: derived from real data, not decorative ----
   const notifications = useMemo(() => {
     const items = []
+
+    transferItems.asApprover.forEach((req) => {
+      items.push({
+        id: `xfer-appr-${req.id}`,
+        icon: Users,
+        tone: 'amber',
+        title: 'Committee transfer needs your approval',
+        detail: `${req.fromUser?.fullName} wants to hand their seat to ${req.toResident?.user?.fullName}`,
+        date: req.createdAt,
+        transfer: { kind: 'approver', request: req },
+      })
+    })
+    transferItems.asRecipient.forEach((req) => {
+      items.push({
+        id: `xfer-recip-${req.id}`,
+        icon: Users,
+        tone: 'amber',
+        title: 'You\u2019ve been chosen as a committee member',
+        detail: `${req.fromUser?.fullName} wants to transfer their seat to you`,
+        date: req.createdAt,
+        transfer: { kind: 'recipient', request: req },
+      })
+    })
+
     if (role === 'admin') {
       const pending = payments.filter((p) => p.status === 'pending')
       pending.slice(0, 5).forEach((p) => {
@@ -129,7 +193,7 @@ export default function AppLayout({ role }) {
       })
     }
     return items
-  }, [role, payments, residents, expenses, fees, user, base])
+  }, [role, payments, residents, expenses, fees, user, base, transferItems])
 
   // ---- Global search across residents / payments / projects / expenses / funds ----
   const searchResults = useMemo(() => {
@@ -174,13 +238,163 @@ export default function AppLayout({ role }) {
   }
 
   return (
-    <div className="min-h-screen flex">
-      {/* Sidebar - desktop */}
-      <aside className={`hidden lg:flex lg:flex-col shrink-0 border-r border-ink-100 bg-white/80 backdrop-blur-xl py-6 h-screen sticky top-0 transition-[width,padding] duration-300 ease-in-out ${collapsed ? 'w-20 px-2' : 'w-72 px-4'}`}>
-        <div className={`flex items-center ${navCollapsed ? 'justify-center' : ''}`}>
-          <Brand collapsed={collapsed} navCollapsed={navCollapsed} />
+    <div className="min-h-screen flex flex-col">
+      {/* Top bar - spans full width, logo/brand and search live in one unbroken strip */}
+      <header className="sticky top-0 z-30 h-16 shrink-0 flex items-center gap-3 border-b border-ink-100 bg-white/80 backdrop-blur-xl px-4 sm:px-6">
+        <button onClick={() => setOpen(true)} className="lg:hidden p-2 rounded-lg hover:bg-ink-100 text-ink-600">
+          <Menu className="h-5 w-5" />
+        </button>
+        <div className={`hidden lg:flex items-center shrink-0 transition-[width,margin,padding] duration-300 ease-in-out ${collapsed ? '-ml-4 sm:-ml-6 w-20 px-2' : 'w-64'}`}>
+          <Brand collapsed={collapsed} />
         </div>
-        <div className="mt-4 pb-4 border-b border-ink-50 flex justify-start">
+        <div className="hidden sm:block flex-1" />
+        {typeof document !== 'undefined' && createPortal(
+          <div className="hidden sm:flex items-center gap-2 w-full max-w-md fixed top-3 left-1/2 -translate-x-[calc(50%+48px)] z-30" ref={searchRef}>
+            <div className="relative w-full">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-400" />
+              <input
+                value={query}
+                onChange={(e) => { setQuery(e.target.value); setSearchOpen(true) }}
+                onFocus={() => setSearchOpen(true)}
+                placeholder="Search residents, payments, projects…"
+                className="input pl-9 py-2.5 rounded-full bg-ink-50/70 border-transparent focus:bg-white dark:bg-[#1b2440] dark:focus:bg-[#1b2440]"
+              />
+            </div>
+            {searchOpen && query.trim() && (
+              <div className="absolute left-0 right-0 top-full mt-2 card p-1.5 max-h-80 overflow-y-auto z-40">
+                {searchResults.length === 0 ? (
+                  <p className="px-3 py-4 text-sm text-ink-400 text-center">No matches for "{query}"</p>
+                ) : (
+                  searchResults.map((r) => (
+                    <button key={r.id} onClick={() => goToResult(r)} className="w-full text-left flex items-center justify-between gap-3 rounded-lg px-3 py-2 hover:bg-brand-50 transition">
+                      <div>
+                        <p className="text-sm font-medium text-ink-800">{r.label}</p>
+                        <p className="text-xs text-ink-400">{r.sub}</p>
+                      </div>
+                      <span className="badge bg-ink-100 text-ink-500 shrink-0">{r.group}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>,
+          document.body
+        )}
+        <div className="flex-1 sm:hidden" />
+
+        <div className="flex items-center gap-1 ml-auto">
+          <button
+            onClick={toggleTheme}
+            title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            className="relative h-9 w-9 rounded-full flex items-center justify-center overflow-hidden bg-ink-100 hover:bg-ink-200 dark:bg-ink-800 dark:hover:bg-ink-700 transition-colors duration-300"
+          >
+            <Sun
+              className={`absolute h-[18px] w-[18px] text-amber-500 transition-all duration-500 ease-out ${theme === 'dark' ? '-translate-y-8 opacity-0 rotate-90' : 'translate-y-0 opacity-100 rotate-0'}`}
+            />
+            <Moon
+              className={`absolute h-[18px] w-[18px] text-brand-300 transition-all duration-500 ease-out ${theme === 'dark' ? 'translate-y-0 opacity-100 rotate-0' : 'translate-y-8 opacity-0 -rotate-90'}`}
+            />
+          </button>
+          <div className="relative" ref={notifRef}>
+            <button onClick={() => setNotifOpen((v) => !v)} className="relative p-2 rounded-lg hover:bg-ink-100 text-ink-500">
+              <Bell className="h-5 w-5" />
+              {notifications.length > 0 && (
+                <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-brand-500 ring-2 ring-white" />
+              )}
+            </button>
+            {notifOpen && (
+              <div className="absolute right-0 mt-2 w-80 card p-1.5 z-40 max-h-96 overflow-y-auto select-none">
+                <div className="px-3 py-2 border-b border-ink-50 flex items-center justify-between">
+                  <p className="text-sm font-semibold text-ink-800">Notifications</p>
+                  <span className="text-xs text-ink-400">{notifications.length}</span>
+                </div>
+                {notifications.length === 0 ? (
+                  <p className="px-3 py-6 text-sm text-ink-400 text-center">You're all caught up.</p>
+                ) : (
+                  notifications.map((n) => {
+                    const toneMap = { amber: 'text-amber-600 bg-amber-50', rose: 'text-rose-600 bg-rose-50', emerald: 'text-emerald-600 bg-emerald-50' }
+                    if (n.transfer) {
+                      return (
+                        <div key={n.id} className="w-full text-left flex items-start gap-2.5 rounded-lg px-3 py-2.5">
+                          <div className={`h-7 w-7 rounded-lg flex items-center justify-center shrink-0 ${toneMap[n.tone]}`}>
+                            <n.icon className="h-4 w-4" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-medium text-ink-800">{n.title}</p>
+                            <p className="text-xs text-ink-400">{n.detail}</p>
+                            <div className="flex gap-1.5 mt-2">
+                              <button
+                                onClick={() => { setNotifOpen(false); setConfirmAction({ kind: n.transfer.kind, request: n.transfer.request, decision: 'APPROVED' }) }}
+                                className="btn-primary !py-1 !px-2.5 text-xs"
+                              >
+                                Accept
+                              </button>
+                              <button
+                                onClick={() => { setNotifOpen(false); setConfirmAction({ kind: n.transfer.kind, request: n.transfer.request, decision: 'REJECTED' }) }}
+                                className="btn-secondary !py-1 !px-2.5 text-xs"
+                              >
+                                Decline
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    }
+                    return (
+                      <button
+                        key={n.id}
+                        onClick={() => { setNotifOpen(false); navigate(n.to) }}
+                        className="w-full text-left flex items-start gap-2.5 rounded-lg px-3 py-2.5 hover:bg-ink-50 transition"
+                      >
+                        <div className={`h-7 w-7 rounded-lg flex items-center justify-center shrink-0 ${toneMap[n.tone]}`}>
+                          <n.icon className="h-4 w-4" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-ink-800 truncate">{n.title}</p>
+                          <p className="text-xs text-ink-400 truncate">{n.detail}</p>
+                        </div>
+                      </button>
+                    )
+                  })
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="relative" ref={menuRef}>
+            <button onClick={() => setMenuOpen((v) => !v)} className="flex items-center gap-2.5 pl-2 pr-1 py-1 rounded-xl hover:bg-ink-100 transition select-none">
+              <Avatar user={user} />
+              <div className="hidden sm:block text-left">
+                <p className="text-sm font-semibold text-ink-800 leading-tight">{user?.name}</p>
+                <p className="text-xs text-ink-400 capitalize leading-tight">{user?.role === 'admin' ? 'Committee member' : user?.role}</p>
+              </div>
+              <ChevronDown className="h-4 w-4 text-ink-400 hidden sm:block" />
+            </button>
+            {menuOpen && (
+              <div className="absolute right-0 mt-2 w-52 card p-1.5 z-40 select-none">
+                <div className="px-3 py-2 border-b border-ink-50">
+                  <p className="text-sm font-medium text-ink-800 truncate">{user?.name}</p>
+                  <p className="text-xs text-ink-400 truncate">{user?.community}</p>
+                </div>
+                <button
+                  onClick={() => { setMenuOpen(false); navigate(`${base}/profile`) }}
+                  className="w-full flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-ink-600 hover:bg-brand-50 hover:text-brand-700 mt-1"
+                >
+                  <UserCog className="h-4 w-4" /> Profile settings
+                </button>
+                <button onClick={handleLogout} className="w-full flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-rose-500 hover:bg-rose-50 mt-1">
+                  <LogOut className="h-4 w-4" /> Sign out
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </header>
+
+      <div className="flex flex-1 min-h-0">
+      {/* Sidebar - desktop */}
+      <aside className={`hidden lg:flex lg:flex-col shrink-0 border-r border-ink-100 bg-white/80 backdrop-blur-xl py-4 sticky top-16 h-[calc(100vh-4rem)] transition-[width,padding] duration-300 ease-in-out ${collapsed ? 'w-20 px-2' : 'w-72 px-4'}`}>
+        <div className={`pb-4 border-b border-ink-50 flex items-center transition-[padding] duration-300 ease-in-out ${collapsed ? 'pl-4' : 'pl-0'}`}>
           <button
             onClick={() => setCollapsed((v) => !v)}
             title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
@@ -242,118 +456,46 @@ export default function AppLayout({ role }) {
 
       {/* Main column */}
       <div className="flex-1 min-w-0 flex flex-col">
-        <header className="sticky top-0 z-30 flex items-center gap-3 border-b border-ink-100 bg-white/80 backdrop-blur-xl px-4 py-3 sm:px-8">
-          <button onClick={() => setOpen(true)} className="lg:hidden p-2 rounded-lg hover:bg-ink-100 text-ink-600">
-            <Menu className="h-5 w-5" />
-          </button>
-          <div className="hidden sm:block flex-1" />
-          {typeof document !== 'undefined' && createPortal(
-            <div className="hidden sm:flex items-center gap-2 w-full max-w-md fixed top-3 left-1/2 -translate-x-1/2 z-30" ref={searchRef}>
-              <div className="relative w-full">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-400" />
-                <input
-                  value={query}
-                  onChange={(e) => { setQuery(e.target.value); setSearchOpen(true) }}
-                  onFocus={() => setSearchOpen(true)}
-                  placeholder="Search residents, payments, projects…"
-                  className="input pl-9 bg-ink-50/70 border-transparent focus:bg-white"
-                />
-              </div>
-              {searchOpen && query.trim() && (
-                <div className="absolute left-0 right-0 top-full mt-2 card p-1.5 max-h-80 overflow-y-auto z-40">
-                  {searchResults.length === 0 ? (
-                    <p className="px-3 py-4 text-sm text-ink-400 text-center">No matches for "{query}"</p>
-                  ) : (
-                    searchResults.map((r) => (
-                      <button key={r.id} onClick={() => goToResult(r)} className="w-full text-left flex items-center justify-between gap-3 rounded-lg px-3 py-2 hover:bg-brand-50 transition">
-                        <div>
-                          <p className="text-sm font-medium text-ink-800">{r.label}</p>
-                          <p className="text-xs text-ink-400">{r.sub}</p>
-                        </div>
-                        <span className="badge bg-ink-100 text-ink-500 shrink-0">{r.group}</span>
-                      </button>
-                    ))
-                  )}
-                </div>
-              )}
-            </div>,
-            document.body
-          )}
-          <div className="flex-1 sm:hidden" />
-
-          <div className="flex items-center gap-1 ml-auto">
-          <div className="relative" ref={notifRef}>
-            <button onClick={() => setNotifOpen((v) => !v)} className="relative p-2 rounded-lg hover:bg-ink-100 text-ink-500">
-              <Bell className="h-5 w-5" />
-              {notifications.length > 0 && (
-                <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-brand-500 ring-2 ring-white" />
-              )}
-            </button>
-            {notifOpen && (
-              <div className="absolute right-0 mt-2 w-80 card p-1.5 z-40 max-h-96 overflow-y-auto select-none">
-                <div className="px-3 py-2 border-b border-ink-50 flex items-center justify-between">
-                  <p className="text-sm font-semibold text-ink-800">Notifications</p>
-                  <span className="text-xs text-ink-400">{notifications.length}</span>
-                </div>
-                {notifications.length === 0 ? (
-                  <p className="px-3 py-6 text-sm text-ink-400 text-center">You're all caught up.</p>
-                ) : (
-                  notifications.map((n) => {
-                    const toneMap = { amber: 'text-amber-600 bg-amber-50', rose: 'text-rose-600 bg-rose-50', emerald: 'text-emerald-600 bg-emerald-50' }
-                    return (
-                      <button
-                        key={n.id}
-                        onClick={() => { setNotifOpen(false); navigate(n.to) }}
-                        className="w-full text-left flex items-start gap-2.5 rounded-lg px-3 py-2.5 hover:bg-ink-50 transition"
-                      >
-                        <div className={`h-7 w-7 rounded-lg flex items-center justify-center shrink-0 ${toneMap[n.tone]}`}>
-                          <n.icon className="h-4 w-4" />
-                        </div>
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium text-ink-800 truncate">{n.title}</p>
-                          <p className="text-xs text-ink-400 truncate">{n.detail}</p>
-                        </div>
-                      </button>
-                    )
-                  })
-                )}
-              </div>
-            )}
-          </div>
-
-          <div className="relative" ref={menuRef}>
-            <button onClick={() => setMenuOpen((v) => !v)} className="flex items-center gap-2.5 pl-2 pr-1 py-1 rounded-xl hover:bg-ink-100 transition select-none">
-              <Avatar user={user} />
-              <div className="hidden sm:block text-left">
-                <p className="text-sm font-semibold text-ink-800 leading-tight">{user?.name}</p>
-                <p className="text-xs text-ink-400 capitalize leading-tight">{user?.role}</p>
-              </div>
-              <ChevronDown className="h-4 w-4 text-ink-400 hidden sm:block" />
-            </button>
-            {menuOpen && (
-              <div className="absolute right-0 mt-2 w-52 card p-1.5 z-40 select-none">
-                <div className="px-3 py-2 border-b border-ink-50">
-                  <p className="text-sm font-medium text-ink-800 truncate">{user?.name}</p>
-                  <p className="text-xs text-ink-400 truncate">{user?.community}</p>
-                </div>
-                <button
-                  onClick={() => { setMenuOpen(false); navigate(`${base}/profile`) }}
-                  className="w-full flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-ink-600 hover:bg-brand-50 hover:text-brand-700 mt-1"
-                >
-                  <UserCog className="h-4 w-4" /> Profile settings
-                </button>
-                <button onClick={handleLogout} className="w-full flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-rose-500 hover:bg-rose-50 mt-1">
-                  <LogOut className="h-4 w-4" /> Sign out
-                </button>
-              </div>
-            )}
-          </div>
-          </div>
-        </header>
         <main className="flex-1 px-4 py-6 sm:px-8 sm:py-8 max-w-[1400px] w-full mx-auto">
-          <Outlet />
+          {/* Show a skeleton only for the very first load after login —
+              not for background/action-triggered refreshes — so the page
+              never flashes empty tables/zeroed stats and then suddenly
+              pops to real data (see DataContext.hasLoadedOnce). */}
+          {loading && !hasLoadedOnce ? <PageSkeleton /> : <Outlet />}
         </main>
       </div>
+      </div>
+
+      {/* Transfer response confirmation */}
+      <Modal open={!!confirmAction} onClose={() => setConfirmAction(null)} title={confirmAction?.decision === 'REJECTED' ? 'Decline transfer' : 'Confirm your decision'}>
+        {confirmAction && (
+          <div className="space-y-4">
+            {confirmAction.kind === 'approver' ? (
+              <p className="text-sm text-ink-500">
+                {confirmAction.decision === 'APPROVED' ? (
+                  <>You\u2019re approving <strong className="text-ink-800">{confirmAction.request.fromUser?.fullName}</strong>{'\u2019s'} request to transfer their committee seat to <strong className="text-ink-800">{confirmAction.request.toResident?.user?.fullName}</strong>. If every committee member approves, the resident will be asked to accept next.</>
+                ) : (
+                  <>You\u2019re declining <strong className="text-ink-800">{confirmAction.request.fromUser?.fullName}</strong>{'\u2019s'} transfer request. This will cancel it immediately.</>
+                )}
+              </p>
+            ) : (
+              <p className="text-sm text-ink-500">
+                {confirmAction.decision === 'APPROVED' ? (
+                  <>You\u2019re accepting the committee seat offered by <strong className="text-ink-800">{confirmAction.request.fromUser?.fullName}</strong>. Once confirmed, you\u2019ll become a committee member immediately and they\u2019ll return to resident status.</>
+                ) : (
+                  <>You\u2019re declining the committee seat offered by <strong className="text-ink-800">{confirmAction.request.fromUser?.fullName}</strong>.</>
+                )}
+              </p>
+            )}
+            <div className="flex gap-2 pt-2">
+              <button type="button" onClick={() => setConfirmAction(null)} className="btn-secondary flex-1">Go back</button>
+              <button type="button" disabled={confirmSubmitting} onClick={runConfirm} className="btn-primary flex-1">
+                {confirmSubmitting ? 'Submitting…' : 'Yes, confirm'}
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   )
 }
@@ -373,16 +515,21 @@ function Avatar({ user }) {
   )
 }
 
-function Brand({ collapsed, navCollapsed }) {
+function Brand({ collapsed = false }) {
+  // Logo + name live in the top bar. The icon's left padding animates
+  // continuously between states (rather than toggling justify-content,
+  // which can't be transitioned and causes a visible jump) so it glides
+  // smoothly into line with the icons below it.
   return (
-    <div className={`flex items-center transition-all duration-300 ease-in-out ${navCollapsed ? 'justify-center w-full gap-0' : 'px-1 gap-2.5'}`}>
+    <div className={`flex items-center gap-2.5 transition-[padding] duration-300 ease-in-out ${collapsed ? 'pl-3' : 'pl-1'}`}>
       <div className="h-10 w-10 rounded-2xl bg-brand-gradient flex items-center justify-center shadow-glow shrink-0">
         <Landmark className="h-5 w-5 text-white" strokeWidth={2.3} />
       </div>
-      <div className={`overflow-hidden whitespace-nowrap transition-all duration-300 ease-in-out ${collapsed ? 'max-w-0 opacity-0' : 'max-w-[180px] opacity-100'}`}>
-        <p className="font-display font-bold text-sm text-ink-900 leading-tight">CFMS</p>
-        <p className="text-[10px] text-ink-400 leading-tight">Community Fund Manager</p>
-      </div>
+      {!collapsed && (
+        <div className="overflow-hidden whitespace-nowrap">
+          <p className="font-display font-bold text-sm text-ink-900 leading-tight">CFMS</p>
+        </div>
+      )}
     </div>
   )
 }

@@ -61,6 +61,20 @@ enum ExpenseCategory {
   OTHER
 }
 
+enum TransferRequestStatus {
+  PENDING_COMMITTEE  // waiting on other committee members to approve
+  PENDING_RECIPIENT  // committee approved, waiting on the chosen resident
+  APPROVED           // fully accepted, transfer executed
+  REJECTED           // rejected by a committee member or the recipient
+  CANCELLED          // withdrawn by the requester
+}
+
+enum ApprovalDecision {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 // ---------------------------------------------------------------------------
 // TENANT ROOT
 // ---------------------------------------------------------------------------
@@ -73,10 +87,18 @@ model Community {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
+  // Bank account residents are told to pay into (shown + copy-buttoned in
+  // the resident "Make a payment" flow). One fixed account per community.
+  paymentBankName       String?
+  paymentAccountName    String?
+  paymentAccountNumber  String?
+
   users    User[]
   fees     Fee[]
   funds    Fund[]
   projects Project[]
+  transferRequests CommitteeTransferRequest[]
+  auditLogs AuditLog[]
 
   @@map("communities")
 }
@@ -101,8 +123,43 @@ model User {
   verifiedPayments Payment[]  @relation("PaymentVerifiedBy")
   recordedExpenses Expense[]  @relation("ExpenseRecordedBy")
 
+  transferRequestsInitiated CommitteeTransferRequest[]   @relation("TransferFrom")
+  transferApprovals         CommitteeTransferApproval[]
+  auditLogs                 AuditLog[]
+
   @@index([communityId])
   @@map("users")
+}
+
+// ---------------------------------------------------------------------------
+// SYSTEM AUDIT LOG
+//
+// An append-only trail of every meaningful action taken by committee
+// members (and platform staff) inside a community. Every committee member
+// can VIEW the full log for their community, but nothing here is ever
+// editable or deletable through the API — no update/delete route exists
+// for this model on purpose.
+// ---------------------------------------------------------------------------
+
+model AuditLog {
+  id          String    @id @default(uuid())
+  communityId String?
+  actorId     String?
+  actorName   String
+  actorRole   UserRole
+  action      String    // e.g. CREATE, UPDATE, DELETE, VERIFY, REJECT, LOGIN
+  entityType  String    // e.g. Resident, Fee, Payment, Fund, Project, Expense
+  entityId    String?
+  description String
+  metadata    Json?
+  createdAt   DateTime  @default(now())
+
+  community Community? @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  actor     User?      @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([communityId])
+  @@index([createdAt])
+  @@map("audit_logs")
 }
 
 model RefreshToken {
@@ -123,12 +180,23 @@ model Resident {
   id         String         @id @default(uuid())
   userId     String         @unique
   unitNumber String
+  phone      String?
+  // Last 9 digits of `phone`, stripped of everything but numbers, kept in
+  // sync whenever `phone` is written. Login-by-phone looks this up with a
+  // plain indexed equality match instead of pulling every resident with a
+  // phone number into Node and scanning them there (see authController.js).
+  phoneSearchKey String?    @db.VarChar(9)
+  idNumber   String?
+  address    String?
+  ownerType  String?        @default("OWNER") // OWNER | RENTER
   status     ResidentStatus @default(ACTIVE)
   joinedAt   DateTime       @default(now())
 
   user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   payments Payment[]
+  incomingTransferRequests CommitteeTransferRequest[] @relation("TransferTo")
 
+  @@index([phoneSearchKey])
   @@map("residents")
 }
 
@@ -157,6 +225,13 @@ model Payment {
   amount             Decimal       @db.Decimal(12, 2)
   paymentMethod      PaymentMethod @default(CASH)
   transactionReference String?
+  // Name typed in by the resident submitting the payment — the person who
+  // actually sent the money, which may not be the resident themselves
+  // (e.g. a family member paying on their behalf). Kept separate from the
+  // resident's own profile name for that reason.
+  payerName          String?
+  // Optional free-text note the resident can attach (e.g. "August dues").
+  reason             String?
   status             PaymentStatus @default(PENDING)
   paidAt             DateTime      @default(now())
   verifiedBy         String?
@@ -167,6 +242,11 @@ model Payment {
 
   @@index([residentId])
   @@index([feeId])
+  // Every list/report/aggregate query filters or sorts on these — without
+  // an index Postgres has to scan and sort the whole table, which gets
+  // slower every month as more payments accumulate.
+  @@index([status])
+  @@index([paidAt])
   @@map("payments")
 }
 
@@ -213,12 +293,19 @@ model Expense {
   vendor      String?
   amount      Decimal         @db.Decimal(12, 2)
   spentAt     DateTime        @default(now())
+  bankName    String?
+  transactionReference String?
 
   project  Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
   recorder User      @relation("ExpenseRecordedBy", fields: [recordedBy], references: [id], onDelete: Restrict)
   receipts Receipt[]
 
   @@index([projectId])
+  // Supports the "expenses recorded by users in my community" half of
+  // listExpenses' OR filter, and ORDER BY spentAt — both currently
+  // unindexed and get slower as the expenses table grows.
+  @@index([recordedBy])
+  @@index([spentAt])
   @@map("expenses")
 }
 
@@ -232,4 +319,49 @@ model Receipt {
 
   @@index([expenseId])
   @@map("receipts")
+}
+
+// ---------------------------------------------------------------------------
+// COMMITTEE MEMBERSHIP TRANSFER
+//
+// A committee member (User.role = ADMIN) can hand their seat to another
+// resident of the same community. This only takes effect once:
+//   1) every OTHER committee member in the community approves, then
+//   2) the chosen resident themselves accepts.
+// Any single rejection (by a committee member or the recipient) kills it.
+// ---------------------------------------------------------------------------
+
+model CommitteeTransferRequest {
+  id           String                 @id @default(uuid())
+  communityId  String
+  fromUserId   String
+  toResidentId String
+  status       TransferRequestStatus  @default(PENDING_COMMITTEE)
+  recipientDecision ApprovalDecision  @default(PENDING)
+  createdAt    DateTime               @default(now())
+  updatedAt    DateTime               @updatedAt
+  resolvedAt   DateTime?
+
+  community  Community  @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  fromUser   User       @relation("TransferFrom", fields: [fromUserId], references: [id], onDelete: Cascade)
+  toResident Resident   @relation("TransferTo", fields: [toResidentId], references: [id], onDelete: Cascade)
+  approvals  CommitteeTransferApproval[]
+
+  @@index([communityId])
+  @@index([toResidentId])
+  @@map("committee_transfer_requests")
+}
+
+model CommitteeTransferApproval {
+  id              String            @id @default(uuid())
+  requestId       String
+  committeeUserId String
+  decision        ApprovalDecision  @default(PENDING)
+  respondedAt     DateTime?
+
+  request CommitteeTransferRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  member  User                     @relation(fields: [committeeUserId], references: [id], onDelete: Cascade)
+
+  @@unique([requestId, committeeUserId])
+  @@map("committee_transfer_approvals")
 }

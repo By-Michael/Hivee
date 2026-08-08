@@ -15,13 +15,62 @@ api.interceptors.request.use((config) => {
   return config
 })
 
+// The backend issues short-lived (15m) access tokens plus a long-lived (7d)
+// httpOnly refresh cookie (see cfms-backend auth controller). Previously the
+// frontend never called /auth/refresh, so every request made ~15 minutes
+// into a session (or after a laptop sleep, tab left open overnight, etc.)
+// failed with "Authentication required" even though the user never logged
+// out. This interceptor transparently refreshes the access token on a 401
+// and retries the original request, so the session really does last until
+// the refresh cookie expires (7 days) or the user explicitly logs out.
+let refreshPromise = null
+
+function doRefresh() {
+  if (!refreshPromise) {
+    refreshPromise = api
+      .post(endpoints.refresh())
+      .then(({ data }) => {
+        const newToken = data.data.accessToken
+        localStorage.setItem('cfms_token', newToken)
+        return newToken
+      })
+      .finally(() => {
+        refreshPromise = null
+      })
+  }
+  return refreshPromise
+}
+
+function clearSession() {
+  localStorage.removeItem('cfms_token')
+  localStorage.removeItem('cfms_user')
+  // Let AuthContext (and anything else listening) know the session is
+  // really gone, so it can update UI state / redirect to login.
+  window.dispatchEvent(new Event('cfms:session-expired'))
+}
+
 api.interceptors.response.use(
   (res) => res,
-  (err) => {
-    if (err?.response?.status === 401) {
-      localStorage.removeItem('cfms_token')
-      localStorage.removeItem('cfms_user')
+  async (err) => {
+    const { response, config } = err
+    const isAuthRoute = config?.url === endpoints.login() || config?.url === endpoints.refresh()
+
+    if (response?.status === 401 && !isAuthRoute && !config._retried) {
+      config._retried = true
+      try {
+        const newToken = await doRefresh()
+        config.headers.Authorization = `Bearer ${newToken}`
+        return api(config)
+      } catch {
+        clearSession()
+        return Promise.reject(err)
+      }
     }
+
+    if (response?.status === 401 && (isAuthRoute ? config.url === endpoints.refresh() : true)) {
+      clearSession()
+    }
+
     return Promise.reject(err)
   }
 )
@@ -29,6 +78,8 @@ api.interceptors.response.use(
 // REST endpoint map — matches the Core Modules from the CFMS spec.
 export const endpoints = {
   login: () => '/auth/login',
+  // Note: login body uses { identifier, password } — identifier can be an
+  // email address or a phone number.
   register: () => '/auth/register-community',
   me: () => '/auth/me',
   logout: () => '/auth/logout',
@@ -37,15 +88,24 @@ export const endpoints = {
 
   residents: () => '/residents',
   resident: (id) => `/residents/${id}`,
+  residentSummary: (id) => `/residents/${id}/summary`,
+  myResidentProfile: () => '/residents/me',
+
+  auditLogs: () => '/audit-logs',
+
+  communityMe: () => '/communities/me/current',
 
   fees: () => '/fees',
   fee: (id) => `/fees/${id}`,
 
   payments: () => '/payments',
   payment: (id) => `/payments/${id}`,
+  paymentSelfVerify: () => '/payments/self-verify',
+  paymentParseScreenshot: () => '/payments/parse-screenshot',
 
   funds: () => '/funds',
   fund: (id) => `/funds/${id}`,
+  fundSummaries: () => '/funds/summaries',
 
   projects: () => '/projects',
   project: (id) => `/projects/${id}`,
@@ -55,6 +115,12 @@ export const endpoints = {
 
   receipts: () => '/receipts',
   receipt: (id) => `/receipts/${id}`,
+
+  committeeTransfers: () => '/committee-transfers',
+  committeeTransferMine: () => '/committee-transfers/mine',
+  committeeTransfer: (id) => `/committee-transfers/${id}`,
+  committeeTransferCommitteeResponse: (id) => `/committee-transfers/${id}/committee-response`,
+  committeeTransferRecipientResponse: (id) => `/committee-transfers/${id}/recipient-response`,
 
   reports: {
     summary: () => '/reports/summary',

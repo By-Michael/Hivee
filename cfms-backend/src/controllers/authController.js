@@ -2,6 +2,7 @@ const bcrypt = require('bcryptjs');
 const prisma = require('../config/prisma');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/AppError');
+const { phoneSearchKeyFor } = require('../utils/phone');
 const {
   signAccessToken,
   signRefreshToken,
@@ -78,19 +79,46 @@ const registerCommunity = catchAsync(async (req, res) => {
 });
 
 const login = catchAsync(async (req, res) => {
-  const { email, password } = req.body;
+  const { identifier, password } = req.body;
+  const looksLikeEmail = identifier.includes('@');
 
-  const user = await prisma.user.findUnique({ where: { email } });
-  if (!user) throw new AppError('Invalid email or password', 401);
+  let user;
+  if (looksLikeEmail) {
+    user = await prisma.user.findUnique({ where: { email: identifier.trim().toLowerCase() } });
+  } else {
+    // Previously this pulled EVERY resident with a phone number (across
+    // every tenant on the platform) into Node and scanned them one by one
+    // with String#endsWith — a full table scan on every single phone
+    // login that got slower as the resident table grew. phoneSearchKey
+    // is a precomputed, indexed last-9-digits value kept in sync whenever
+    // a phone is written (see residentController), so this is now a
+    // single indexed equality lookup regardless of table size.
+    const key = phoneSearchKeyFor(identifier);
+    const match = key
+      ? await prisma.resident.findFirst({ where: { phoneSearchKey: key }, include: { user: true } })
+      : null;
+    user = match?.user || null;
+  }
+
+  if (!user) throw new AppError('Invalid credentials', 401);
 
   const valid = await bcrypt.compare(password, user.passwordHash);
-  if (!valid) throw new AppError('Invalid email or password', 401);
+  if (!valid) throw new AppError('Invalid credentials', 401);
 
   const accessToken = await issueTokenPair(res, user);
 
+  // Include resident/community relations directly in the login response
+  // (one cheap extra query on a request we're already making) instead of
+  // making the frontend fire a second full HTTP round trip to /auth/me
+  // immediately after login just to get residentId/community name.
+  const fullUser = await prisma.user.findUnique({
+    where: { id: user.id },
+    include: { resident: true, community: true },
+  });
+
   res.json({
     success: true,
-    data: { user: sanitizeUser(user), accessToken },
+    data: { user: sanitizeUser(fullUser), accessToken },
   });
 });
 

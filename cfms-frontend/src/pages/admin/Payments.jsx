@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
-import { Plus, Search, Trash2, Wallet, Filter, ChevronDown } from 'lucide-react'
+import { Plus, Search, Wallet, Filter, ChevronDown, Check, X as XIcon } from 'lucide-react'
 import { useData } from '../../context/DataContext'
-import { PageHeader, Badge, Modal, EmptyState, currency, formatDate } from '../../components/ui'
+import { PageHeader, Modal, EmptyState, currency, formatDate, ConfirmDialog, Badge } from '../../components/ui'
 
 const empty = { residentId: '', feeId: '', amount: '', method: 'Bank Transfer', status: 'paid', reference: '' }
 
@@ -56,30 +56,65 @@ function ResidentPicker({ residents, value, onChange }) {
 }
 
 export default function Payments() {
-  const { payments, residents, fees, addPayment, removePayment } = useData()
+  const { payments, residents, fees, addPayment, updatePayment } = useData()
   const [query, setQuery] = useState('')
   const [status, setStatus] = useState('all')
   const [modal, setModal] = useState(false)
   const [form, setForm] = useState(empty)
+  const [rejectTarget, setRejectTarget] = useState(null)
+  const [rejecting, setRejecting] = useState(false)
+  const [verifyingId, setVerifyingId] = useState(null)
+  const [year, setYear] = useState('all')
+  const [month, setMonth] = useState('all')
 
   const residentOf = (id) => residents.find((r) => r.id === id)
   const feeOf = (id) => fees.find((f) => f.id === id)
+
+  const yearOptions = useMemo(() => {
+    const years = new Set()
+    for (const p of payments) {
+      if (!p.date) continue
+      years.add(new Date(p.date).getFullYear())
+    }
+    return Array.from(years).sort((a, b) => b - a)
+  }, [payments])
+
+  const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
 
   const filtered = useMemo(() => {
     return payments.filter((p) => {
       const matchesStatus = status === 'all' || p.status === status
       const q = query.toLowerCase()
       const matchesQuery = [residentOf(p.residentId)?.name, feeOf(p.feeId)?.name, p.reference].join(' ').toLowerCase().includes(q)
-      return matchesStatus && matchesQuery
+      const d = p.date ? new Date(p.date) : null
+      const matchesYear = year === 'all' || (d && String(d.getFullYear()) === year)
+      const matchesMonth = month === 'all' || (d && String(d.getMonth()) === month)
+      return matchesStatus && matchesQuery && matchesYear && matchesMonth
     }).sort((a, b) => new Date(b.date) - new Date(a.date))
-  }, [payments, query, status, residents, fees])
+  }, [payments, query, status, year, month, residents, fees])
 
   function submit(e) {
     e.preventDefault()
     const fee = fees.find((f) => f.id === form.feeId)
     addPayment({ ...form, amount: Number(form.amount) || fee?.amount || 0, reference: form.reference || `TRX-${Math.floor(Math.random() * 90000 + 10000)}` })
-    setModal(false)
-    setForm(empty)
+      .then(() => { setModal(false); setForm(empty) })
+      .catch((err) => alert(err?.response?.data?.message || err.message))
+  }
+
+  function verify(payment) {
+    setVerifyingId(payment.id)
+    updatePayment(payment.id, { status: 'paid' })
+      .catch((err) => alert(err?.response?.data?.message || err.message))
+      .finally(() => setVerifyingId(null))
+  }
+
+  function confirmReject() {
+    if (!rejectTarget) return
+    setRejecting(true)
+    updatePayment(rejectTarget.id, { status: 'rejected' })
+      .then(() => setRejectTarget(null))
+      .catch((err) => alert(err?.response?.data?.message || err.message))
+      .finally(() => setRejecting(false))
   }
 
   const total = filtered.reduce((s, p) => s + p.amount, 0)
@@ -105,6 +140,26 @@ export default function Payments() {
               {s}
             </button>
           ))}
+          <select
+            value={year}
+            onChange={(e) => setYear(e.target.value)}
+            className="input !w-auto !py-1.5 text-sm"
+          >
+            <option value="all">All years</option>
+            {yearOptions.map((y) => (
+              <option key={y} value={String(y)}>{y}</option>
+            ))}
+          </select>
+          <select
+            value={month}
+            onChange={(e) => setMonth(e.target.value)}
+            className="input !w-auto !py-1.5 text-sm"
+          >
+            <option value="all">All months</option>
+            {MONTH_NAMES.map((label, idx) => (
+              <option key={label} value={String(idx)}>{label}</option>
+            ))}
+          </select>
         </div>
       </div>
 
@@ -125,7 +180,29 @@ export default function Payments() {
                     <td className="font-mono text-xs text-ink-400">{p.reference}</td>
                     <td>{formatDate(p.date)}</td>
                     <td><Badge status={p.status} /></td>
-                    <td><button onClick={() => removePayment(p.id).catch((err) => alert(err.message))} className="p-2 rounded-lg text-ink-400 hover:bg-rose-50 hover:text-rose-500" title="Payments are financial records and cannot be deleted"><Trash2 className="h-4 w-4" /></button></td>
+                    <td>
+                      {p.status === 'pending' ? (
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => verify(p)}
+                            disabled={verifyingId === p.id}
+                            className="p-2 rounded-lg text-ink-400 hover:bg-emerald-50 hover:text-emerald-600 disabled:opacity-50"
+                            title="Verify payment"
+                          >
+                            <Check className="h-4 w-4" />
+                          </button>
+                          <button
+                            onClick={() => setRejectTarget(p)}
+                            className="p-2 rounded-lg text-ink-400 hover:bg-rose-50 hover:text-rose-500"
+                            title="Reject payment"
+                          >
+                            <XIcon className="h-4 w-4" />
+                          </button>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-ink-300">—</span>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -134,8 +211,8 @@ export default function Payments() {
         )}
       </div>
 
-      <Modal open={modal} onClose={() => setModal(false)} title="Record payment">
-        <form onSubmit={submit} className="space-y-4">
+      <Modal open={modal} onClose={() => setModal(false)} title="Record payment" wide>
+        <form onSubmit={submit} className="space-y-5">
           <div>
             <label className="label">Resident</label>
             <ResidentPicker residents={residents} value={form.residentId} onChange={(id) => setForm({ ...form, residentId: id })} />
@@ -171,6 +248,16 @@ export default function Payments() {
           </div>
         </form>
       </Modal>
+
+      <ConfirmDialog
+        open={!!rejectTarget}
+        title="Reject this payment?"
+        message="The resident will be shown as not having paid this fee. Payments are kept as a record (not deleted) so reporting stays accurate — you can still see it here as rejected."
+        confirmLabel="Reject payment"
+        loading={rejecting}
+        onConfirm={confirmReject}
+        onCancel={() => setRejectTarget(null)}
+      />
     </div>
   )
 }

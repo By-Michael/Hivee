@@ -28,4 +28,19 @@ const upload = multer({
   limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
 });
 
-module.exports = { upload, UPLOAD_DIR };
+// Separate in-memory multer instance for payment screenshots that only
+// ever pass through to the OCR service — they're never written to disk,
+// since we don't need to keep them (the resident still has to type/confirm
+// the txn ID, the screenshot is only a convenience autofill source).
+const screenshotUpload = multer({
+  storage: multer.memoryStorage(),
+  fileFilter: (req, file, cb) => {
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.mimetype)) {
+      return cb(new AppError('Only JPEG, PNG or WEBP screenshots are allowed', 400));
+    }
+    cb(null, true);
+  },
+  limits: { fileSize: 5 * 1024 * 1024 },
+});
+
+module.exports = { upload, UPLOAD_DIR, screenshotUpload };
