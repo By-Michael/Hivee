@@ -14,7 +14,15 @@ const REFRESH_COOKIE_NAME = 'cfms_refresh_token';
 const REFRESH_COOKIE_OPTS = {
   httpOnly: true,
   secure: process.env.NODE_ENV === 'production',
-  sameSite: 'lax',
+  // 'lax' works fine in dev where frontend and backend share an origin
+  // (Vite's proxy makes localhost:5173 -> localhost:4000 look same-site).
+  // In production the frontend and backend are almost always on different
+  // hosts (e.g. two separate Render services), which makes this a genuine
+  // cross-site request — browsers won't attach a 'lax' cookie to that, so
+  // /auth/refresh would silently never receive it and users would get
+  // logged out the moment their access token expired. 'none' (paired with
+  // secure, required by spec) fixes that and is harmless same-site too.
+  sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
   maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
   path: '/api/v1/auth',
 };
