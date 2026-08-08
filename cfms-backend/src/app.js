@@ -27,9 +27,15 @@ const app = express();
 
 app.disable('x-powered-by');
 app.use(helmet());
+const corsOrigin = process.env.CORS_ORIGIN || '*';
+// Printed on every boot so a misconfigured/missing CORS_ORIGIN is visible
+// in the Render logs immediately, instead of only showing up as a vague
+// browser-side CORS error with no indication of what the server actually
+// received.
+console.log(`[cors] Allowing origin: ${corsOrigin}${corsOrigin === '*' ? ' (CORS_ORIGIN env var is not set!)' : ''}`);
 app.use(
   cors({
-    origin: process.env.CORS_ORIGIN || '*',
+    origin: corsOrigin,
     credentials: true,
   })
 );
