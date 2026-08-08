@@ -1,0 +1,24 @@
+# Render Static Site config for this app.
+#
+# Why this file exists: this is a client-side-routed React app (React
+# Router). Without this, Render's static host only serves files that
+# physically exist in the build output — so a fresh load or reload of any
+# route other than "/" (e.g. /admin/residents) 404s, because there's no
+# real /admin/residents file on disk. The rewrite below tells Render to
+# serve index.html for any path that isn't a real static asset, and let
+# React Router take over from there client-side.
+#
+# NOTE: if this site is already configured as a Static Site in the Render
+# dashboard (rather than created from this file), add the same rule there
+# instead: Dashboard → your static site → Redirects/Rewrites →
+#   Source: /*   Destination: /index.html   Action: Rewrite
+services:
+  - type: web
+    name: cfms-frontend
+    runtime: static
+    buildCommand: npm install && npm run build
+    staticPublishPath: ./dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html

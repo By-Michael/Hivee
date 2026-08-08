@@ -56,47 +56,71 @@ export function DataProvider({ children }) {
       // (adding a full extra round trip) and each fund's summary was
       // fetched one-by-one (an N+1 that scaled with fund count) — both
       // are why data used to "pop in" late after everything else.
+      // Every one of these is independently guarded with .catch(). Previously
+      // only 3 of the 8 calls here were guarded — if ANY of the unguarded
+      // ones failed (e.g. payments returning a 500/400 from a schema
+      // mismatch), Promise.all rejected as a whole and setData() below never
+      // ran at all, silently wiping every panel back to empty (including
+      // ones, like residents, whose own request had actually succeeded).
+      // A failure in one section should never blank out the rest of the app.
+      const label = (name) => (err) => {
+        console.error(`[DataContext] Failed to load "${name}":`, err?.response?.data || err.message)
+        return { __failed: name, error: err }
+      }
+
       const [
         feesRes, fundsRes, projectsRes, expensesRes, paymentsRes, communityRes, residentsRes, fundSummariesRes,
       ] = await Promise.all([
-        api.get(endpoints.fees()),
-        api.get(endpoints.funds()),
-        api.get(endpoints.projects()),
-        api.get(endpoints.expenses()),
-        api.get(endpoints.payments()),
+        api.get(endpoints.fees()).catch(label('fees')),
+        api.get(endpoints.funds()).catch(label('funds')),
+        api.get(endpoints.projects()).catch(label('projects')),
+        api.get(endpoints.expenses()).catch(label('expenses')),
+        api.get(endpoints.payments()).catch(label('payments')),
         // Every logged-in user (admin or resident) needs to read the
         // community's payment account details — residents to see where to
         // send money, admins to edit it — so this is fetched for both.
-        api.get(endpoints.communityMe()).catch(() => null),
+        api.get(endpoints.communityMe()).catch(label('community')),
         // Residents: admins list the whole community; residents only get
         // their own profile (list endpoint is admin-only on the backend).
-        (isAdmin ? api.get(endpoints.residents()) : api.get('/residents/me')).catch(() => null),
+        (isAdmin ? api.get(endpoints.residents()) : api.get('/residents/me')).catch(label('residents')),
         // Fund balances are derived (allocated vs. spent). A single bulk
         // endpoint replaces the old per-fund summary request.
-        api.get(endpoints.fundSummaries()).catch(() => null),
+        api.get(endpoints.fundSummaries()).catch(label('fundSummaries')),
       ])
 
-      const residentsRaw = isAdmin
-        ? (residentsRes?.data?.data || [])
-        : (residentsRes?.data?.data ? [residentsRes.data.data] : [])
+      const failed = [feesRes, fundsRes, projectsRes, expensesRes, paymentsRes, residentsRes]
+        .filter((r) => r?.__failed)
+        .map((r) => r.__failed)
 
-      const fundsRaw = fundsRes.data.data
+      const residentsRaw = residentsRes?.__failed
+        ? []
+        : isAdmin
+          ? (residentsRes?.data?.data || [])
+          : (residentsRes?.data?.data ? [residentsRes.data.data] : [])
+
+      const fundsRaw = fundsRes?.__failed ? [] : fundsRes.data.data
       const summariesById = new Map((fundSummariesRes?.data?.data || []).map((s) => [s.fundId, s]))
 
-      const expensesRaw = expensesRes.data.data
+      const expensesRaw = expensesRes?.__failed ? [] : expensesRes.data.data
       const receiptsFlat = expensesRaw.flatMap((e) => (e.receipts || []).map(receiptToUI))
 
-      const communityRaw = communityRes?.data?.data
+      const communityRaw = communityRes?.__failed ? null : communityRes?.data?.data
       setData({
         community: communityRaw ? communityToUI(communityRaw) : { name: user.community, address: '', paymentBankName: '', paymentAccountName: '', paymentAccountNumber: '' },
         residents: residentsRaw.map(residentToUI),
-        fees: feesRes.data.data.map(feeToUI),
-        payments: paymentsRes.data.data.map(paymentToUI),
+        fees: feesRes?.__failed ? [] : feesRes.data.data.map(feeToUI),
+        payments: paymentsRes?.__failed ? [] : paymentsRes.data.data.map(paymentToUI),
         funds: fundsRaw.map((f) => fundToUI(f, summariesById.get(f.id) || null)),
-        projects: projectsRes.data.data.map(projectToUI),
+        projects: projectsRes?.__failed ? [] : projectsRes.data.data.map(projectToUI),
         expenses: expensesRaw.map(expenseToUI),
         receipts: receiptsFlat,
       })
+
+      // Surface a visible (but non-fatal) warning if part of the dashboard
+      // couldn't load, instead of failing silently or nuking everything.
+      if (failed.length && !opts.silent) {
+        setLoadError(`Some data failed to load (${failed.join(', ')}). Showing what did load — check the console for details.`)
+      }
     } catch (err) {
       if (!opts.silent) setLoadError(err?.response?.data?.message || err.message || 'Failed to load data from the server.')
     } finally {
