@@ -1,0 +1,233 @@
+const prisma = require('../config/prisma');
+const catchAsync = require('../utils/catchAsync');
+const AppError = require('../utils/AppError');
+const { recordAudit } = require('../utils/audit');
+const { getChangeType } = require('../utils/pendingChanges');
+
+const EXPIRY_HOURS = 24;
+
+const changeInclude = {
+  proposedBy: { select: { id: true, fullName: true, email: true } },
+  approvals: { include: { member: { select: { id: true, fullName: true } } } },
+};
+
+// Self-healing 24h expiry (see design note: no cron/worker service on this
+// Render deployment, so expiry is enforced lazily on read/write instead of
+// via a background job). Scoped to a community so it stays cheap.
+async function sweepExpired(communityId) {
+  const expired = await prisma.pendingChange.findMany({
+    where: { communityId, status: 'PENDING', expiresAt: { lt: new Date() } },
+  });
+  for (const pc of expired) {
+    await prisma.pendingChange.update({
+      where: { id: pc.id },
+      data: { status: 'EXPIRED', resolvedAt: new Date() },
+    });
+    await recordAudit(
+      { user: null, communityId },
+      {
+        action: 'REJECT',
+        entityType: 'PendingChange',
+        entityId: pc.id,
+        description: `${getChangeType(pc.changeType).label} request auto-rejected after 24 hours with no decision`,
+      },
+    );
+  }
+}
+
+// Creates a PendingChange instead of applying directly. Called by other
+// controllers (e.g. communityController.updateMyCommunity) rather than
+// exposed as its own generic public route — the caller already knows the
+// changeType/entityId/proposed fields for its own domain.
+async function createPendingChange(req, { changeType, entityId, currentEntity, proposedFields }) {
+  const def = getChangeType(changeType);
+  const diff = def.buildDiff(currentEntity, proposedFields);
+
+  if (Object.keys(diff).length === 0) {
+    return { noChange: true };
+  }
+
+  const otherMembers = await prisma.user.findMany({
+    where: { communityId: req.communityId, role: 'ADMIN', id: { not: req.user.id } },
+  });
+
+  if (otherMembers.length === 0) {
+    // Sole committee member — nobody to approve it. Apply immediately
+    // rather than creating a request that can never be resolved, but
+    // still write the same audit trail shape for consistency.
+    const applied = await prisma.$transaction((tx) => def.apply(tx, entityId, diff));
+    await recordAudit(req, {
+      action: 'UPDATE',
+      entityType: def.entityType,
+      entityId,
+      description: `${def.label} updated (sole committee member, no other approvers required): ${describeDiff(diff)}`,
+    });
+    return { applied: true, entity: applied };
+  }
+
+  const pendingChange = await prisma.pendingChange.create({
+    data: {
+      communityId: req.communityId,
+      changeType,
+      entityType: def.entityType,
+      entityId,
+      diff,
+      proposedById: req.user.id,
+      expiresAt: new Date(Date.now() + EXPIRY_HOURS * 60 * 60 * 1000),
+      approvals: { create: otherMembers.map((m) => ({ committeeUserId: m.id })) },
+    },
+    include: changeInclude,
+  });
+
+  await recordAudit(req, {
+    action: 'CREATE',
+    entityType: 'PendingChange',
+    entityId: pendingChange.id,
+    description: `Proposed change to ${def.label}, needs approval from ${otherMembers.length} other committee member(s): ${describeDiff(diff)}`,
+  });
+
+  return { pending: pendingChange };
+}
+
+function describeDiff(diff) {
+  return Object.entries(diff)
+    .map(([field, { from, to }]) => `${field}: "${from ?? '(empty)'}" → "${to ?? '(empty)'}"`)
+    .join('; ');
+}
+
+// Everything the current committee member needs: requests awaiting their
+// vote, and their own outgoing requests (for status/cancel visibility).
+const listMyPendingChanges = catchAsync(async (req, res) => {
+  if (req.user.role !== 'ADMIN') {
+    return res.json({ success: true, data: { asApprover: [], asProposer: [] } });
+  }
+
+  await sweepExpired(req.communityId);
+
+  const [asApprover, asProposer] = await Promise.all([
+    prisma.pendingChange.findMany({
+      where: {
+        communityId: req.communityId,
+        status: 'PENDING',
+        proposedById: { not: req.user.id },
+        approvals: { some: { committeeUserId: req.user.id, decision: 'PENDING' } },
+      },
+      include: changeInclude,
+    }),
+    prisma.pendingChange.findMany({
+      where: { communityId: req.communityId, proposedById: req.user.id, status: 'PENDING' },
+      include: changeInclude,
+    }),
+  ]);
+
+  res.json({ success: true, data: { asApprover, asProposer } });
+});
+
+const respondToPendingChange = catchAsync(async (req, res) => {
+  if (req.user.role !== 'ADMIN') throw new AppError('Only a committee member can vote on this', 403);
+  const { decision } = req.body; // 'APPROVED' | 'REJECTED'
+
+  await sweepExpired(req.communityId);
+
+  const pendingChange = await prisma.pendingChange.findFirst({
+    where: { id: req.params.id, communityId: req.communityId },
+    include: { approvals: true },
+  });
+  if (!pendingChange) throw new AppError('Pending change not found', 404);
+  if (pendingChange.status !== 'PENDING') throw new AppError('This request has already been resolved', 422);
+  if (pendingChange.proposedById === req.user.id) throw new AppError('You cannot vote on your own request', 422);
+
+  const approval = pendingChange.approvals.find((a) => a.committeeUserId === req.user.id);
+  if (!approval) throw new AppError('You are not eligible to vote on this request', 403);
+  if (approval.decision !== 'PENDING') throw new AppError('You already responded to this request', 422);
+
+  await prisma.pendingChangeApproval.update({
+    where: { id: approval.id },
+    data: { decision, respondedAt: new Date() },
+  });
+
+  const def = getChangeType(pendingChange.changeType);
+
+  if (decision === 'REJECTED') {
+    const updated = await prisma.pendingChange.update({
+      where: { id: pendingChange.id },
+      data: { status: 'REJECTED', resolvedAt: new Date() },
+      include: changeInclude,
+    });
+    await recordAudit(req, {
+      action: 'REJECT',
+      entityType: 'PendingChange',
+      entityId: pendingChange.id,
+      description: `Rejected proposed change to ${def.label}: ${describeDiff(pendingChange.diff)}`,
+    });
+    return res.json({ success: true, data: updated });
+  }
+
+  const remaining = await prisma.pendingChangeApproval.count({
+    where: { pendingChangeId: pendingChange.id, decision: { not: 'APPROVED' } },
+  });
+
+  if (remaining > 0) {
+    const updated = await prisma.pendingChange.findUnique({ where: { id: pendingChange.id }, include: changeInclude });
+    await recordAudit(req, {
+      action: 'UPDATE',
+      entityType: 'PendingChange',
+      entityId: pendingChange.id,
+      description: `Approved proposed change to ${def.label}; still awaiting ${remaining} other committee member(s)`,
+    });
+    return res.json({ success: true, data: updated });
+  }
+
+  // Everyone has approved — apply the real change now, atomically with
+  // resolving the request so a crash between the two can't leave a
+  // fully-approved request that never actually took effect.
+  const [updated] = await prisma.$transaction(async (tx) => {
+    await def.apply(tx, pendingChange.entityId, pendingChange.diff);
+    const resolved = await tx.pendingChange.update({
+      where: { id: pendingChange.id },
+      data: { status: 'APPROVED', resolvedAt: new Date() },
+      include: changeInclude,
+    });
+    return [resolved];
+  });
+
+  await recordAudit(req, {
+    action: 'UPDATE',
+    entityType: def.entityType,
+    entityId: pendingChange.entityId,
+    description: `${def.label} updated after full committee approval: ${describeDiff(pendingChange.diff)}`,
+  });
+
+  res.json({ success: true, data: updated });
+});
+
+const cancelPendingChange = catchAsync(async (req, res) => {
+  const pendingChange = await prisma.pendingChange.findFirst({
+    where: { id: req.params.id, communityId: req.communityId, proposedById: req.user.id },
+  });
+  if (!pendingChange) throw new AppError('Pending change not found', 404);
+  if (pendingChange.status !== 'PENDING') throw new AppError('This request can no longer be cancelled', 422);
+
+  const updated = await prisma.pendingChange.update({
+    where: { id: pendingChange.id },
+    data: { status: 'REJECTED', resolvedAt: new Date() },
+    include: changeInclude,
+  });
+
+  await recordAudit(req, {
+    action: 'UPDATE',
+    entityType: 'PendingChange',
+    entityId: pendingChange.id,
+    description: `Withdrew own proposed change to ${getChangeType(pendingChange.changeType).label}`,
+  });
+
+  res.json({ success: true, data: updated });
+});
+
+module.exports = {
+  createPendingChange,
+  listMyPendingChanges,
+  respondToPendingChange,
+  cancelPendingChange,
+  sweepExpired,
+};

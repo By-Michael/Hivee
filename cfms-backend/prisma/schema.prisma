@@ -40,6 +40,13 @@ enum PaymentMethod {
 
 enum PaymentStatus {
   PENDING
+  // Bank verification returned matched:true, but our own safeguard check
+  // (payer-name mismatch, amount outside tolerance, above the auto-verify
+  // threshold, or the provider response didn't have enough fields to
+  // cross-check confidently) didn't clear it for instant VERIFIED. Needs
+  // an admin to look at it — distinct from PENDING because there IS a
+  // bank match on file, just not a fully-trusted one.
+  PENDING_REVIEW
   VERIFIED
   REJECTED
 }
@@ -92,12 +99,18 @@ model Community {
   paymentBankName       String?
   paymentAccountName    String?
   paymentAccountNumber  String?
+  // Self-verified payments at or above this amount always go to
+  // PENDING_REVIEW regardless of bank-match quality (fraud incentive
+  // concentrates at higher amounts). Null/unset = no threshold, only the
+  // name/amount cross-check safeguards apply. See selfVerifyPayment.
+  autoVerifyMaxAmount   Decimal?  @db.Decimal(12, 2)
 
   users    User[]
   fees     Fee[]
   funds    Fund[]
   projects Project[]
   transferRequests CommitteeTransferRequest[]
+  pendingChanges   PendingChange[]
   auditLogs AuditLog[]
 
   @@map("communities")
@@ -126,6 +139,8 @@ model User {
 
   transferRequestsInitiated CommitteeTransferRequest[]   @relation("TransferFrom")
   transferApprovals         CommitteeTransferApproval[]
+  pendingChangesProposed    PendingChange[]               @relation("PendingChangeProposedBy")
+  pendingChangeApprovals    PendingChangeApproval[]
   auditLogs                 AuditLog[]
 
   @@index([communityId])
@@ -222,14 +237,23 @@ model Fee {
 model Payment {
   id                 String        @id @default(uuid())
   residentId         String
-  // Exactly one of feeId / projectId is set — what this payment is *for*.
-  // Both nullable (rather than a single polymorphic column) so the existing
-  // FK integrity/cascade behaviour keeps working for whichever one is used.
-  // Enforced in the app layer (paymentValidators.js) since Postgres check
-  // constraints referencing two nullable columns aren't expressible in the
-  // Prisma schema directly.
+  // Exactly one of feeId / projectId / fundId is set — what this payment is
+  // *for*. All nullable (rather than a single polymorphic column) so the
+  // existing FK integrity/cascade behaviour keeps working for whichever one
+  // is used. Enforced in the app layer (paymentValidators.js) since Postgres
+  // check constraints referencing three nullable columns aren't expressible
+  // in the Prisma schema directly.
+  //
+  // fundId is for a resident paying directly into a Fund (e.g. topping up
+  // "Emergency Fund" with no specific project yet). Contrast with a payment
+  // on a Project that itself belongs to a fund — both count toward that
+  // fund's real cash balance (see Fund.actualBalance in fundController.js),
+  // but only fundId payments have no project attached at all. Fee payments
+  // never set fundId and never count toward any fund's balance — fees pay
+  // for operating costs, not fund-linked projects.
   feeId              String?
   projectId          String?
+  fundId             String?
   amount             Decimal       @db.Decimal(12, 2)
   paymentMethod      PaymentMethod @default(CASH)
   transactionReference String?
@@ -254,16 +278,27 @@ model Payment {
   // manually-typed entry can be fixed or removed by the committee since a
   // human, not a bank, is the source of truth for it.
   recordedBy         String?
+  // Raw bank-verification provider response (Veritas), kept for admin
+  // review of PENDING_REVIEW / VERIFIED self-verified payments — lets a
+  // human see exactly what the bank lookup returned rather than just our
+  // pass/fail summary of it. Null for non-self-verified payments.
+  verificationRaw    Json?
+  // Human-readable reason(s) our safeguard check flagged this payment for
+  // review (e.g. "payer name mismatch", "amount above auto-verify
+  // threshold"). Null when it passed cleanly or wasn't self-verified.
+  reviewFlags        String?
 
   resident Resident @relation(fields: [residentId], references: [id], onDelete: Cascade)
   fee      Fee?     @relation(fields: [feeId], references: [id], onDelete: Cascade)
   project  Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  fund     Fund?    @relation(fields: [fundId], references: [id], onDelete: Cascade)
   verifier User?    @relation("PaymentVerifiedBy", fields: [verifiedBy], references: [id], onDelete: SetNull)
   recorder User?    @relation("PaymentRecordedBy", fields: [recordedBy], references: [id], onDelete: SetNull)
 
   @@index([residentId])
   @@index([feeId])
   @@index([projectId])
+  @@index([fundId])
   // Every list/report/aggregate query filters or sorts on these — without
   // an index Postgres has to scan and sort the whole table, which gets
   // slower every month as more payments accumulate.
@@ -281,6 +316,11 @@ model Fund {
 
   community Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
   projects  Project[]
+  // Direct-to-fund payments only (see Payment.fundId comment). Payments
+  // aimed at a Project that belongs to this fund are NOT in this relation —
+  // they're reached via project.fundId instead. Fund balance calculations
+  // must combine both; see getFundSummary in fundController.js.
+  payments  Payment[]
 
   @@index([communityId])
   @@map("funds")
@@ -318,10 +358,31 @@ model Expense {
   spentAt     DateTime        @default(now())
   bankName    String?
   transactionReference String?
+  // When the ROW was recorded, distinct from spentAt (which is when the
+  // money went out and can be backdated). The delete grace window in
+  // expenseController.js measures against this, not spentAt, so someone
+  // can't reopen the delete window on an old expense by editing its date.
+  createdAt   DateTime        @default(now())
+
+  // Expenses are effectively append-only: a correction is a new Expense row
+  // that offsets the original rather than a mutation of it. `reversesId` is
+  // set ONLY on the reversal row and points back at the original it cancels
+  // out (reversal amount is stored negative so budget/actual-spend sums —
+  // see computeFundMoney in fundController.js — net out with zero special
+  // casing). `isVoided` is set on the ORIGINAL once it has been reversed, so
+  // listings can flag/exclude it visually without needing to inspect the
+  // reverse relation. A row can never be both voided and a reversal of
+  // something else at once in normal flow, but nothing here prevents
+  // re-reversing a reversal if that's ever needed (each reversal is just
+  // another Expense).
+  reversesId  String?   @unique
+  isVoided    Boolean   @default(false)
 
   project  Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
   recorder User      @relation("ExpenseRecordedBy", fields: [recordedBy], references: [id], onDelete: Restrict)
   receipts Receipt[]
+  reverses  Expense? @relation("ExpenseReversal", fields: [reversesId], references: [id], onDelete: SetNull)
+  reversal  Expense? @relation("ExpenseReversal")
 
   @@index([projectId])
   // Supports the "expenses recorded by users in my community" half of
@@ -387,4 +448,66 @@ model CommitteeTransferApproval {
 
   @@unique([requestId, committeeUserId])
   @@map("committee_transfer_approvals")
+}
+
+// ---------------------------------------------------------------------------
+// GENERALIZED SENSITIVE-CHANGE APPROVAL
+//
+// Any action a single committee member shouldn't be able to make unilaterally
+// routes through here: a PendingChange is created instead of applying
+// directly, every OTHER committee member gets an approval row, one rejection
+// kills it, and it only actually applies once everyone has approved or it
+// auto-expires after 24h. See src/utils/pendingChanges.js for the apply-diff
+// logic per changeType and src/controllers/pendingChangeController.js for
+// the shared submit/approve/reject/list flow.
+// ---------------------------------------------------------------------------
+
+enum PendingChangeStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  EXPIRED
+}
+
+model PendingChange {
+  id          String              @id @default(uuid())
+  communityId String
+  // Tag identifying what kind of sensitive action this is, e.g.
+  // "COMMUNITY_PAYMENT_DETAILS". A string rather than an enum on purpose —
+  // registering a new sensitive-change type shouldn't require a migration,
+  // just a new case in applyPendingChange().
+  changeType  String
+  // Which real row this will be applied to once approved.
+  entityType  String
+  entityId    String
+  // { fieldName: { from, to }, ... } — single source of truth for both what
+  // reviewers see and what gets applied on final approval.
+  diff        Json
+  status      PendingChangeStatus @default(PENDING)
+  proposedById String
+  createdAt   DateTime            @default(now())
+  expiresAt   DateTime
+  resolvedAt  DateTime?
+
+  community  Community               @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  proposedBy User                    @relation("PendingChangeProposedBy", fields: [proposedById], references: [id], onDelete: Cascade)
+  approvals  PendingChangeApproval[]
+
+  @@index([communityId, status])
+  @@index([entityType, entityId, status])
+  @@map("pending_changes")
+}
+
+model PendingChangeApproval {
+  id              String           @id @default(uuid())
+  pendingChangeId String
+  committeeUserId String
+  decision        ApprovalDecision @default(PENDING)
+  respondedAt     DateTime?
+
+  pendingChange PendingChange @relation(fields: [pendingChangeId], references: [id], onDelete: Cascade)
+  member        User          @relation(fields: [committeeUserId], references: [id], onDelete: Cascade)
+
+  @@unique([pendingChangeId, committeeUserId])
+  @@map("pending_change_approvals")
 }

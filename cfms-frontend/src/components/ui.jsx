@@ -113,6 +113,10 @@ export function Badge({ status }) {
     completed: 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200',
     verified: 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200',
     pending: 'bg-amber-50 text-amber-700 ring-1 ring-amber-200',
+    // Bank lookup matched, but flagged by the safeguard check — deliberately
+    // a different color from plain "pending" so admins can tell "no bank
+    // match attempted" apart from "matched, but needs your eyes on it".
+    pending_review: 'bg-orange-50 text-orange-700 ring-1 ring-orange-300',
     'in-progress': 'bg-brand-50 text-brand-700 ring-1 ring-brand-200',
     planned: 'bg-ink-100 text-ink-600 ring-1 ring-ink-200',
     inactive: 'bg-ink-100 text-ink-500 ring-1 ring-ink-200',
@@ -123,7 +127,7 @@ export function Badge({ status }) {
   }
   const dot = {
     paid: 'bg-emerald-500', active: 'bg-emerald-500', completed: 'bg-emerald-500', verified: 'bg-emerald-500',
-    pending: 'bg-amber-500', 'in-progress': 'bg-brand-500', planned: 'bg-ink-400', inactive: 'bg-rose-500',
+    pending: 'bg-amber-500', pending_review: 'bg-orange-500', 'in-progress': 'bg-brand-500', planned: 'bg-ink-400', inactive: 'bg-rose-500',
     overdue: 'bg-rose-500', rejected: 'bg-rose-500', cancelled: 'bg-rose-500', unverified: 'bg-amber-500',
   }
   return (

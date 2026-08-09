@@ -17,6 +17,7 @@ const uploadReceipt = catchAsync(async (req, res) => {
     },
   });
   if (!expense) throw new AppError('Expense not found in this community', 404);
+  if (expense.isVoided) throw new AppError('This expense has been reversed and no longer accepts new receipts', 409);
 
   const receipt = await prisma.receipt.create({
     data: {

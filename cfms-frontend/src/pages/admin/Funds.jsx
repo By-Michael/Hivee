@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Plus, Pencil, Trash2, Landmark, TrendingUp, Target, Users } from 'lucide-react'
+import { Plus, Pencil, Trash2, Landmark, TrendingUp, Target, Users, Lock } from 'lucide-react'
 import { useData } from '../../context/DataContext'
 import { PageHeader, Modal, currency, ConfirmDialog, notify } from '../../components/ui'
 import { getMeta, setMeta } from '../../lib/adapters'
@@ -13,7 +13,7 @@ const catColors = {
 }
 
 export default function Funds() {
-  const { funds, projects, fees, payments, residents, addFund, updateFund, removeFund } = useData()
+  const { funds, projects, payments, residents, addFund, updateFund, removeFund } = useData()
   const [modal, setModal] = useState(false)
   const [editing, setEditing] = useState(null)
   const [form, setForm] = useState(empty)
@@ -21,15 +21,23 @@ export default function Funds() {
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [deleting, setDeleting] = useState(false)
 
-  const total = funds.reduce((s, f) => s + f.balance, 0)
+  const total = funds.reduce((s, f) => s + f.actualBalance, 0)
 
+  // Contributors are residents with a VERIFIED payment that actually counts
+  // toward this fund: either a direct fund payment, or a payment toward one
+  // of this fund's projects. Fee payments never count — fees are for
+  // operating costs, not fund-linked projects (see Payment.fundId schema
+  // comment on the backend).
   const enriched = useMemo(() => funds.map((f) => {
-    const feesInCategory = fees.filter((x) => x.category === f.category)
-    const feeIds = new Set(feesInCategory.map((x) => x.id))
-    const verifiedPayments = payments.filter((p) => feeIds.has(p.feeId) && p.status === 'paid')
-    const collected = verifiedPayments.reduce((s, p) => s + p.amount, 0)
+    const projectIdsInFund = new Set(projects.filter((p) => p.fundId === f.id).map((p) => p.id))
+    const verifiedPayments = payments.filter((p) => p.status === 'paid' && (p.fundId === f.id || projectIdsInFund.has(p.projectId)))
+    const collected = f.verifiedCollected // trust the backend total, not a client re-derivation
     const contributorIds = new Set(verifiedPayments.map((p) => p.residentId))
     const goal = Number(getMeta('fundGoal', f.id, 0)) || null
+    // Deletion is blocked server-side once any linked project has expenses
+    // logged against it — mirror that here so the button reflects reality
+    // instead of letting the admin hit a 403.
+    const hasExpenses = projects.some((p) => p.fundId === f.id && p.expenseCount > 0)
     return {
       ...f,
       collected,
@@ -37,8 +45,9 @@ export default function Funds() {
       nonContributors: Math.max(residents.length - contributorIds.size, 0),
       goal,
       pct: goal ? Math.min(100, Math.round((collected / goal) * 100)) : null,
+      hasExpenses,
     }
-  }), [funds, fees, payments, residents])
+  }), [funds, projects, payments, residents])
 
   function openAdd() { setEditing(null); setForm(empty); setModal(true) }
   function openEdit(f) { setEditing(f); setForm({ ...f, goal: getMeta('fundGoal', f.id, '') }); setModal(true) }
@@ -87,13 +96,22 @@ export default function Funds() {
                 </div>
                 <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                   <button onClick={() => openEdit(f)} className="p-1.5 rounded-lg text-ink-400 hover:bg-brand-50 hover:text-brand-600"><Pencil className="h-3.5 w-3.5" /></button>
-                  <button onClick={() => setDeleteTarget(f)} className="p-1.5 rounded-lg text-ink-400 hover:bg-rose-50 hover:text-rose-500"><Trash2 className="h-3.5 w-3.5" /></button>
+                  {f.hasExpenses ? (
+                    <span title="Can't be deleted — one of this fund's projects has expenses logged against it." className="p-1.5 rounded-lg text-ink-300 cursor-not-allowed">
+                      <Lock className="h-3.5 w-3.5" />
+                    </span>
+                  ) : (
+                    <button onClick={() => setDeleteTarget(f)} className="p-1.5 rounded-lg text-ink-400 hover:bg-rose-50 hover:text-rose-500"><Trash2 className="h-3.5 w-3.5" /></button>
+                  )}
                 </div>
               </div>
               <p className="mt-4 font-semibold text-ink-800">{f.name}</p>
               <span className="badge bg-ink-100 text-ink-600 mt-1">{f.category}</span>
-              <p className="mt-4 text-2xl font-bold font-display text-ink-900">{currency(f.balance)}</p>
-              <p className="text-xs text-ink-400">Fund balance</p>
+              <p className="mt-4 text-2xl font-bold font-display text-ink-900">{currency(f.actualBalance)}</p>
+              <p className="text-xs text-ink-400">Actually collected, minus spent</p>
+              <p className="mt-1 text-xs text-ink-400">
+                Budgeted: <span className="font-medium text-ink-500">{currency(f.budgetRemaining)}</span> remaining of {currency(f.budgetAllocated)}
+              </p>
 
               <div className="mt-3 space-y-1.5 text-xs">
                 <div className="flex items-center justify-between text-ink-500">
@@ -148,7 +166,7 @@ export default function Funds() {
             <input type="number" min="0" className="input" value={form.goal} onChange={(e) => setForm({ ...form, goal: e.target.value })} placeholder="e.g. 200000" />
           </div>
           <p className="text-xs text-ink-400 -mt-1">
-            Balance isn't set manually — it's calculated automatically from this fund's project budgets and logged expenses. "Collected" reflects verified payments against fees in this category.
+            Balance isn't set manually. "Actually collected" is verified payments made directly to this fund plus verified payments to its projects, minus what's been spent. "Budgeted" is this fund's project budgets minus logged expenses — a planning figure, not real cash. Fee payments never count toward a fund's balance.
           </p>
           <div className="flex gap-2 pt-2">
             <button type="button" onClick={() => setModal(false)} disabled={saving} className="btn-secondary flex-1">Cancel</button>

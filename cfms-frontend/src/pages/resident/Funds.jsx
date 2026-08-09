@@ -47,8 +47,8 @@ const emptyForm = { feeId: '', amount: '', payerName: '', txnId: '', reason: '' 
 
 export default function ResidentFunds() {
   const { user } = useAuth()
-  const { funds, fees, payments, residents, community, submitSelfPayment, parsePaymentScreenshot } = useData()
-  const total = funds.reduce((s, f) => s + f.balance, 0)
+  const { funds, fees, projects, payments, residents, community, submitSelfPayment, parsePaymentScreenshot } = useData()
+  const total = funds.reduce((s, f) => s + f.actualBalance, 0)
   const me = residents.find((r) => r.id === user?.residentId) || residents[0]
 
   const [contribute, setContribute] = useState(null)
@@ -63,13 +63,23 @@ export default function ResidentFunds() {
 
   const selectedFee = fees.find((f) => f.id === form.feeId)
 
+  // NOTE: `feesInCategory` is still used below purely to drive the
+  // "Contribute" form's fee picker — the resident-facing self-verify
+  // endpoint (submitSelfPayment) is fee-only for now, so contributing to a
+  // fund still works by paying a category-matched fee, not a true
+  // direct-to-fund payment. That's a separate follow-up (wiring fundId
+  // through selfVerifyPayment) — not done here. The *display* numbers below
+  // (`collected`/balance) now come from the real backend fund summary
+  // instead of being re-derived from fee-category matching, so what's shown
+  // is accurate even though the contribute flow itself hasn't been upgraded.
   const enriched = useMemo(() => funds.map((f) => {
     const feesInCategory = fees.filter((x) => x.category === f.category)
-    const feeIds = new Set(feesInCategory.map((x) => x.id))
-    const verifiedPayments = payments.filter((p) => feeIds.has(p.feeId) && p.status === 'paid')
-    const collected = verifiedPayments.reduce((s, p) => s + p.amount, 0)
-    const contributorIds = new Set(verifiedPayments.map((p) => p.residentId))
+    const projectIdsInFund = new Set(projects.filter((p) => p.fundId === f.id).map((p) => p.id))
+    const contributorIds = new Set(
+      payments.filter((p) => p.status === 'paid' && (p.fundId === f.id || projectIdsInFund.has(p.projectId))).map((p) => p.residentId)
+    )
     const goal = Number(getMeta('fundGoal', f.id, 0)) || null
+    const collected = f.verifiedCollected
     return {
       ...f,
       feesInCategory,
@@ -79,7 +89,7 @@ export default function ResidentFunds() {
       goal,
       pct: goal ? Math.min(100, Math.round((collected / goal) * 100)) : null,
     }
-  }), [funds, fees, payments, residents])
+  }), [funds, fees, projects, payments, residents])
 
   function openContribute(f) {
     const fee = f.feesInCategory[0]
@@ -157,8 +167,11 @@ export default function ResidentFunds() {
             </div>
             <p className="mt-4 font-semibold text-ink-800">{f.name}</p>
             <span className="badge bg-ink-100 text-ink-600 mt-1">{f.category}</span>
-            <p className="mt-4 text-2xl font-bold font-display text-ink-900">{currency(f.balance)}</p>
-            <p className="text-xs text-ink-400">Fund balance</p>
+            <p className="mt-4 text-2xl font-bold font-display text-ink-900">{currency(f.actualBalance)}</p>
+            <p className="text-xs text-ink-400">Actually collected, minus spent</p>
+            <p className="mt-1 text-xs text-ink-400">
+              Budgeted: <span className="font-medium text-ink-500">{currency(f.budgetRemaining)}</span> remaining of {currency(f.budgetAllocated)}
+            </p>
 
             <div className="mt-4 space-y-2 text-xs">
               <div className="flex items-center justify-between text-ink-500">

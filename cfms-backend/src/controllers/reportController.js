@@ -12,22 +12,45 @@ const collectionsReport = catchAsync(async (req, res) => {
   const range = parseDateRange(req.query);
 
   const payments = await prisma.payment.findMany({
-    where: { fee: { communityId: req.communityId }, status: 'VERIFIED', paidAt: range },
-    include: { fee: { select: { name: true } }, resident: { include: { user: true } } },
+    where: {
+      OR: [
+        { fee: { communityId: req.communityId } },
+        { project: { communityId: req.communityId } },
+        { fund: { communityId: req.communityId } },
+      ],
+      status: 'VERIFIED',
+      paidAt: range,
+    },
+    include: {
+      fee: { select: { name: true } },
+      project: { select: { name: true } },
+      fund: { select: { name: true } },
+      resident: { include: { user: true } },
+    },
     orderBy: { paidAt: 'desc' },
   });
 
   const totalsByFee = {};
+  const totalsByProject = {};
+  const totalsByFund = {}; // direct-to-fund payments only, not project payments
   let grandTotal = 0;
   for (const p of payments) {
-    const key = p.fee.name;
-    totalsByFee[key] = (totalsByFee[key] || 0) + Number(p.amount);
+    if (p.feeId) {
+      const key = p.fee.name;
+      totalsByFee[key] = (totalsByFee[key] || 0) + Number(p.amount);
+    } else if (p.projectId) {
+      const key = p.project.name;
+      totalsByProject[key] = (totalsByProject[key] || 0) + Number(p.amount);
+    } else {
+      const key = p.fund.name;
+      totalsByFund[key] = (totalsByFund[key] || 0) + Number(p.amount);
+    }
     grandTotal += Number(p.amount);
   }
 
   res.json({
     success: true,
-    data: { range, grandTotal, totalsByFee, payments },
+    data: { range, grandTotal, totalsByFee, totalsByProject, totalsByFund, payments },
   });
 });
 
@@ -67,7 +90,11 @@ const financialSummaryReport = catchAsync(async (req, res) => {
 
   const [income, expenses, projects] = await Promise.all([
     prisma.payment.aggregate({
-      where: { fee: { communityId }, status: 'VERIFIED', paidAt: range },
+      where: {
+        OR: [{ fee: { communityId } }, { project: { communityId } }, { fund: { communityId } }],
+        status: 'VERIFIED',
+        paidAt: range,
+      },
       _sum: { amount: true },
     }),
     prisma.expense.aggregate({

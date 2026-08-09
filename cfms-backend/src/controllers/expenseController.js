@@ -30,6 +30,8 @@ const listExpenses = catchAsync(async (req, res) => {
       project: { select: { id: true, name: true } },
       recorder: { select: { id: true, fullName: true } },
       receipts: true,
+      reversal: true,
+      reverses: { select: { id: true, description: true, amount: true, category: true } },
     },
     orderBy: { spentAt: 'desc' },
   });
@@ -45,44 +47,115 @@ const getExpense = catchAsync(async (req, res) => {
         { recorder: { communityId: req.communityId } },
       ],
     },
-    include: { project: true, recorder: { select: { id: true, fullName: true } }, receipts: true },
+    include: {
+      project: true,
+      recorder: { select: { id: true, fullName: true } },
+      receipts: true,
+      reversal: true,
+      reverses: true,
+    },
   });
   if (!expense) throw new AppError('Expense not found', 404);
   res.json({ success: true, data: expense });
 });
 
-const updateExpense = catchAsync(async (req, res) => {
+// Expenses are the record of where money went, so they're effectively
+// append-only: there is no destructive update. A correction is made by
+// reversing the original (see reverseExpense below) and, if a corrected
+// amount is needed, recording a fresh Expense for it. Both stay visible in
+// the trail forever instead of one overwriting the other.
+//
+// Narrow exception: an expense can still be hard-deleted, but ONLY within a
+// short grace window right after creation, before anyone could plausibly
+// have relied on it — and only by the person who recorded it, only if it
+// has no receipts attached yet, and only if it hasn't been reversed (or is
+// itself a reversal). This is intentionally much tighter than the
+// equivalent Payment exception, because an expense is the actual proof of
+// where community funds went.
+const DELETE_GRACE_WINDOW_MS = 15 * 60 * 1000;
+
+const EXPENSE_COMMUNITY_FILTER = (communityId) => ({
+  OR: [
+    { project: { communityId } },
+    { recorder: { communityId } },
+  ],
+});
+
+// Reverses an expense by creating a linked, negative-amount Expense that
+// offsets it — never mutates the original row. The reversal nets out
+// automatically in fund/project budget math (computeFundMoney sums
+// expense.amount directly), so no separate exclusion logic is needed
+// anywhere else in the system.
+const reverseExpense = catchAsync(async (req, res) => {
   const expense = await prisma.expense.findFirst({
-    where: {
-      id: req.params.id,
-      OR: [
-        { project: { communityId: req.communityId } },
-        { recorder: { communityId: req.communityId } },
-      ],
-    },
+    where: { id: req.params.id, ...EXPENSE_COMMUNITY_FILTER(req.communityId) },
   });
   if (!expense) throw new AppError('Expense not found', 404);
+  if (expense.isVoided) throw new AppError('This expense has already been reversed', 409);
+  if (expense.reversesId) throw new AppError('A reversal entry cannot itself be reversed directly — record a new expense if the correction needs undoing', 409);
 
-  const updated = await prisma.expense.update({ where: { id: expense.id }, data: req.body });
-  await recordAudit(req, { action: 'UPDATE', entityType: 'Expense', entityId: expense.id, description: `Updated expense "${updated.description || updated.category}"` });
-  res.json({ success: true, data: updated });
+  const reason = (req.body && req.body.reason) || null;
+
+  const [reversal] = await prisma.$transaction([
+    prisma.expense.create({
+      data: {
+        projectId: expense.projectId,
+        recordedBy: req.user.id,
+        category: expense.category,
+        description: reason ? `Reversal of ${expense.id.slice(0, 8)}: ${reason}` : `Reversal of expense ${expense.id.slice(0, 8)}`,
+        vendor: expense.vendor,
+        amount: Number(expense.amount) * -1,
+        reversesId: expense.id,
+      },
+    }),
+    prisma.expense.update({ where: { id: expense.id }, data: { isVoided: true } }),
+  ]);
+
+  await recordAudit(req, {
+    action: 'UPDATE',
+    entityType: 'Expense',
+    entityId: expense.id,
+    description: `Reversed expense "${expense.description || expense.category}" (${expense.amount}) via new entry ${reversal.id.slice(0, 8)}${reason ? `: ${reason}` : ''}`,
+    metadata: {
+      originalExpense: { ...expense, amount: Number(expense.amount) },
+      reversalId: reversal.id,
+      reason,
+    },
+  });
+
+  res.status(201).json({ success: true, data: reversal });
 });
 
 const deleteExpense = catchAsync(async (req, res) => {
   const expense = await prisma.expense.findFirst({
-    where: {
-      id: req.params.id,
-      OR: [
-        { project: { communityId: req.communityId } },
-        { recorder: { communityId: req.communityId } },
-      ],
-    },
+    where: { id: req.params.id, ...EXPENSE_COMMUNITY_FILTER(req.communityId) },
+    include: { receipts: true },
   });
   if (!expense) throw new AppError('Expense not found', 404);
 
+  if (expense.recordedBy !== req.user.id) {
+    throw new AppError('Only the person who recorded this expense can delete it, and only shortly after recording it. Use reverse instead.', 403);
+  }
+  const ageMs = Date.now() - new Date(expense.createdAt).getTime();
+  if (ageMs > DELETE_GRACE_WINDOW_MS) {
+    throw new AppError('This expense can no longer be deleted (past the 15-minute grace window). Use reverse to correct it instead.', 403);
+  }
+  if (expense.receipts.length > 0) {
+    throw new AppError('This expense has receipts attached and can no longer be deleted. Use reverse instead.', 403);
+  }
+  if (expense.isVoided || expense.reversesId) {
+    throw new AppError('Reversed expenses and reversal entries cannot be deleted — they are part of the permanent trail.', 403);
+  }
+
   await prisma.expense.delete({ where: { id: expense.id } });
-  await recordAudit(req, { action: 'DELETE', entityType: 'Expense', entityId: expense.id, description: `Deleted expense "${expense.description || expense.category}"` });
+  await recordAudit(req, {
+    action: 'DELETE',
+    entityType: 'Expense',
+    entityId: expense.id,
+    description: `Deleted expense "${expense.description || expense.category}" (${expense.amount}) within grace window, no receipts attached`,
+    metadata: { ...expense, amount: Number(expense.amount) },
+  });
   res.json({ success: true, message: 'Expense deleted' });
 });
 
-module.exports = { createExpense, listExpenses, getExpense, updateExpense, deleteExpense };
+module.exports = { createExpense, listExpenses, getExpense, reverseExpense, deleteExpense };

@@ -55,7 +55,10 @@ const PAYMENT_METHOD_TO_API = {
   Cash: 'CASH', 'Bank Transfer': 'BANK_TRANSFER', 'Mobile Money': 'MOBILE_MONEY', Card: 'CARD', Other: 'OTHER',
 }
 
-const PAYMENT_STATUS_TO_UI = { PENDING: 'pending', VERIFIED: 'paid', REJECTED: 'rejected' }
+// PENDING_REVIEW = bank lookup matched, but our safeguard check (name/amount
+// cross-check, or above the auto-verify threshold) flagged it for an admin
+// to confirm — distinct from a plain PENDING (no bank match attempted yet).
+const PAYMENT_STATUS_TO_UI = { PENDING: 'pending', PENDING_REVIEW: 'pending_review', VERIFIED: 'paid', REJECTED: 'rejected' }
 
 const PROJECT_STATUS_TO_UI = { PLANNED: 'planned', ONGOING: 'in-progress', COMPLETED: 'completed', CANCELLED: 'cancelled' }
 const PROJECT_STATUS_TO_API = { planned: 'PLANNED', 'in-progress': 'ONGOING', completed: 'COMPLETED', cancelled: 'CANCELLED' }
@@ -153,6 +156,8 @@ export function paymentToUI(p) {
     feeId: p.feeId || '',
     projectId: p.projectId || '',
     projectName: p.project?.name || '',
+    fundId: p.fundId || '',
+    fundName: p.fund?.name || '',
     amount: Number(p.amount),
     date: p.paidAt,
     method: PAYMENT_METHOD_TO_UI[p.paymentMethod] || 'Cash',
@@ -196,16 +201,29 @@ export function paymentToUpdateAPI(form) {
 }
 
 // -------------------------------- funds -----------------------------------
-// SCHEMA GAP: Fund has no numeric balance column — balances are derived
-// (allocated vs. spent across a fund's projects/expenses). "category" is
-// stored in Fund.description, which really is a free-text column.
+// Fund has no numeric balance column — both numbers below are derived
+// server-side (fundController.js:computeFundMoney) each time a fund is
+// fetched. "category" is stored in Fund.description, which really is a
+// free-text column.
+//
+// Two distinct numbers, both real, meaning different things:
+//   - `budgetRemaining` (allocated - spent): planning view, budget vs actual.
+//   - `actualBalance` (verified payments in - spent): real cash view, what
+//     the fund actually holds right now. This is the number transparency-
+//     minded residents/committees care about; `balance` is kept as an alias
+//     of it for any older UI code that hasn't been updated to the new name.
 export function fundToUI(f, summary) {
   return {
     id: f.id,
     name: f.name,
     category: FUND_CATEGORIES.includes(f.description) ? f.description : 'Security',
-    balance: summary ? summary.remaining : 0,
-    projectCount: f._count?.projects ?? 0,
+    balance: summary ? summary.actualBalance : 0, // alias, prefer actualBalance below
+    actualBalance: summary ? summary.actualBalance : 0,
+    verifiedCollected: summary ? summary.verifiedCollected : 0,
+    budgetAllocated: summary ? summary.totalAllocated : 0,
+    budgetSpent: summary ? summary.totalSpent : 0,
+    budgetRemaining: summary ? summary.remaining : 0,
+    projectCount: f._count?.projects ?? summary?.projectCount ?? 0,
   }
 }
 
@@ -223,10 +241,15 @@ export function projectToUI(p) {
     name: p.name,
     fundId: p.fundId,
     budget: Number(p.budget),
+    // Reversal entries carry negative amounts, so this sum nets out
+    // automatically without any special-casing for voided/reversed rows.
     spent: (p.expenses || []).reduce((s, e) => s + Number(e.amount), 0),
     status: PROJECT_STATUS_TO_UI[p.status] || 'planned',
     startDate: p.startDate,
     endDate: p.endDate,
+    // Once >0, budget edits need committee approval and deletion is
+    // blocked entirely (see projectController.js).
+    expenseCount: p._count?.expenses ?? (p.expenses ? p.expenses.length : 0),
   }
 }
 
@@ -251,9 +274,20 @@ export function expenseToUI(e) {
     amount: Number(e.amount),
     vendor: e.vendor || '',
     date: e.spentAt,
+    createdAt: e.createdAt,
+    recordedBy: e.recordedBy || e.recorder?.id || '',
     bankName: e.bankName || '',
     transactionReference: e.transactionReference || '',
     receiptId: e.receipts?.[0]?.id,
+    receiptCount: e.receipts?.length ?? 0,
+    // Expenses are append-only: isVoided means this row has since been
+    // reversed (a linked negative entry exists); isReversal means THIS row
+    // IS that offsetting entry. reversalId/reversesId let the UI link them
+    // without a second fetch.
+    isVoided: !!e.isVoided,
+    isReversal: !!e.reversesId,
+    reversesId: e.reversesId || null,
+    reversalId: e.reversal?.id || null,
   }
 }
 
@@ -280,6 +314,8 @@ export function communityToUI(c) {
     paymentBankName: c.paymentBankName || '',
     paymentAccountName: c.paymentAccountName || '',
     paymentAccountNumber: c.paymentAccountNumber || '',
+    autoVerifyMaxAmount: c.autoVerifyMaxAmount ?? null,
+    bankVerificationStubActive: !!c.bankVerificationStubActive,
   }
 }
 
@@ -291,6 +327,24 @@ export function communityToUpdateAPI(form) {
     paymentBankName: form.paymentBankName || undefined,
     paymentAccountName: form.paymentAccountName || undefined,
     paymentAccountNumber: form.paymentAccountNumber || undefined,
+    autoVerifyMaxAmount: form.autoVerifyMaxAmount === undefined ? undefined : form.autoVerifyMaxAmount,
+  }
+}
+
+// ------------------------- pending changes (sensitive-action approval) --------
+export function pendingChangeToUI(pc) {
+  return {
+    id: pc.id,
+    changeType: pc.changeType,
+    entityType: pc.entityType,
+    entityId: pc.entityId,
+    diff: pc.diff || {},
+    status: pc.status,
+    proposedBy: pc.proposedBy,
+    createdAt: pc.createdAt,
+    expiresAt: pc.expiresAt,
+    resolvedAt: pc.resolvedAt,
+    approvals: pc.approvals || [],
   }
 }
 

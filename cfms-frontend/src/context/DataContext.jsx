@@ -10,6 +10,7 @@ import {
   expenseToUI, expenseToAPI,
   receiptToUI,
   communityToUI, communityToUpdateAPI,
+  pendingChangeToUI,
   setMeta,
 } from '../lib/adapters'
 
@@ -22,6 +23,7 @@ const EMPTY_DATA = {
   projects: [],
   expenses: [],
   receipts: [],
+  pendingChanges: { asApprover: [], asProposer: [] },
 }
 
 const DataContext = createContext(null)
@@ -69,7 +71,7 @@ export function DataProvider({ children }) {
       }
 
       const [
-        feesRes, fundsRes, projectsRes, expensesRes, paymentsRes, communityRes, residentsRes, fundSummariesRes,
+        feesRes, fundsRes, projectsRes, expensesRes, paymentsRes, communityRes, residentsRes, fundSummariesRes, pendingChangesRes,
       ] = await Promise.all([
         api.get(endpoints.fees()).catch(label('fees')),
         api.get(endpoints.funds()).catch(label('funds')),
@@ -86,6 +88,10 @@ export function DataProvider({ children }) {
         // Fund balances are derived (allocated vs. spent). A single bulk
         // endpoint replaces the old per-fund summary request.
         api.get(endpoints.fundSummaries()).catch(label('fundSummaries')),
+        // Sensitive-change approval items (e.g. pending bank-detail change
+        // requests) — ADMIN-only on the backend, so residents skip this
+        // call entirely rather than hit an authorize() 403 every refresh.
+        (isAdmin ? api.get(endpoints.pendingChangesMine()) : Promise.resolve({ data: { data: { asApprover: [], asProposer: [] } } })).catch(label('pendingChanges')),
       ])
 
       const failed = [feesRes, fundsRes, projectsRes, expensesRes, paymentsRes, residentsRes]
@@ -105,6 +111,7 @@ export function DataProvider({ children }) {
       const receiptsFlat = expensesRaw.flatMap((e) => (e.receipts || []).map(receiptToUI))
 
       const communityRaw = communityRes?.__failed ? null : communityRes?.data?.data
+      const pendingChangesRaw = pendingChangesRes?.__failed ? { asApprover: [], asProposer: [] } : (pendingChangesRes?.data?.data || { asApprover: [], asProposer: [] })
       setData({
         community: communityRaw ? communityToUI(communityRaw) : { name: user.community, address: '', paymentBankName: '', paymentAccountName: '', paymentAccountNumber: '' },
         residents: residentsRaw.map(residentToUI),
@@ -114,6 +121,10 @@ export function DataProvider({ children }) {
         projects: projectsRes?.__failed ? [] : projectsRes.data.data.map(projectToUI),
         expenses: expensesRaw.map(expenseToUI),
         receipts: receiptsFlat,
+        pendingChanges: {
+          asApprover: (pendingChangesRaw.asApprover || []).map(pendingChangeToUI),
+          asProposer: (pendingChangesRaw.asProposer || []).map(pendingChangeToUI),
+        },
       })
 
       // Surface a visible (but non-fatal) warning if part of the dashboard
@@ -278,9 +289,32 @@ export function DataProvider({ children }) {
     },
 
     // ---- community settings (ADMIN only on the backend) ----
+    // Bank-detail fields go through committee approval on the backend (see
+    // communityController.updateMyCommunity) — this may return a
+    // `pendingChange` instead of applying immediately. Returns the raw
+    // response body so the caller (Settings page) can show the right
+    // "applied" vs "awaiting approval" message.
     updateCommunity: async (form) => {
-      await api.patch(endpoints.communityMe(), communityToUpdateAPI(form))
+      const { data } = await api.patch(endpoints.communityMe(), communityToUpdateAPI(form))
       refresh({ silent: true })
+      return data
+    },
+
+    // ---- generalized sensitive-change approval ----
+    fetchMyPendingChanges: async () => {
+      const { data } = await api.get(endpoints.pendingChangesMine())
+      return {
+        asApprover: (data.data.asApprover || []).map(pendingChangeToUI),
+        asProposer: (data.data.asProposer || []).map(pendingChangeToUI),
+      }
+    },
+    respondToPendingChange: async (id, decision) => {
+      const { data } = await api.patch(endpoints.pendingChangeRespond(id), { decision })
+      refresh({ silent: true })
+      return pendingChangeToUI(data.data)
+    },
+    cancelPendingChange: async (id) => {
+      await api.delete(endpoints.pendingChange(id))
     },
 
     // ---- funds ----
@@ -303,10 +337,17 @@ export function DataProvider({ children }) {
       await api.post(endpoints.projects(), projectToAPI(form))
       refresh({ silent: true })
     },
+    // Name/description/dates/status apply instantly. Budget only applies
+    // instantly if the project has no expenses logged yet — otherwise the
+    // backend routes it through committee approval and returns
+    // `budgetChangeMessage` explaining what happened instead of applying it.
     updateProject: async (id, patch) => {
-      await api.patch(endpoints.project(id), projectToAPI(patch))
+      const { data } = await api.patch(endpoints.project(id), projectToAPI(patch))
       refresh({ silent: true })
+      return data
     },
+    // Blocked by the backend once the project has any expenses logged —
+    // surfaces as a 403 with an explanatory message.
     removeProject: async (id) => {
       await api.delete(endpoints.project(id))
       refresh({ silent: true })
@@ -324,10 +365,17 @@ export function DataProvider({ children }) {
       refresh({ silent: true })
       return created.data.id
     },
-    updateExpense: async (id, patch) => {
-      await api.patch(endpoints.expense(id), expenseToAPI(patch))
+    // Expenses have no general edit — corrections are made by reversing
+    // the original (a new, linked, offsetting Expense) and, if needed,
+    // logging a fresh correct one. Both stay visible in the trail.
+    reverseExpense: async (id, reason) => {
+      const { data } = await api.post(endpoints.reverseExpense(id), reason ? { reason } : {})
       refresh({ silent: true })
+      return data.data
     },
+    // Narrow exception only: the backend enforces a short grace window,
+    // original-recorder-only, and no-receipts-attached — this call can
+    // still fail with a 403 explaining why even though the button is shown.
     removeExpense: async (id) => {
       await api.delete(endpoints.expense(id))
       refresh({ silent: true })

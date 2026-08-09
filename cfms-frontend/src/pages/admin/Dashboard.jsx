@@ -1,9 +1,106 @@
-import { useMemo } from 'react'
-import { Wallet, Landmark, FolderKanban, Users, ArrowUpRight, Clock, Receipt } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { Wallet, Landmark, FolderKanban, Users, ArrowUpRight, Clock, Receipt, ShieldCheck, Check, X } from 'lucide-react'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, CartesianGrid, BarChart, Bar } from 'recharts'
 import { useData } from '../../context/DataContext'
 import { useAuth } from '../../context/AuthContext'
-import { StatCard, Badge, PageHeader, currency, formatDate } from '../../components/ui'
+import { StatCard, Badge, PageHeader, Modal, currency, formatDate, notify } from '../../components/ui'
+
+const CHANGE_TYPE_LABELS = { COMMUNITY_PAYMENT_DETAILS: 'community payment account details', PROJECT_BUDGET: 'a project budget' }
+const DIFF_FIELD_LABELS = { paymentBankName: 'Bank name', paymentAccountName: 'Account holder', paymentAccountNumber: 'Account number', budget: 'Budget' }
+
+function describeDiff(diff) {
+  return Object.entries(diff || {}).map(([field, { from, to }]) => (
+    { field: DIFF_FIELD_LABELS[field] || field, from: from || '(empty)', to: to || '(empty)' }
+  ))
+}
+
+// Time-remaining pill for the 24h auto-reject window — recomputed on each
+// render rather than a ticking timer, since being off by a few seconds
+// doesn't matter here and it avoids a re-render loop on the dashboard.
+function timeLeftLabel(expiresAt) {
+  const ms = new Date(expiresAt).getTime() - Date.now()
+  if (ms <= 0) return 'expiring…'
+  const hours = Math.floor(ms / 3600000)
+  const mins = Math.floor((ms % 3600000) / 60000)
+  if (hours > 0) return `${hours}h ${mins}m left`
+  return `${mins}m left`
+}
+
+// Dashboard-slot widget: when the current committee member has a sensitive
+// change awaiting their approval, it temporarily replaces the "Community
+// snapshot" card in this exact grid position. Reverts to the normal
+// snapshot card automatically once resolved (approved/rejected/expired) —
+// no separate "dismiss" state to manage, it just reflects pendingChanges.
+function PendingChangeSlot({ pendingChange, onDecide }) {
+  const [confirmDecision, setConfirmDecision] = useState(null) // 'APPROVED' | 'REJECTED' | null
+  const [submitting, setSubmitting] = useState(false)
+  const rows = describeDiff(pendingChange.diff)
+
+  async function submit() {
+    setSubmitting(true)
+    try {
+      await onDecide(pendingChange.id, confirmDecision)
+      setConfirmDecision(null)
+    } catch (err) {
+      notify(err?.response?.data?.message || err.message || 'Could not submit your response.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="card p-5 animate-fade-up border-2 border-amber-200 bg-amber-50/40">
+      <div className="flex items-center gap-2 mb-1">
+        <ShieldCheck className="h-4.5 w-4.5 text-amber-600 shrink-0" />
+        <h3 className="font-semibold text-ink-800">Committee approval needed</h3>
+      </div>
+      <p className="text-xs text-amber-700 font-medium mb-3">{timeLeftLabel(pendingChange.expiresAt)} to respond, or this auto-rejects.</p>
+
+      <p className="text-sm text-ink-600 mb-3">
+        <strong className="text-ink-800">{pendingChange.proposedBy?.fullName}</strong> proposed a change to{' '}
+        <strong className="text-ink-800">{CHANGE_TYPE_LABELS[pendingChange.changeType] || pendingChange.changeType}</strong>:
+      </p>
+
+      <div className="rounded-xl border border-amber-100 bg-white divide-y divide-amber-50 mb-4">
+        {rows.map((r) => (
+          <div key={r.field} className="px-3.5 py-2.5 text-xs">
+            <p className="font-semibold text-ink-700 mb-0.5">{r.field}</p>
+            <p className="text-ink-400">
+              <span className="line-through">{r.from}</span> <ArrowUpRight className="inline h-3 w-3 -rotate-45" /> <span className="text-ink-700 font-medium">{r.to}</span>
+            </p>
+          </div>
+        ))}
+      </div>
+
+      <div className="flex gap-2">
+        <button onClick={() => setConfirmDecision('APPROVED')} className="btn-primary flex-1 !py-2 text-sm">
+          <Check className="h-4 w-4" /> Confirm
+        </button>
+        <button onClick={() => setConfirmDecision('REJECTED')} className="btn-secondary flex-1 !py-2 text-sm">
+          <X className="h-4 w-4" /> Reject
+        </button>
+      </div>
+
+      <Modal open={!!confirmDecision} onClose={() => setConfirmDecision(null)} title={confirmDecision === 'REJECTED' ? 'Reject this change?' : 'Confirm this change?'}>
+        <div className="space-y-4">
+          <p className="text-sm text-ink-500">
+            {confirmDecision === 'APPROVED' ? (
+              <>Are you sure you want to <strong className="text-ink-800">confirm</strong> this change? If every other committee member also confirms, it takes effect immediately.</>
+            ) : (
+              <>Are you sure you want to <strong className="text-ink-800">reject</strong> this change? This cancels the request immediately for everyone.</>
+            )}
+          </p>
+          <div className="flex gap-2 pt-2">
+            <button type="button" onClick={() => setConfirmDecision(null)} className="btn-secondary flex-1">Go back</button>
+            <button type="button" disabled={submitting} onClick={submit} className="btn-primary flex-1">
+              {submitting ? 'Submitting…' : confirmDecision === 'REJECTED' ? 'Yes, reject' : 'Yes, confirm'}
+            </button>
+          </div>
+        </div>
+      </Modal>
+    </div>
+  )
+}
 
 const COLORS = ['#1554d6', '#2570f5', '#5aa4ff', '#a9caff']
 
@@ -33,8 +130,11 @@ function buildMonthlySeries(payments, expenses) {
 }
 
 export default function AdminDashboard() {
-  const { residents, payments, funds, projects, fees, expenses } = useData()
+  const { residents, payments, funds, projects, fees, expenses, pendingChanges, respondToPendingChange } = useData()
   const { user } = useAuth()
+  // Only ever show one at a time in the slot — the oldest awaiting this
+  // admin's approval — so the widget doesn't need to become a list/carousel.
+  const slotPendingChange = (pendingChanges?.asApprover || [])[0] || null
 
   const totalBalance = funds.reduce((s, f) => s + f.balance, 0)
   const paidThisPeriod = payments.filter((p) => p.status === 'paid').reduce((s, p) => s + p.amount, 0)
@@ -200,27 +300,31 @@ export default function AdminDashboard() {
           </div>
         </div>
 
-        <div className="card p-5 animate-fade-up">
-          <h3 className="font-semibold text-ink-800 mb-4">Community snapshot</h3>
-          <div className="space-y-4">
-            <SnapshotRow icon={Users} label="Total residents" value={residents.length} />
-            <SnapshotRow icon={Users} label="Active residents" value={residents.filter((r) => r.status === 'active').length} />
-            <SnapshotRow icon={Receipt} label="Fee categories" value={fees.length} />
-            <SnapshotRow icon={FolderKanban} label="Projects in progress" value={activeProjects} />
+        {slotPendingChange ? (
+          <PendingChangeSlot pendingChange={slotPendingChange} onDecide={respondToPendingChange} />
+        ) : (
+          <div className="card p-5 animate-fade-up">
+            <h3 className="font-semibold text-ink-800 mb-4">Community snapshot</h3>
+            <div className="space-y-4">
+              <SnapshotRow icon={Users} label="Total residents" value={residents.length} />
+              <SnapshotRow icon={Users} label="Active residents" value={residents.filter((r) => r.status === 'active').length} />
+              <SnapshotRow icon={Receipt} label="Fee categories" value={fees.length} />
+              <SnapshotRow icon={FolderKanban} label="Projects in progress" value={activeProjects} />
+            </div>
+            <div className="mt-5 h-[1px] bg-ink-100" />
+            <div className="mt-5">
+              <p className="text-xs font-semibold text-ink-400 uppercase mb-3">Project budget usage</p>
+              <ResponsiveContainer width="100%" height={140}>
+                <BarChart data={projects.slice(0, 4).map((p) => ({ name: p.name.split(' ')[0], pct: Math.round((p.spent / p.budget) * 100) }))}>
+                  <XAxis dataKey="name" tick={{ fill: '#8790b3', fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <YAxis hide />
+                  <Tooltip formatter={(v) => `${v}%`} contentStyle={{ borderRadius: 12, border: '1px solid #eef1f8' }} />
+                  <Bar dataKey="pct" fill="#2570f5" radius={[6, 6, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
           </div>
-          <div className="mt-5 h-[1px] bg-ink-100" />
-          <div className="mt-5">
-            <p className="text-xs font-semibold text-ink-400 uppercase mb-3">Project budget usage</p>
-            <ResponsiveContainer width="100%" height={140}>
-              <BarChart data={projects.slice(0, 4).map((p) => ({ name: p.name.split(' ')[0], pct: Math.round((p.spent / p.budget) * 100) }))}>
-                <XAxis dataKey="name" tick={{ fill: '#8790b3', fontSize: 11 }} axisLine={false} tickLine={false} />
-                <YAxis hide />
-                <Tooltip formatter={(v) => `${v}%`} contentStyle={{ borderRadius: 12, border: '1px solid #eef1f8' }} />
-                <Bar dataKey="pct" fill="#2570f5" radius={[6, 6, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
+        )}
       </div>
     </div>
   )

@@ -34,6 +34,15 @@ const residentNav = [
   { to: '/resident/reports', label: 'Reports', icon: BarChart3 },
 ]
 
+const CHANGE_TYPE_LABELS = { COMMUNITY_PAYMENT_DETAILS: 'community payment account details' }
+const DIFF_FIELD_LABELS = { paymentBankName: 'Bank name', paymentAccountName: 'Account holder', paymentAccountNumber: 'Account number' }
+
+function describePendingChangeDiff(diff) {
+  return Object.entries(diff || {})
+    .map(([field, { from, to }]) => `${DIFF_FIELD_LABELS[field] || field}: "${from || '(empty)'}" → "${to || '(empty)'}"`)
+    .join('; ')
+}
+
 export default function AppLayout({ role }) {
   const nav = role === 'admin' ? adminNav : residentNav
   const base = role === 'admin' ? '/admin' : '/resident'
@@ -47,13 +56,13 @@ export default function AppLayout({ role }) {
   const { user, logout } = useAuth()
   const { theme, toggleTheme } = useTheme()
   const data = useData()
-  const { residents, payments, projects, fees, expenses, funds, fetchMyTransferItems, respondAsCommitteeMember, respondAsTransferRecipient, loading, hasLoadedOnce } = data
+  const { residents, payments, projects, fees, expenses, funds, fetchMyTransferItems, respondAsCommitteeMember, respondAsTransferRecipient, respondToPendingChange, pendingChanges, loading, hasLoadedOnce } = data
   const navigate = useNavigate()
   const menuRef = useRef(null)
   const notifRef = useRef(null)
   const searchRef = useRef(null)
   const [transferItems, setTransferItems] = useState({ asApprover: [], asRecipient: [] })
-  const [confirmAction, setConfirmAction] = useState(null) // { kind: 'approver'|'recipient', request, decision }
+  const [confirmAction, setConfirmAction] = useState(null) // { kind: 'approver'|'recipient'|'pendingChange', request, decision }
   const [confirmSubmitting, setConfirmSubmitting] = useState(false)
 
   const loadTransferItems = useCallback(() => {
@@ -75,6 +84,8 @@ export default function AppLayout({ role }) {
     try {
       if (confirmAction.kind === 'approver') {
         await respondAsCommitteeMember(confirmAction.request.id, confirmAction.decision)
+      } else if (confirmAction.kind === 'pendingChange') {
+        await respondToPendingChange(confirmAction.request.id, confirmAction.decision)
       } else {
         await respondAsTransferRecipient(confirmAction.request.id, confirmAction.decision)
       }
@@ -140,6 +151,20 @@ export default function AppLayout({ role }) {
     })
 
     if (role === 'admin') {
+      (pendingChanges?.asApprover || []).forEach((pc) => {
+        items.push({
+          id: `pc-${pc.id}`,
+          icon: ShieldCheck,
+          tone: 'amber',
+          title: `Approval needed: ${CHANGE_TYPE_LABELS[pc.changeType] || pc.changeType}`,
+          detail: `${pc.proposedBy?.fullName || 'A committee member'} proposed: ${describePendingChangeDiff(pc.diff)}`,
+          date: pc.createdAt,
+          pendingChange: { request: pc },
+        })
+      })
+    }
+
+    if (role === 'admin') {
       const pending = payments.filter((p) => p.status === 'pending')
       pending.slice(0, 5).forEach((p) => {
         const r = residents.find((x) => x.id === p.residentId)
@@ -193,7 +218,7 @@ export default function AppLayout({ role }) {
       })
     }
     return items
-  }, [role, payments, residents, expenses, fees, user, base, transferItems])
+  }, [role, payments, residents, expenses, fees, user, base, transferItems, pendingChanges])
 
   // ---- Global search across residents / payments / projects / expenses / funds ----
   const searchResults = useMemo(() => {
@@ -313,6 +338,33 @@ export default function AppLayout({ role }) {
                 ) : (
                   notifications.map((n) => {
                     const toneMap = { amber: 'text-amber-600 bg-amber-50', rose: 'text-rose-600 bg-rose-50', emerald: 'text-emerald-600 bg-emerald-50' }
+                    if (n.pendingChange) {
+                      return (
+                        <div key={n.id} className="w-full text-left flex items-start gap-2.5 rounded-lg px-3 py-2.5">
+                          <div className={`h-7 w-7 rounded-lg flex items-center justify-center shrink-0 ${toneMap[n.tone]}`}>
+                            <n.icon className="h-4 w-4" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-medium text-ink-800">{n.title}</p>
+                            <p className="text-xs text-ink-400">{n.detail}</p>
+                            <div className="flex gap-1.5 mt-2">
+                              <button
+                                onClick={() => { setNotifOpen(false); setConfirmAction({ kind: 'pendingChange', request: n.pendingChange.request, decision: 'APPROVED' }) }}
+                                className="btn-primary !py-1 !px-2.5 text-xs"
+                              >
+                                Confirm
+                              </button>
+                              <button
+                                onClick={() => { setNotifOpen(false); setConfirmAction({ kind: 'pendingChange', request: n.pendingChange.request, decision: 'REJECTED' }) }}
+                                className="btn-secondary !py-1 !px-2.5 text-xs"
+                              >
+                                Reject
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    }
                     if (n.transfer) {
                       return (
                         <div key={n.id} className="w-full text-left flex items-start gap-2.5 rounded-lg px-3 py-2.5">
@@ -467,10 +519,38 @@ export default function AppLayout({ role }) {
       </div>
 
       {/* Transfer response confirmation */}
-      <Modal open={!!confirmAction} onClose={() => setConfirmAction(null)} title={confirmAction?.decision === 'REJECTED' ? 'Decline transfer' : 'Confirm your decision'}>
+      <Modal
+        open={!!confirmAction}
+        onClose={() => setConfirmAction(null)}
+        title={
+          confirmAction?.kind === 'pendingChange'
+            ? (confirmAction.decision === 'REJECTED' ? 'Reject this change?' : 'Confirm this change?')
+            : (confirmAction?.decision === 'REJECTED' ? 'Decline transfer' : 'Confirm your decision')
+        }
+      >
         {confirmAction && (
           <div className="space-y-4">
-            {confirmAction.kind === 'approver' ? (
+            {confirmAction.kind === 'pendingChange' ? (
+              <p className="text-sm text-ink-500">
+                {confirmAction.decision === 'APPROVED' ? (
+                  <>
+                    Are you sure you want to <strong className="text-ink-800">confirm</strong> this change to{' '}
+                    <strong className="text-ink-800">{CHANGE_TYPE_LABELS[confirmAction.request.changeType] || confirmAction.request.changeType}</strong>
+                    {' '}proposed by <strong className="text-ink-800">{confirmAction.request.proposedBy?.fullName}</strong>?
+                    <br /><br />
+                    {describePendingChangeDiff(confirmAction.request.diff)}
+                    <br /><br />
+                    If every other committee member also confirms, this takes effect immediately.
+                  </>
+                ) : (
+                  <>
+                    Are you sure you want to <strong className="text-ink-800">reject</strong> this change to{' '}
+                    <strong className="text-ink-800">{CHANGE_TYPE_LABELS[confirmAction.request.changeType] || confirmAction.request.changeType}</strong>?
+                    A single rejection cancels the request immediately for everyone.
+                  </>
+                )}
+              </p>
+            ) : confirmAction.kind === 'approver' ? (
               <p className="text-sm text-ink-500">
                 {confirmAction.decision === 'APPROVED' ? (
                   <>You\u2019re approving <strong className="text-ink-800">{confirmAction.request.fromUser?.fullName}</strong>{'\u2019s'} request to transfer their committee seat to <strong className="text-ink-800">{confirmAction.request.toResident?.user?.fullName}</strong>. If every committee member approves, the resident will be asked to accept next.</>
@@ -490,7 +570,7 @@ export default function AppLayout({ role }) {
             <div className="flex gap-2 pt-2">
               <button type="button" onClick={() => setConfirmAction(null)} className="btn-secondary flex-1">Go back</button>
               <button type="button" disabled={confirmSubmitting} onClick={runConfirm} className="btn-primary flex-1">
-                {confirmSubmitting ? 'Submitting…' : 'Yes, confirm'}
+                {confirmSubmitting ? 'Submitting…' : confirmAction.kind === 'pendingChange' ? (confirmAction.decision === 'REJECTED' ? 'Yes, reject' : 'Yes, confirm') : 'Yes, confirm'}
               </button>
             </div>
           </div>

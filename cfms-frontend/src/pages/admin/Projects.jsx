@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Plus, Pencil, Trash2, FolderKanban, Calendar } from 'lucide-react'
+import { Plus, Pencil, Trash2, FolderKanban, Calendar, Lock } from 'lucide-react'
 import { useData } from '../../context/DataContext'
 import { PageHeader, Modal, Badge, currency, formatDate, EmptyState, ConfirmDialog, notify } from '../../components/ui'
 
@@ -24,6 +24,8 @@ export default function Projects() {
     setDeleting(true)
     removeProject(deleteTarget.id)
       .then(() => { setDeleteTarget(null); notify('Project deleted.', 'success') })
+      // Deletion is blocked server-side once a project has expenses logged
+      // — surface that explanation instead of a generic failure.
       .catch((err) => notify(err?.response?.data?.message || err.message))
       .finally(() => setDeleting(false))
   }
@@ -35,7 +37,17 @@ export default function Projects() {
     const wasEditing = !!editing
     const action = wasEditing ? updateProject(editing.id, payload) : addProject(payload)
     action
-      .then(() => { setModal(false); notify(wasEditing ? 'Project updated.' : 'Project added.', 'success') })
+      .then((result) => {
+        setModal(false)
+        // Budget changes on a project that already has expenses logged go
+        // through committee approval rather than applying instantly — tell
+        // the admin which happened instead of a blanket "updated".
+        if (wasEditing && result?.budgetChangeMessage) {
+          notify(result.budgetChangeMessage, result.pendingChange ? 'info' : 'success')
+        } else {
+          notify(wasEditing ? 'Project updated.' : 'Project added.', 'success')
+        }
+      })
       .catch((err) => notify(err?.response?.data?.message || err.message))
       .finally(() => setSaving(false))
   }
@@ -63,7 +75,13 @@ export default function Projects() {
                   </div>
                   <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                     <button onClick={() => openEdit(p)} className="p-1.5 rounded-lg text-ink-400 hover:bg-brand-50 hover:text-brand-600"><Pencil className="h-3.5 w-3.5" /></button>
-                    <button onClick={() => setDeleteTarget(p)} className="p-1.5 rounded-lg text-ink-400 hover:bg-rose-50 hover:text-rose-500"><Trash2 className="h-3.5 w-3.5" /></button>
+                    {p.expenseCount > 0 ? (
+                      <span title="Can't be deleted — expenses are logged against this project. Mark it Cancelled or Completed instead." className="p-1.5 rounded-lg text-ink-300 cursor-not-allowed">
+                        <Lock className="h-3.5 w-3.5" />
+                      </span>
+                    ) : (
+                      <button onClick={() => setDeleteTarget(p)} className="p-1.5 rounded-lg text-ink-400 hover:bg-rose-50 hover:text-rose-500"><Trash2 className="h-3.5 w-3.5" /></button>
+                    )}
                   </div>
                 </div>
                 <div className="mt-3"><Badge status={p.status} /></div>
@@ -117,6 +135,11 @@ export default function Projects() {
           <p className="text-xs text-ink-400 -mt-1">
             Amount spent isn't set manually — it's calculated automatically from expenses logged against this project.
           </p>
+          {editing && editing.expenseCount > 0 && (
+            <p className="text-xs text-amber-600 -mt-1">
+              This project already has expenses logged against it, so changing the budget will need every other committee member to approve before it takes effect.
+            </p>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="label">Start date</label>

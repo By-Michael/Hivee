@@ -8,14 +8,22 @@ const getAdminDashboard = catchAsync(async (req, res) => {
     await Promise.all([
       prisma.resident.count({ where: { user: { communityId } } }),
       prisma.payment.aggregate({
-        where: { fee: { communityId }, status: 'VERIFIED' },
+        where: {
+          OR: [{ fee: { communityId } }, { project: { communityId } }, { fund: { communityId } }],
+          status: 'VERIFIED',
+        },
         _sum: { amount: true },
       }),
       prisma.expense.aggregate({
         where: { OR: [{ project: { communityId } }, { recorder: { communityId } }] },
         _sum: { amount: true },
       }),
-      prisma.payment.count({ where: { fee: { communityId }, status: 'PENDING' } }),
+      prisma.payment.count({
+        where: {
+          OR: [{ fee: { communityId } }, { project: { communityId } }, { fund: { communityId } }],
+          status: 'PENDING',
+        },
+      }),
       prisma.project.count({ where: { communityId, status: 'ONGOING' } }),
       prisma.fund.count({ where: { communityId } }),
     ]);

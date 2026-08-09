@@ -15,19 +15,17 @@ const createExpenseSchema = z.object({
   }),
 });
 
-const updateExpenseSchema = z.object({
+// Expenses have no direct-update endpoint — corrections go through
+// reverseExpense instead (see expenseController.js). `reason` is optional
+// but strongly encouraged; it's stored on the reversal's description and in
+// the audit log.
+const reverseExpenseSchema = z.object({
   params: z.object({ id: z.string().uuid() }),
   body: z.object({
-    category: z.enum(CATEGORY).optional(),
-    description: z.string().optional(),
-    vendor: z.string().optional(),
-    amount: z.number().positive().optional(),
-    spentAt: z.coerce.date().optional(),
-    bankName: z.string().optional(),
-    transactionReference: z.string().optional(),
+    reason: z.string().min(1).optional(),
   }),
 });
 
 const idParamSchema = z.object({ params: z.object({ id: z.string().uuid() }) });
 
-module.exports = { createExpenseSchema, updateExpenseSchema, idParamSchema };
+module.exports = { createExpenseSchema, reverseExpenseSchema, idParamSchema };

@@ -21,6 +21,7 @@ const receiptRoutes = require('./routes/receiptRoutes');
 const dashboardRoutes = require('./routes/dashboardRoutes');
 const reportRoutes = require('./routes/reportRoutes');
 const committeeTransferRoutes = require('./routes/committeeTransferRoutes');
+const pendingChangeRoutes = require('./routes/pendingChangeRoutes');
 const auditRoutes = require('./routes/auditRoutes');
 
 const app = express();
@@ -80,6 +81,7 @@ app.use(`${API_PREFIX}/receipts`, receiptRoutes);
 app.use(`${API_PREFIX}/dashboard`, dashboardRoutes);
 app.use(`${API_PREFIX}/reports`, reportRoutes);
 app.use(`${API_PREFIX}/committee-transfers`, committeeTransferRoutes);
+app.use(`${API_PREFIX}/pending-changes`, pendingChangeRoutes);
 app.use(`${API_PREFIX}/audit-logs`, auditRoutes);
 
 // Unmatched routes.

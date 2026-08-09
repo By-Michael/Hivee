@@ -2,15 +2,58 @@ const prisma = require('../config/prisma');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/AppError');
 const { recordAudit } = require('../utils/audit');
-const { verifyBankTransaction } = require('../utils/bankVerification');
+const { verifyBankTransaction, PROVIDERS_NEEDING_SUFFIX, PROVIDERS_NEEDING_PHONE } = require('../utils/bankVerification');
 const { parseReceiptImage } = require('../utils/ocrReceipt');
+
+// Amount tolerance for the bank-verification cross-check — covers bank-fee
+// rounding, not a loophole. Absolute birr amount, not a percentage, so it
+// doesn't scale up into a meaningful gap on large payments.
+const AMOUNT_TOLERANCE_BIRR = 1;
+
+function normalizeName(name) {
+  return (name || '')
+    .toLowerCase()
+    .replace(/[^a-z\s]/g, '')
+    .split(/\s+/)
+    .filter(Boolean)
+    .sort();
+}
+
+// Order-insensitive, punctuation-insensitive token overlap check — good
+// enough to catch "typed a random string" or "wrong person entirely"
+// without being so strict that legitimate name-order/spelling variance
+// (very common with transliterated Amharic names) constantly false-flags.
+// Deliberately conservative: this is a *safeguard*, not the sole judge —
+// anything it's unsure about should fall to a human, not auto-pass.
+function namesLikelyMatch(registeredName, bankSenderName) {
+  const a = normalizeName(registeredName);
+  const b = normalizeName(bankSenderName);
+  if (a.length === 0 || b.length === 0) return null; // can't judge — treat as unknown, not a pass
+  const overlap = a.filter((tok) => b.includes(tok)).length;
+  const minLen = Math.min(a.length, b.length);
+  return overlap >= Math.max(1, Math.ceil(minLen * 0.5));
+}
 
 const PAYMENT_INCLUDE = {
   fee: { select: { id: true, name: true } },
   project: { select: { id: true, name: true } },
+  fund: { select: { id: true, name: true } },
   resident: { include: { user: { select: { fullName: true, email: true } } } },
   recorder: { select: { id: true, fullName: true } },
 };
+
+// Every community-scoped payment query needs to reach a payment via
+// whichever of the three relations it was made through — a fund-direct
+// payment has no fee and no project, so it would otherwise silently
+// disappear from every list/report/aggregate the same way project payments
+// used to before fee-only filters were fixed.
+const communityPaymentFilter = (communityId) => ({
+  OR: [
+    { fee: { communityId } },
+    { project: { communityId } },
+    { fund: { communityId } },
+  ],
+});
 
 // Helper: resolve the resident record that this request is allowed to act as.
 async function resolveResidentId(req) {
@@ -28,18 +71,23 @@ async function resolveResidentId(req) {
   return resident.id;
 }
 
-// Resolves + validates whichever of feeId/projectId was sent, scoped to the
-// current community. Returns { feeId, projectId, label } with exactly one
-// of feeId/projectId set (the validator already enforced XOR shape).
+// Resolves + validates whichever of feeId/projectId/fundId was sent, scoped
+// to the current community. Returns { feeId, projectId, fundId, label } with
+// exactly one set (the validator already enforced XOR shape).
 async function resolveTarget(req) {
   if (req.body.feeId) {
     const fee = await prisma.fee.findFirst({ where: { id: req.body.feeId, communityId: req.communityId } });
     if (!fee) throw new AppError('Fee not found in this community', 404);
-    return { feeId: fee.id, projectId: null, label: `fee "${fee.name}"` };
+    return { feeId: fee.id, projectId: null, fundId: null, label: `fee "${fee.name}"` };
   }
-  const project = await prisma.project.findFirst({ where: { id: req.body.projectId, communityId: req.communityId } });
-  if (!project) throw new AppError('Project not found in this community', 404);
-  return { feeId: null, projectId: project.id, label: `project "${project.name}"` };
+  if (req.body.projectId) {
+    const project = await prisma.project.findFirst({ where: { id: req.body.projectId, communityId: req.communityId } });
+    if (!project) throw new AppError('Project not found in this community', 404);
+    return { feeId: null, projectId: project.id, fundId: null, label: `project "${project.name}"` };
+  }
+  const fund = await prisma.fund.findFirst({ where: { id: req.body.fundId, communityId: req.communityId } });
+  if (!fund) throw new AppError('Fund not found in this community', 404);
+  return { feeId: null, projectId: null, fundId: fund.id, label: `fund "${fund.name}"` };
 }
 
 const createPayment = catchAsync(async (req, res) => {
@@ -52,6 +100,7 @@ const createPayment = catchAsync(async (req, res) => {
       residentId,
       feeId: target.feeId,
       projectId: target.projectId,
+      fundId: target.fundId,
       amount: req.body.amount,
       paymentMethod: req.body.paymentMethod,
       transactionReference: req.body.transactionReference,
@@ -72,12 +121,7 @@ const createPayment = catchAsync(async (req, res) => {
 });
 
 const listPayments = catchAsync(async (req, res) => {
-  let where = {
-    OR: [
-      { fee: { communityId: req.communityId } },
-      { project: { communityId: req.communityId } },
-    ],
-  };
+  let where = communityPaymentFilter(req.communityId);
 
   if (req.user.role === 'RESIDENT') {
     const resident = await prisma.resident.findUnique({ where: { userId: req.user.id } });
@@ -98,7 +142,7 @@ const getPayment = catchAsync(async (req, res) => {
   const payment = await prisma.payment.findFirst({
     where: {
       id: req.params.id,
-      OR: [{ fee: { communityId: req.communityId } }, { project: { communityId: req.communityId } }],
+      ...communityPaymentFilter(req.communityId),
     },
     include: PAYMENT_INCLUDE,
   });
@@ -117,7 +161,7 @@ const getPayment = catchAsync(async (req, res) => {
 // ADMIN verifies or rejects a payment.
 const updatePaymentStatus = catchAsync(async (req, res) => {
   const payment = await prisma.payment.findFirst({
-    where: { id: req.params.id, OR: [{ fee: { communityId: req.communityId } }, { project: { communityId: req.communityId } }] },
+    where: { id: req.params.id, ...communityPaymentFilter(req.communityId) },
   });
   if (!payment) throw new AppError('Payment not found', 404);
 
@@ -144,7 +188,7 @@ const updatePaymentStatus = catchAsync(async (req, res) => {
 // whatever a committee member might type into this form afterwards.
 const updatePayment = catchAsync(async (req, res) => {
   const payment = await prisma.payment.findFirst({
-    where: { id: req.params.id, OR: [{ fee: { communityId: req.communityId } }, { project: { communityId: req.communityId } }] },
+    where: { id: req.params.id, ...communityPaymentFilter(req.communityId) },
   });
   if (!payment) throw new AppError('Payment not found', 404);
   if (!payment.recordedBy) {
@@ -156,10 +200,11 @@ const updatePayment = catchAsync(async (req, res) => {
   if (req.body.paymentMethod !== undefined) data.paymentMethod = req.body.paymentMethod;
   if (req.body.transactionReference !== undefined) data.transactionReference = req.body.transactionReference;
   if (req.body.paidAt !== undefined) data.paidAt = req.body.paidAt;
-  if (req.body.feeId || req.body.projectId) {
+  if (req.body.feeId || req.body.projectId || req.body.fundId) {
     const target = await resolveTarget(req);
     data.feeId = target.feeId;
     data.projectId = target.projectId;
+    data.fundId = target.fundId;
   }
 
   const updated = await prisma.payment.update({ where: { id: payment.id }, data, include: PAYMENT_INCLUDE });
@@ -176,7 +221,7 @@ const updatePayment = catchAsync(async (req, res) => {
 // (metadata snapshot) even after the row itself is gone.
 const deletePayment = catchAsync(async (req, res) => {
   const payment = await prisma.payment.findFirst({
-    where: { id: req.params.id, OR: [{ fee: { communityId: req.communityId } }, { project: { communityId: req.communityId } }] },
+    where: { id: req.params.id, ...communityPaymentFilter(req.communityId) },
     include: PAYMENT_INCLUDE,
   });
   if (!payment) throw new AppError('Payment not found', 404);
@@ -196,6 +241,7 @@ const deletePayment = catchAsync(async (req, res) => {
       residentId: payment.residentId,
       feeId: payment.feeId,
       projectId: payment.projectId,
+      fundId: payment.fundId,
       paymentMethod: payment.paymentMethod,
       transactionReference: payment.transactionReference,
       paidAt: payment.paidAt,
@@ -212,7 +258,7 @@ const uploadPaymentReceipt = catchAsync(async (req, res) => {
   if (!req.file) throw new AppError('Receipt file is required', 422);
 
   const payment = await prisma.payment.findFirst({
-    where: { id: req.params.id, OR: [{ fee: { communityId: req.communityId } }, { project: { communityId: req.communityId } }] },
+    where: { id: req.params.id, ...communityPaymentFilter(req.communityId) },
   });
   if (!payment) throw new AppError('Payment not found', 404);
   if (!payment.recordedBy) {
@@ -236,12 +282,21 @@ const selfVerifyPayment = catchAsync(async (req, res) => {
     throw new AppError('Only residents can submit self-verified payments', 403);
   }
 
-  const { feeId, txnId, payerName, reason } = req.body;
+  const { feeId, txnId, payerName, reason, provider, suffix, phoneNumber } = req.body;
   if (!feeId) throw new AppError('feeId is required', 422);
   if (!txnId || !txnId.trim()) throw new AppError('Transaction ID is required', 422);
   if (!payerName || !payerName.trim()) throw new AppError('Payer name is required', 422);
+  if (provider && PROVIDERS_NEEDING_SUFFIX.has(provider) && !suffix) {
+    throw new AppError('This bank requires the account suffix shown on your receipt', 422);
+  }
+  if (provider && PROVIDERS_NEEDING_PHONE.has(provider) && !phoneNumber) {
+    throw new AppError('This provider requires the phone number the payment was made from', 422);
+  }
 
-  const resident = await prisma.resident.findUnique({ where: { userId: req.user.id } });
+  const resident = await prisma.resident.findUnique({
+    where: { userId: req.user.id },
+    include: { user: { select: { fullName: true } } },
+  });
   if (!resident) throw new AppError('Resident profile not found', 404);
 
   const fee = await prisma.fee.findFirst({ where: { id: feeId, communityId: req.communityId } });
@@ -266,7 +321,7 @@ const selfVerifyPayment = catchAsync(async (req, res) => {
   const alreadyUsed = await prisma.payment.findFirst({
     where: {
       transactionReference: txnId.trim(),
-      OR: [{ fee: { communityId: req.communityId } }, { project: { communityId: req.communityId } }],
+      ...communityPaymentFilter(req.communityId),
       status: { not: 'REJECTED' },
     },
   });
@@ -278,11 +333,53 @@ const selfVerifyPayment = catchAsync(async (req, res) => {
     txnId: txnId.trim(),
     expectedAmount: amount,
     expectedAccountNumber: community?.paymentAccountNumber,
+    provider,
+    suffix,
+    phoneNumber,
   });
 
   if (!result.matched) {
     throw new AppError(result.reason || 'Could not verify this transaction. Double-check the ID and try again.', 422);
   }
+
+  // ---- Safeguard layer: a bank "match" alone doesn't auto-VERIFY. ----
+  // Anything the checks below can't positively clear drops to
+  // PENDING_REVIEW instead of VERIFIED — an admin still needs to look,
+  // but the resident isn't blocked from submitting (avoids just pushing
+  // people toward typing more plausible-looking fake IDs to get past a
+  // hard rejection).
+  const flags = [];
+
+  if (result.fieldsIncomplete) {
+    flags.push('Bank response did not include enough detail to cross-check automatically.');
+  }
+
+  if (result.amount !== null && result.amount !== undefined) {
+    const diff = Math.abs(Number(result.amount) - Number(amount));
+    if (diff > AMOUNT_TOLERANCE_BIRR) {
+      flags.push(`Bank-reported amount (${result.amount}) differs from expected (${amount}) by more than ${AMOUNT_TOLERANCE_BIRR} birr.`);
+    }
+  }
+
+  if (result.senderName) {
+    const nameOk = namesLikelyMatch(resident.user?.fullName, result.senderName);
+    if (nameOk === false) {
+      flags.push(`Bank sender name ("${result.senderName}") doesn't look like the resident's registered name.`);
+    }
+    // nameOk === null (couldn't judge) intentionally doesn't add a flag on
+    // its own — fieldsIncomplete already covers "couldn't cross-check".
+  }
+
+  if (result.receiverAccount && community?.paymentAccountNumber && result.receiverAccount !== community.paymentAccountNumber) {
+    flags.push('Bank-reported receiving account does not match the community\'s registered account.');
+  }
+
+  const threshold = community?.autoVerifyMaxAmount ? Number(community.autoVerifyMaxAmount) : null;
+  if (threshold !== null && amount >= threshold) {
+    flags.push(`Payment amount (${amount}) is at/above the auto-verify review threshold (${threshold}).`);
+  }
+
+  const status = flags.length > 0 ? 'PENDING_REVIEW' : 'VERIFIED';
 
   const payment = await prisma.payment.create({
     data: {
@@ -293,16 +390,20 @@ const selfVerifyPayment = catchAsync(async (req, res) => {
       transactionReference: txnId.trim(),
       payerName: payerName.trim(),
       reason: reason?.trim() || undefined,
-      status: 'VERIFIED',
+      status,
+      verificationRaw: result.raw ?? undefined,
+      reviewFlags: flags.length > 0 ? flags.join(' ') : undefined,
     },
     include: PAYMENT_INCLUDE,
   });
 
   await recordAudit(req, {
-    action: 'VERIFY',
+    action: status === 'VERIFIED' ? 'VERIFY' : 'UPDATE',
     entityType: 'Payment',
     entityId: payment.id,
-    description: `Auto-verified payment of ${payment.amount} for fee "${fee.name}" via bank transaction lookup`,
+    description: status === 'VERIFIED'
+      ? `Auto-verified payment of ${payment.amount} for fee "${fee.name}" via bank transaction lookup`
+      : `Self-verified payment of ${payment.amount} for fee "${fee.name}" flagged for admin review: ${flags.join(' ')}`,
   });
 
   res.status(201).json({ success: true, data: payment });

@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import { Plus, Trash2, FileText, Paperclip, Eye, Download, Upload, CheckCircle2, CircleDashed } from 'lucide-react'
+import { Plus, Trash2, FileText, Paperclip, Eye, Download, Upload, CheckCircle2, CircleDashed, RotateCcw, Ban } from 'lucide-react'
 import { useData } from '../../context/DataContext'
+import { useAuth } from '../../context/AuthContext'
 import { PageHeader, Modal, EmptyState, currency, formatDate, ConfirmDialog, notify } from '../../components/ui'
 import { fileUrl } from '../../lib/api'
 
@@ -16,8 +17,15 @@ const ETHIOPIAN_BANKS = [
   'Sinqee Microfinance', 'Development Bank of Ethiopia', 'Other',
 ]
 
+// Mirrors the backend's DELETE_GRACE_WINDOW_MS (expenseController.js) —
+// used only to decide whether to show the delete option at all. The
+// backend is the actual source of truth and will reject a stale request
+// with an explanatory message even if this check is somehow bypassed.
+const DELETE_GRACE_WINDOW_MS = 15 * 60 * 1000
+
 export default function Expenses() {
-  const { expenses, projects, receipts, addExpense, removeExpense, addReceipt, updateReceipt } = useData()
+  const { expenses, projects, receipts, addExpense, reverseExpense, removeExpense, addReceipt, updateReceipt } = useData()
+  const { user } = useAuth()
   const [modal, setModal] = useState(false)
   const [form, setForm] = useState(empty)
   const [submitting, setSubmitting] = useState(false)
@@ -26,9 +34,24 @@ export default function Expenses() {
   const [uploadingFor, setUploadingFor] = useState(null)
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [deleting, setDeleting] = useState(false)
+  const [reverseTarget, setReverseTarget] = useState(null)
+  const [reversing, setReversing] = useState(false)
+  const [reverseReason, setReverseReason] = useState('')
 
   const projectOf = (id) => projects.find((p) => p.id === id)?.name || '—'
   const receiptOf = (id) => receipts.find((r) => r.id === id)
+
+  // Expenses are append-only, so this is deliberately narrow: only the
+  // person who recorded it, only within a short window, and only before a
+  // receipt has been attached or it's part of a reversal. Everything else
+  // is corrected via reverse, not delete.
+  function canDelete(e) {
+    if (e.isVoided || e.isReversal) return false
+    if (e.recordedBy && user?.id && e.recordedBy !== user.id) return false
+    if ((e.receiptId)) return false
+    if (!e.createdAt) return true // be permissive if the field is missing rather than hide a legitimate option
+    return Date.now() - new Date(e.createdAt).getTime() <= DELETE_GRACE_WINDOW_MS
+  }
 
   async function submit(e) {
     e.preventDefault()
@@ -68,13 +91,27 @@ export default function Expenses() {
       .finally(() => setDeleting(false))
   }
 
+  function confirmReverse() {
+    if (!reverseTarget) return
+    setReversing(true)
+    reverseExpense(reverseTarget.id, reverseReason.trim() || undefined)
+      .then(() => {
+        setReverseTarget(null)
+        setReverseReason('')
+        setDetail(null)
+        notify('Expense reversed. The offsetting entry is now in the trail.', 'success')
+      })
+      .catch((err) => notify(err?.response?.data?.message || err.message))
+      .finally(() => setReversing(false))
+  }
+
   const total = expenses.reduce((s, e) => s + e.amount, 0)
 
   return (
     <div>
       <PageHeader
         title="Expenses"
-        subtitle={`${expenses.length} records · ${currency(total)} total spend · tap a row for receipt details`}
+        subtitle={`${expenses.length} records · ${currency(total)} net spend · tap a row for details — corrections are made by reversing, not editing`}
         action={<button onClick={() => setModal(true)} className="btn-primary"><Plus className="h-4 w-4" /> Log expense</button>}
       />
 
@@ -88,12 +125,17 @@ export default function Expenses() {
               <tbody>
                 {expenses.map((e) => {
                   const rc = receiptOf(e.receiptId)
+                  const deletable = canDelete(e)
                   return (
-                    <tr key={e.id} className="cursor-pointer" onClick={() => setDetail(e)}>
-                      <td className="font-medium text-ink-800">{e.description}</td>
+                    <tr key={e.id} className={`cursor-pointer ${e.isVoided ? 'opacity-60' : ''}`} onClick={() => setDetail(e)}>
+                      <td className="font-medium text-ink-800">
+                        {e.description}
+                        {e.isVoided && <span className="badge bg-ink-100 text-ink-500 ml-2"><Ban className="h-3 w-3" /> Reversed</span>}
+                        {e.isReversal && <span className="badge bg-amber-50 text-amber-700 ring-1 ring-amber-200 ml-2"><RotateCcw className="h-3 w-3" /> Reversal</span>}
+                      </td>
                       <td>{projectOf(e.projectId)}</td>
                       <td>{e.vendor}</td>
-                      <td className="font-semibold">{currency(e.amount)}</td>
+                      <td className={`font-semibold ${e.amount < 0 ? 'text-rose-600' : ''}`}>{currency(e.amount)}</td>
                       <td>{formatDate(e.date)}</td>
                       <td>
                         {rc ? (
@@ -103,7 +145,18 @@ export default function Expenses() {
                         )}
                       </td>
                       <td onClick={(ev) => ev.stopPropagation()}>
-                        <button onClick={() => setDeleteTarget(e)} className="p-2 rounded-lg text-ink-400 hover:bg-rose-50 hover:text-rose-500"><Trash2 className="h-4 w-4" /></button>
+                        <div className="flex items-center gap-1">
+                          {!e.isVoided && !e.isReversal && (
+                            <button onClick={() => setReverseTarget(e)} title="Reverse this expense with a linked offsetting entry" className="p-2 rounded-lg text-ink-400 hover:bg-amber-50 hover:text-amber-600">
+                              <RotateCcw className="h-4 w-4" />
+                            </button>
+                          )}
+                          {deletable && (
+                            <button onClick={() => setDeleteTarget(e)} title="Delete (only available briefly after recording, before any receipt is attached)" className="p-2 rounded-lg text-ink-400 hover:bg-rose-50 hover:text-rose-500">
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   )
@@ -164,6 +217,9 @@ export default function Expenses() {
               <p className="text-xs text-ink-400 mt-1.5">Any resident will be able to view or download this.</p>
             </div>
           </div>
+          <p className="text-xs text-ink-400 -mt-1">
+            Once logged, this record can't be edited. Mistakes are corrected by reversing the entry and, if needed, logging a fresh one — both stay visible in the trail.
+          </p>
           {error && <div className="rounded-xl bg-rose-50 border border-rose-100 px-3.5 py-2.5 text-sm text-rose-600">{error}</div>}
           <div className="flex gap-2 pt-2">
             <button type="button" onClick={() => setModal(false)} className="btn-secondary flex-1">Cancel</button>
@@ -182,6 +238,7 @@ export default function Expenses() {
             onAttach={(file) => attachReceipt(detail.id, file)}
             uploading={uploadingFor === detail.id}
             onToggleVerified={(rc) => updateReceipt(rc.id, { verified: !rc.verified })}
+            onReverse={() => setReverseTarget(detail)}
           />
         )}
       </Modal>
@@ -189,20 +246,51 @@ export default function Expenses() {
       <ConfirmDialog
         open={!!deleteTarget}
         title="Delete expense?"
-        message={deleteTarget ? `This will permanently delete "${deleteTarget.description}". This action cannot be undone.` : ''}
+        message={deleteTarget ? `This will permanently delete "${deleteTarget.description}". Only available briefly after recording, with no receipt attached — this action cannot be undone. For anything else, use Reverse instead.` : ''}
         loading={deleting}
         onConfirm={confirmDelete}
         onCancel={() => setDeleteTarget(null)}
       />
+
+      {/* Reverse — the normal way to correct an expense. Creates a linked,
+          offsetting entry rather than touching the original row. */}
+      <Modal open={!!reverseTarget} onClose={() => { setReverseTarget(null); setReverseReason('') }} title="Reverse expense">
+        {reverseTarget && (
+          <div className="space-y-4">
+            <p className="text-sm text-ink-600">
+              This creates a new entry for <span className="font-semibold">-{currency(reverseTarget.amount)}</span> that offsets
+              "{reverseTarget.description}". The original stays in the record, marked as reversed — nothing is deleted or edited.
+            </p>
+            <div>
+              <label className="label">Reason (optional, recommended)</label>
+              <input className="input" value={reverseReason} onChange={(e) => setReverseReason(e.target.value)} placeholder="e.g. Wrong amount entered, corrected below" />
+            </div>
+            <div className="flex gap-2 pt-2">
+              <button type="button" onClick={() => { setReverseTarget(null); setReverseReason('') }} disabled={reversing} className="btn-secondary flex-1">Cancel</button>
+              <button type="button" onClick={confirmReverse} disabled={reversing} className="btn-primary flex-1">{reversing ? 'Reversing…' : 'Reverse expense'}</button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   )
 }
 
-function ExpenseDetail({ expense, project, receipt, onAttach, uploading, onToggleVerified }) {
+function ExpenseDetail({ expense, project, receipt, onAttach, uploading, onToggleVerified, onReverse }) {
   const url = receipt ? fileUrl(receipt.fileUrl) : null
 
   return (
     <div className="space-y-4">
+      {expense.isVoided && (
+        <div className="rounded-xl bg-ink-50 border border-ink-200 px-3.5 py-2.5 text-sm text-ink-600 flex items-center gap-2">
+          <Ban className="h-4 w-4" /> This expense has been reversed by a linked offsetting entry.
+        </div>
+      )}
+      {expense.isReversal && (
+        <div className="rounded-xl bg-amber-50 border border-amber-200 px-3.5 py-2.5 text-sm text-amber-700 flex items-center gap-2">
+          <RotateCcw className="h-4 w-4" /> This is a reversal entry, offsetting an earlier expense.
+        </div>
+      )}
       <div className="grid grid-cols-2 gap-3 text-sm">
         <div><p className="text-ink-400 text-xs uppercase font-semibold">Project</p><p className="text-ink-800">{project}</p></div>
         <div><p className="text-ink-400 text-xs uppercase font-semibold">Vendor</p><p className="text-ink-800">{expense.vendor}</p></div>
@@ -228,6 +316,8 @@ function ExpenseDetail({ expense, project, receipt, onAttach, uploading, onToggl
               </button>
             </div>
           </div>
+        ) : expense.isVoided ? (
+          <p className="text-sm text-ink-400">No receipt was attached, and this expense has been reversed — no new receipts can be added.</p>
         ) : (
           <div>
             <p className="text-sm text-ink-400 mb-2">No receipt attached yet.</p>
@@ -239,6 +329,13 @@ function ExpenseDetail({ expense, project, receipt, onAttach, uploading, onToggl
           </div>
         )}
       </div>
+
+      {!expense.isVoided && !expense.isReversal && (
+        <div className="border-t border-ink-100 pt-4">
+          <button onClick={onReverse} className="btn-secondary"><RotateCcw className="h-4 w-4" /> Reverse this expense</button>
+          <p className="text-xs text-ink-400 mt-1.5">Creates a linked offsetting entry instead of editing or deleting this record.</p>
+        </div>
+      )}
     </div>
   )
 }

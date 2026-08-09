@@ -113,6 +113,8 @@ export const endpoints = {
 
   expenses: () => '/expenses',
   expense: (id) => `/expenses/${id}`,
+  // No general edit endpoint — corrections go through reversal instead.
+  reverseExpense: (id) => `/expenses/${id}/reverse`,
 
   receipts: () => '/receipts',
   receipt: (id) => `/receipts/${id}`,
@@ -122,6 +124,10 @@ export const endpoints = {
   committeeTransfer: (id) => `/committee-transfers/${id}`,
   committeeTransferCommitteeResponse: (id) => `/committee-transfers/${id}/committee-response`,
   committeeTransferRecipientResponse: (id) => `/committee-transfers/${id}/recipient-response`,
+
+  pendingChangesMine: () => '/pending-changes/mine',
+  pendingChangeRespond: (id) => `/pending-changes/${id}/respond`,
+  pendingChange: (id) => `/pending-changes/${id}`,
 
   reports: {
     summary: () => '/reports/summary',
