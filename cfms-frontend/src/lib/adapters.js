@@ -165,6 +165,7 @@ export function paymentToUI(p) {
     reference: p.transactionReference || '',
     payerName: p.payerName || '',
     reason: p.reason || '',
+    reviewFlags: p.reviewFlags || '',
     receiptUrl: p.receiptUrl || '',
     // Manually typed in by a committee member (vs. a resident's own
     // bank-verified self-payment) — this is what the UI uses to decide

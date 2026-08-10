@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
-import { Plus, Search, Wallet, Filter, Check, X as XIcon, Paperclip, Pencil, Trash2, FileText } from 'lucide-react'
+import { Plus, Search, Wallet, Filter, Check, X as XIcon, Paperclip, Pencil, Trash2, FileText, AlertTriangle } from 'lucide-react'
 import { useData } from '../../context/DataContext'
-import { PageHeader, Modal, EmptyState, currency, formatDate, ConfirmDialog, notify } from '../../components/ui'
+import { PageHeader, Modal, Badge, EmptyState, currency, formatDate, ConfirmDialog, notify } from '../../components/ui'
 
 const empty = { residentId: '', targetType: 'fee', feeId: '', projectId: '', amount: '', method: 'Bank Transfer', reference: '', receiptFile: null }
 
@@ -169,6 +169,7 @@ export default function Payments() {
   const [verifyingId, setVerifyingId] = useState(null)
   const [year, setYear] = useState('all')
   const [month, setMonth] = useState('all')
+  const [needsReviewOnly, setNeedsReviewOnly] = useState(false)
   const [editTarget, setEditTarget] = useState(null)
   const [editForm, setEditForm] = useState(empty)
   const [editSaving, setEditSaving] = useState(false)
@@ -191,6 +192,15 @@ export default function Payments() {
 
   const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
 
+  // Anything sitting in 'pending' (basic unverified) or 'pending_review'
+  // (bank lookup matched but a safeguard flagged it, or the verification
+  // service was unreachable) needs an admin to actually look at it —
+  // that's the review queue.
+  const needsReviewCount = useMemo(
+    () => payments.filter((p) => p.status === 'pending' || p.status === 'pending_review').length,
+    [payments]
+  )
+
   const filtered = useMemo(() => {
     return payments.filter((p) => {
       const q = query.toLowerCase()
@@ -199,9 +209,10 @@ export default function Payments() {
       const d = p.date ? new Date(p.date) : null
       const matchesYear = year === 'all' || (d && String(d.getFullYear()) === year)
       const matchesMonth = month === 'all' || (d && String(d.getMonth()) === month)
-      return matchesQuery && matchesYear && matchesMonth
+      const matchesReview = !needsReviewOnly || p.status === 'pending' || p.status === 'pending_review'
+      return matchesQuery && matchesYear && matchesMonth && matchesReview
     }).sort((a, b) => new Date(b.date) - new Date(a.date))
-  }, [payments, query, year, month, residents, fees])
+  }, [payments, query, year, month, needsReviewOnly, residents, fees])
 
   function submit(e) {
     e.preventDefault()
@@ -270,7 +281,7 @@ export default function Payments() {
     <div>
       <PageHeader
         title="Payments"
-        subtitle={`${filtered.length} records · ${currency(total)} in view`}
+        subtitle={`${filtered.length} records · ${currency(total)} in view${needsReviewCount > 0 ? ` · ${needsReviewCount} awaiting review` : ''}`}
         action={<button onClick={() => setModal(true)} className="btn-primary"><Plus className="h-4 w-4" /> Record payment</button>}
       />
 
@@ -281,6 +292,14 @@ export default function Payments() {
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <Filter className="h-4 w-4 text-ink-400" />
+          <button
+            type="button"
+            onClick={() => setNeedsReviewOnly((v) => !v)}
+            className={`badge border transition ${needsReviewOnly ? 'bg-orange-50 text-orange-700 border-orange-300' : 'bg-white text-ink-500 border-ink-200 hover:border-orange-300'}`}
+          >
+            <AlertTriangle className="h-3.5 w-3.5" />
+            Needs review{needsReviewCount > 0 ? ` (${needsReviewCount})` : ''}
+          </button>
           <select
             value={year}
             onChange={(e) => setYear(e.target.value)}
@@ -310,7 +329,7 @@ export default function Payments() {
         ) : (
           <div className="table-wrap !border-0">
             <table className="data-table">
-              <thead><tr><th>Resident</th><th>For</th><th>Amount</th><th>Method</th><th>Reference</th><th>Date</th><th /></tr></thead>
+              <thead><tr><th>Resident</th><th>For</th><th>Amount</th><th>Method</th><th>Reference</th><th>Date</th><th>Status</th><th /></tr></thead>
               <tbody>
                 {filtered.map((p) => (
                   <tr key={p.id}>
@@ -335,7 +354,17 @@ export default function Payments() {
                     </td>
                     <td>{formatDate(p.date)}</td>
                     <td>
-                      {p.status === 'pending' ? (
+                      <div className="flex items-center gap-1.5">
+                        <Badge status={p.status} />
+                        {p.status === 'pending_review' && p.reviewFlags && (
+                          <span title={p.reviewFlags} className="text-orange-500 cursor-help">
+                            <AlertTriangle className="h-3.5 w-3.5" />
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td>
+                      {p.status === 'pending' || p.status === 'pending_review' ? (
                         <div className="flex items-center gap-1">
                           <button
                             onClick={() => verify(p)}
