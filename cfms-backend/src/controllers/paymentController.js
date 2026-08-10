@@ -338,7 +338,17 @@ const selfVerifyPayment = catchAsync(async (req, res) => {
     phoneNumber,
   });
 
-  if (!result.matched) {
+  // A genuine "we asked the bank and it said no" (bad/invalid transaction
+  // ID, too-short reference, etc.) is a real rejection — the resident
+  // typed something wrong and should fix it before resubmitting.
+  //
+  // A `serviceUnavailable` result is different: Veritas itself couldn't be
+  // reached after retrying, so we have no evidence either way. Blocking
+  // the resident here would mean a real transfer can't be recorded just
+  // because a third-party lookup service is having an outage. Instead we
+  // fall through and queue it for manual admin review, same as any other
+  // safeguard flag below.
+  if (!result.matched && !result.serviceUnavailable) {
     throw new AppError(result.reason || 'Could not verify this transaction. Double-check the ID and try again.', 422);
   }
 
@@ -350,7 +360,11 @@ const selfVerifyPayment = catchAsync(async (req, res) => {
   // hard rejection).
   const flags = [];
 
-  if (result.fieldsIncomplete) {
+  if (result.serviceUnavailable) {
+    flags.push('Bank verification service was unreachable — this payment could not be automatically checked and needs manual review.');
+  }
+
+  if (result.fieldsIncomplete && !result.serviceUnavailable) {
     flags.push('Bank response did not include enough detail to cross-check automatically.');
   }
 

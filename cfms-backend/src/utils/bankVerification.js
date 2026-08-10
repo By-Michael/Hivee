@@ -101,7 +101,7 @@ async function verifyBankTransaction({ txnId, expectedAmount, expectedAccountNum
     throw new AppError('Transaction ID is required', 422);
   }
   if (id.length < 6) {
-    return { matched: false, reason: 'Transaction ID looks too short to be valid.' };
+    return { matched: false, reason: 'Transaction ID looks too short to be valid.', serviceUnavailable: false };
   }
 
   if (isStubActive()) {
@@ -114,9 +114,9 @@ async function verifyBankTransaction({ txnId, expectedAmount, expectedAccountNum
     await new Promise((resolve) => setTimeout(resolve, 300));
     const looksInvalid = /^0+$/.test(id) || id.toUpperCase() === 'INVALID';
     if (looksInvalid) {
-      return { matched: false, senderName: null, receiverName: null, receiverAccount: null, amount: null, date: null, reference: id, reason: 'No transaction found with this ID.', raw: null, fieldsIncomplete: true };
+      return { matched: false, senderName: null, receiverName: null, receiverAccount: null, amount: null, date: null, reference: id, reason: 'No transaction found with this ID.', raw: null, fieldsIncomplete: true, serviceUnavailable: false };
     }
-    return { matched: true, senderName: null, receiverName: null, receiverAccount: expectedAccountNumber || null, amount: expectedAmount, date: new Date().toISOString(), reference: id, reason: null, raw: null, fieldsIncomplete: true };
+    return { matched: true, senderName: null, receiverName: null, receiverAccount: expectedAccountNumber || null, amount: expectedAmount, date: new Date().toISOString(), reference: id, reason: null, raw: null, fieldsIncomplete: true, serviceUnavailable: false };
   }
 
   // ---- REAL VERITAS CALL ----
@@ -125,68 +125,111 @@ async function verifyBankTransaction({ txnId, expectedAmount, expectedAccountNum
   if (suffix) body[provider === 'cbe' ? 'accountSuffix' : 'suffix'] = suffix;
   if (phoneNumber) body.phoneNumber = phoneNumber;
 
-  let response;
-  let json;
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10_000);
-    response = await fetch(`${VERITAS_API_URL}${path}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-api-key': VERITAS_API_KEY },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-    clearTimeout(timeout);
-    json = await response.json();
-  } catch (err) {
-    // Network error / timeout / non-JSON body — NEVER fall back to
-    // matched: true here. Surface as an explicit verification failure.
-    console.error('[bankVerification] Veritas request failed:', err.message);
-    return {
-      matched: false,
-      senderName: null, receiverName: null, receiverAccount: null, amount: null, date: null,
-      reference: id,
-      reason: 'Could not reach the bank verification service. Please try again in a moment.',
-      raw: null,
-      fieldsIncomplete: true,
-    };
+  // Transient network hiccups (DNS blip, brief Veritas outage, a slow
+  // upstream that trips our timeout) shouldn't immediately block a
+  // resident from submitting a real payment. Retry a couple of times
+  // with a short backoff before surfacing a hard "service unavailable" —
+  // and even then, the caller treats that differently from a genuine
+  // "no such transaction" response (see serviceUnavailable below).
+  const MAX_ATTEMPTS = 3;
+  const TIMEOUT_MS = 8_000;
+  const RETRY_DELAY_MS = 500;
+
+  let lastErr;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    let response;
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
+      try {
+        response = await fetch(`${VERITAS_API_URL}${path}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-api-key': VERITAS_API_KEY },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeout);
+      }
+
+      let json;
+      try {
+        json = await response.json();
+      } catch (parseErr) {
+        // Non-JSON body (e.g. an upstream 502 HTML error page). Treat like
+        // a network failure — retry rather than misreport it as "no match".
+        throw new Error(`Non-JSON response (status ${response.status})`);
+      }
+
+      // Veritas docs: "Some provider adapters can return a provider failure
+      // with HTTP 200" — so check the body's success flag too, not just status.
+      if (!response.ok || json?.success === false) {
+        // A 5xx from Veritas itself is their outage, not "not found" —
+        // worth retrying. A 4xx (bad reference, validation) is final.
+        if (response.status >= 500 && attempt < MAX_ATTEMPTS) {
+          console.warn(`[bankVerification] Veritas ${response.status} on attempt ${attempt}/${MAX_ATTEMPTS}, retrying…`);
+          await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * attempt));
+          continue;
+        }
+        return {
+          matched: false,
+          senderName: null, receiverName: null, receiverAccount: null, amount: null, date: null,
+          reference: id,
+          reason: json?.error || 'No transaction found with this ID.',
+          raw: json,
+          fieldsIncomplete: true,
+          serviceUnavailable: false,
+        };
+      }
+
+      const senderName = pickField(json, ['senderName', 'payerName', 'payer', 'senderFullName', 'sender', 'fromName']);
+      const receiverName = pickField(json, ['receiverName', 'receiver', 'receiverFullName', 'toName', 'beneficiaryName']);
+      const receiverAccount = pickField(json, ['receiverAccount', 'creditAccount', 'toAccount', 'accountNumber', 'beneficiaryAccount']);
+      const amountRaw = pickField(json, ['amount', 'transactionAmount', 'totalAmount', 'value']);
+      const date = pickField(json, ['date', 'transactionDate', 'paymentDate', 'timestamp', 'createdAt']);
+
+      const amount = normalizeAmount(amountRaw);
+      // If we couldn't read amount at all, we can't do the amount cross-check
+      // downstream in good faith — flag it rather than pretend certainty.
+      const fieldsIncomplete = amount === null && senderName === null;
+
+      return {
+        matched: true,
+        senderName,
+        receiverName,
+        receiverAccount,
+        amount,
+        date: date || null,
+        reference: id,
+        reason: null,
+        raw: json,
+        fieldsIncomplete,
+        serviceUnavailable: false,
+      };
+    } catch (err) {
+      // Network error / timeout / non-JSON body. Retry a couple of times
+      // before giving up — NEVER fall back to matched: true here either way.
+      lastErr = err;
+      console.error(`[bankVerification] Veritas request failed (attempt ${attempt}/${MAX_ATTEMPTS}):`, err.message);
+      if (attempt < MAX_ATTEMPTS) {
+        await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * attempt));
+      }
+    }
   }
 
-  // Veritas docs: "Some provider adapters can return a provider failure
-  // with HTTP 200" — so check the body's success flag too, not just status.
-  if (!response.ok || json?.success === false) {
-    return {
-      matched: false,
-      senderName: null, receiverName: null, receiverAccount: null, amount: null, date: null,
-      reference: id,
-      reason: json?.error || 'No transaction found with this ID.',
-      raw: json,
-      fieldsIncomplete: true,
-    };
-  }
-
-  const senderName = pickField(json, ['senderName', 'payerName', 'payer', 'senderFullName', 'sender', 'fromName']);
-  const receiverName = pickField(json, ['receiverName', 'receiver', 'receiverFullName', 'toName', 'beneficiaryName']);
-  const receiverAccount = pickField(json, ['receiverAccount', 'creditAccount', 'toAccount', 'accountNumber', 'beneficiaryAccount']);
-  const amountRaw = pickField(json, ['amount', 'transactionAmount', 'totalAmount', 'value']);
-  const date = pickField(json, ['date', 'transactionDate', 'paymentDate', 'timestamp', 'createdAt']);
-
-  const amount = normalizeAmount(amountRaw);
-  // If we couldn't read amount at all, we can't do the amount cross-check
-  // downstream in good faith — flag it rather than pretend certainty.
-  const fieldsIncomplete = amount === null && senderName === null;
-
+  // Every attempt failed on a network/timeout/parse error. This is
+  // distinct from "we asked the bank and it said no" — flag it as
+  // serviceUnavailable so the caller can route the resident to a
+  // PENDING_REVIEW queue instead of hard-rejecting a possibly-real payment.
   return {
-    matched: true,
-    senderName,
-    receiverName,
-    receiverAccount,
-    amount,
-    date: date || null,
+    matched: false,
+    senderName: null, receiverName: null, receiverAccount: null, amount: null, date: null,
     reference: id,
-    reason: null,
-    raw: json,
-    fieldsIncomplete,
+    reason: 'Could not reach the bank verification service after several attempts. Your payment will be submitted for manual review instead.',
+    raw: null,
+    fieldsIncomplete: true,
+    serviceUnavailable: true,
+    lastError: lastErr?.message || null,
   };
 }
 
