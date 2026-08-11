@@ -4,21 +4,6 @@ const AppError = require('../utils/AppError');
 const { isStubActive } = require('../utils/bankVerification');
 const { createPendingChange } = require('./pendingChangeController');
 
-// Platform owner's view of all tenants on the SaaS platform.
-const listCommunities = catchAsync(async (req, res) => {
-  const communities = await prisma.community.findMany({
-    include: { _count: { select: { users: true, funds: true, projects: true } } },
-    orderBy: { createdAt: 'desc' },
-  });
-  res.json({ success: true, data: communities });
-});
-
-const getCommunity = catchAsync(async (req, res) => {
-  const community = await prisma.community.findUnique({ where: { id: req.params.id } });
-  if (!community) throw new AppError('Community not found', 404);
-  res.json({ success: true, data: community });
-});
-
 const getMyCommunity = catchAsync(async (req, res) => {
   const community = await prisma.community.findUnique({ where: { id: req.user.communityId } });
   if (!community) throw new AppError('Community not found', 404);
@@ -78,4 +63,4 @@ const updateMyCommunity = catchAsync(async (req, res) => {
   });
 });
 
-module.exports = { listCommunities, getCommunity, getMyCommunity, updateMyCommunity, PENDING_CHANGE_FIELDS };
+module.exports = { getMyCommunity, updateMyCommunity, PENDING_CHANGE_FIELDS };

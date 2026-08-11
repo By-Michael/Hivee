@@ -10,6 +10,6 @@ router.use(authenticate, tenantScope);
 
 // Read-only by design: every committee member can view, nobody can edit
 // or delete an entry. No PATCH/PUT/DELETE routes exist here on purpose.
-router.get('/', authorize('ADMIN', 'SUPER_ADMIN'), ctrl.listAuditLogs);
+router.get('/', authorize('ADMIN'), ctrl.listAuditLogs);
 
 module.exports = router;

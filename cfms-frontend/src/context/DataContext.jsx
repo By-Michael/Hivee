@@ -50,7 +50,7 @@ export function DataProvider({ children }) {
     if (!opts.silent) setLoading(true)
     setLoadError('')
     try {
-      const isAdmin = user.rawRole === 'ADMIN' || user.rawRole === 'SUPER_ADMIN'
+      const isAdmin = user.rawRole === 'ADMIN'
 
       // Everything the page needs is fetched in ONE parallel batch so the
       // total wait is the slowest single request, not the sum of all of

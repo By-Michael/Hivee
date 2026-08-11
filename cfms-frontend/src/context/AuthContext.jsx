@@ -16,7 +16,7 @@ function avatarColorFor(id) {
 // into the flat shape every page in this app already expects.
 function normalizeUser(u) {
   if (!u) return null
-  const role = (u.role || 'RESIDENT').toLowerCase().replace('super_admin', 'admin')
+  const role = (u.role || 'RESIDENT').toLowerCase()
   return {
     id: u.id,
     name: u.fullName,
@@ -110,15 +110,15 @@ export function AuthProvider({ children }) {
     }
   }
 
-  async function logout() {
-    try {
-      await api.post(endpoints.logout())
-    } catch {
-      // best-effort — clear local state regardless
-    }
+  function logout() {
+    // Clear local state immediately so the UI updates instantly — don't
+    // wait on the network round trip. The server call is best-effort
+    // (revokes the refresh cookie) and its result is ignored either way,
+    // so there's nothing gained by blocking the sign-out on it.
     localStorage.removeItem('cfms_token')
     localStorage.removeItem('cfms_user')
     setUser(null)
+    api.post(endpoints.logout()).catch(() => {})
   }
 
   return (

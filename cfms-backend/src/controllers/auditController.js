@@ -2,7 +2,7 @@ const prisma = require('../config/prisma');
 const catchAsync = require('../utils/catchAsync');
 
 // Every committee member (ADMIN) can view the full audit trail for their
-// own community. SUPER_ADMIN can view any community via ?communityId=.
+// own community.
 // There is deliberately no update/delete endpoint for this resource —
 // the audit trail is append-only.
 const listAuditLogs = catchAsync(async (req, res) => {

@@ -7,10 +7,6 @@ const router = express.Router();
 
 router.use(authenticate);
 
-// Platform-level: SUPER_ADMIN only.
-router.get('/', authorize('SUPER_ADMIN'), ctrl.listCommunities);
-router.get('/:id', authorize('SUPER_ADMIN'), ctrl.getCommunity);
-
 // Tenant self-service. Residents need read access too — they need to see
 // the community's payment account details (bank name/account/number) in
 // the "Make a payment" flow; only ADMIN can edit them.

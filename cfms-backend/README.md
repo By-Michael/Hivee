@@ -12,13 +12,11 @@ with receipts.
 Every `Community` is a tenant. `User` (ADMIN/RESIDENT) belongs to exactly one
 community. Every single query in every controller is filtered by
 `communityId` via the `tenantScope` middleware — one tenant can never read or
-write another tenant's data. `SUPER_ADMIN` is the platform owner and sits
-outside any single tenant (used for platform administration / support).
+write another tenant's data.
 
 ### Roles
 | Role         | Scope                | Can do |
 |--------------|-----------------------|--------|
-| SUPER_ADMIN  | Platform-wide         | List/inspect all communities (support/ops) |
 | ADMIN        | One community         | Manage residents, fees, funds, projects, expenses, verify payments, view reports |
 | RESIDENT     | One community, self   | View fees, pay dues, view own payment history, own dashboard |
 
@@ -69,9 +67,7 @@ POST   /auth/refresh
 POST   /auth/logout
 GET    /auth/me                      Current user            [any authed role]
 
-GET    /communities                  All tenants              [SUPER_ADMIN]
-GET    /communities/:id                                       [SUPER_ADMIN]
-GET    /communities/me/current       My community             [ADMIN]
+GET    /communities/me/current       My community             [ADMIN, RESIDENT]
 PATCH  /communities/me/current                                [ADMIN]
 
 POST   /residents                    Register a resident       [ADMIN]
