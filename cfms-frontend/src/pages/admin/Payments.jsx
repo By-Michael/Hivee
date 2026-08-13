@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
 import { Plus, Search, Wallet, Filter, Check, X as XIcon, Paperclip, Pencil, Trash2, FileText, AlertTriangle } from 'lucide-react'
 import { useData } from '../../context/DataContext'
-import { PageHeader, Modal, Badge, EmptyState, currency, formatDate, ConfirmDialog, notify } from '../../components/ui'
+import { PageHeader, Modal, Badge, EmptyState, currency, formatDate, ConfirmDialog, notify, usePagedList, Pager } from '../../components/ui'
 
 const empty = { residentId: '', targetType: 'fee', feeId: '', projectId: '', amount: '', method: 'Bank Transfer', reference: '', receiptFile: null }
 
@@ -277,6 +277,10 @@ export default function Payments() {
 
   const total = filtered.reduce((s, p) => s + p.amount, 0)
 
+  // Render at most 50 rows at a time — see Residents.jsx for why. `total`
+  // above still sums the full filtered set, so the header stays accurate.
+  const { pageItems: pagedPayments, page: tablePage, totalPages: tableTotalPages, total: tableTotal, setPage: setTablePage } = usePagedList(filtered, 50)
+
   return (
     <div>
       <PageHeader
@@ -331,7 +335,7 @@ export default function Payments() {
             <table className="data-table">
               <thead><tr><th>Resident</th><th>For</th><th>Amount</th><th>Method</th><th>Reference</th><th>Date</th><th>Status</th><th /></tr></thead>
               <tbody>
-                {filtered.map((p) => (
+                {pagedPayments.map((p) => (
                   <tr key={p.id}>
                     <td className="font-medium text-ink-800">{residentOf(p.residentId)?.name}</td>
                     <td>
@@ -407,6 +411,7 @@ export default function Payments() {
                 ))}
               </tbody>
             </table>
+            <Pager page={tablePage} totalPages={tableTotalPages} total={tableTotal} onChange={setTablePage} pageSize={50} />
           </div>
         )}
       </div>

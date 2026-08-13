@@ -13,11 +13,7 @@ const collectionsReport = catchAsync(async (req, res) => {
 
   const payments = await prisma.payment.findMany({
     where: {
-      OR: [
-        { fee: { communityId: req.communityId } },
-        { project: { communityId: req.communityId } },
-        { fund: { communityId: req.communityId } },
-      ],
+      communityId: req.communityId,
       status: 'VERIFIED',
       paidAt: range,
     },
@@ -61,10 +57,7 @@ const expenseReport = catchAsync(async (req, res) => {
   const expenses = await prisma.expense.findMany({
     where: {
       spentAt: range,
-      OR: [
-        { project: { communityId: req.communityId } },
-        { recorder: { communityId: req.communityId } },
-      ],
+      communityId: req.communityId,
     },
     include: { project: { select: { name: true } }, recorder: { select: { fullName: true } } },
     orderBy: { spentAt: 'desc' },
@@ -90,18 +83,11 @@ const financialSummaryReport = catchAsync(async (req, res) => {
 
   const [income, expenses, projects] = await Promise.all([
     prisma.payment.aggregate({
-      where: {
-        OR: [{ fee: { communityId } }, { project: { communityId } }, { fund: { communityId } }],
-        status: 'VERIFIED',
-        paidAt: range,
-      },
+      where: { communityId, status: 'VERIFIED', paidAt: range },
       _sum: { amount: true },
     }),
     prisma.expense.aggregate({
-      where: {
-        spentAt: range,
-        OR: [{ project: { communityId } }, { recorder: { communityId } }],
-      },
+      where: { communityId, spentAt: range },
       _sum: { amount: true },
     }),
     prisma.project.findMany({

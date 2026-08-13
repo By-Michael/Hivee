@@ -215,6 +215,7 @@ async function main() {
       const status = pick(paymentStatuses);
       await prisma.payment.create({
         data: {
+          communityId: community.id,
           residentId: resident.id,
           feeId: fee.id,
           amount: fee.amount,
@@ -280,6 +281,7 @@ async function main() {
     const linkToProject = Math.random() < 0.7;
     const expense = await prisma.expense.create({
       data: {
+        communityId: community.id,
         projectId: linkToProject ? pick(projects).id : null,
         recordedBy: admin.id,
         category: pick(CATEGORIES),

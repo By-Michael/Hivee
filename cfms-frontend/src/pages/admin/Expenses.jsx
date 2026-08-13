@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Plus, Trash2, FileText, Paperclip, Eye, Download, Upload, CheckCircle2, CircleDashed, RotateCcw, Ban } from 'lucide-react'
 import { useData } from '../../context/DataContext'
 import { useAuth } from '../../context/AuthContext'
-import { PageHeader, Modal, EmptyState, currency, formatDate, ConfirmDialog, notify } from '../../components/ui'
+import { PageHeader, Modal, EmptyState, currency, formatDate, ConfirmDialog, notify, usePagedList, Pager } from '../../components/ui'
 import { fileUrl } from '../../lib/api'
 
 const empty = { projectId: '', description: '', amount: '', vendor: '', date: '', bankName: '', transactionReference: '', file: null }
@@ -107,6 +107,12 @@ export default function Expenses() {
 
   const total = expenses.reduce((s, e) => s + e.amount, 0)
 
+  // Render at most 50 rows at a time — with thousands of expenses,
+  // rendering every row into the DOM on every render is what made
+  // switching to/around this page slow. `total` above still sums every
+  // expense, so the header stays accurate.
+  const { pageItems: pagedExpenses, page: tablePage, totalPages: tableTotalPages, total: tableTotal, setPage: setTablePage } = usePagedList(expenses, 50)
+
   return (
     <div>
       <PageHeader
@@ -123,7 +129,7 @@ export default function Expenses() {
             <table className="data-table">
               <thead><tr><th>Description</th><th>Project</th><th>Vendor</th><th>Amount</th><th>Date</th><th>Receipt</th><th /></tr></thead>
               <tbody>
-                {expenses.map((e) => {
+                {pagedExpenses.map((e) => {
                   const rc = receiptOf(e.receiptId)
                   const deletable = canDelete(e)
                   return (
@@ -163,6 +169,7 @@ export default function Expenses() {
                 })}
               </tbody>
             </table>
+            <Pager page={tablePage} totalPages={tableTotalPages} total={tableTotal} onChange={setTablePage} pageSize={50} />
           </div>
         )}
       </div>

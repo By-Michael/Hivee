@@ -12,20 +12,18 @@ const createExpense = catchAsync(async (req, res) => {
   }
 
   const expense = await prisma.expense.create({
-    data: { ...req.body, recordedBy: req.user.id },
+    data: { ...req.body, communityId: req.communityId, recordedBy: req.user.id },
   });
   await recordAudit(req, { action: 'CREATE', entityType: 'Expense', entityId: expense.id, description: `Recorded expense "${expense.description || expense.category}" (${expense.amount})` });
   res.status(201).json({ success: true, data: expense });
 });
 
+// Expense.communityId is a denormalized, indexed copy of the recorder's
+// community (see schema.prisma comment) — a plain equality filter instead
+// of joining out through project/recorder on every query.
 const listExpenses = catchAsync(async (req, res) => {
   const expenses = await prisma.expense.findMany({
-    where: {
-      OR: [
-        { project: { communityId: req.communityId } },
-        { recorder: { communityId: req.communityId } },
-      ],
-    },
+    where: { communityId: req.communityId },
     include: {
       project: { select: { id: true, name: true } },
       recorder: { select: { id: true, fullName: true } },
@@ -40,13 +38,7 @@ const listExpenses = catchAsync(async (req, res) => {
 
 const getExpense = catchAsync(async (req, res) => {
   const expense = await prisma.expense.findFirst({
-    where: {
-      id: req.params.id,
-      OR: [
-        { project: { communityId: req.communityId } },
-        { recorder: { communityId: req.communityId } },
-      ],
-    },
+    where: { id: req.params.id, communityId: req.communityId },
     include: {
       project: true,
       recorder: { select: { id: true, fullName: true } },
@@ -74,12 +66,7 @@ const getExpense = catchAsync(async (req, res) => {
 // where community funds went.
 const DELETE_GRACE_WINDOW_MS = 15 * 60 * 1000;
 
-const EXPENSE_COMMUNITY_FILTER = (communityId) => ({
-  OR: [
-    { project: { communityId } },
-    { recorder: { communityId } },
-  ],
-});
+const EXPENSE_COMMUNITY_FILTER = (communityId) => ({ communityId });
 
 // Reverses an expense by creating a linked, negative-amount Expense that
 // offsets it — never mutates the original row. The reversal nets out
@@ -99,6 +86,7 @@ const reverseExpense = catchAsync(async (req, res) => {
   const [reversal] = await prisma.$transaction([
     prisma.expense.create({
       data: {
+        communityId: req.communityId,
         projectId: expense.projectId,
         recordedBy: req.user.id,
         category: expense.category,

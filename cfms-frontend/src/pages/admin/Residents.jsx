@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { Plus, Search, Pencil, Trash2, Users, Phone, Mail, Copy, Check, AlertTriangle, Eye, MapPin, IdCard, ReceiptText, ShieldCheck } from 'lucide-react'
 import { useData } from '../../context/DataContext'
 import { useAuth } from '../../context/AuthContext'
-import { PageHeader, Badge, Modal, EmptyState, formatDate, currency, ConfirmDialog, notify } from '../../components/ui'
+import { PageHeader, Badge, Modal, EmptyState, formatDate, currency, ConfirmDialog, notify, usePagedList, Pager } from '../../components/ui'
 
 const empty = { name: '', unit: '', phone: '', email: '', status: 'active', idNumber: '', ownerType: 'owner', address: '' }
 
@@ -42,6 +42,12 @@ export default function Residents() {
     const q = query.toLowerCase()
     return residents.filter((r) => [r.name, r.unit, r.phone, r.email, r.idNumber].join(' ').toLowerCase().includes(q))
   }, [residents, query])
+
+  // Only render 50 rows into the DOM at a time — with thousands of
+  // residents, rendering the whole filtered list on every keystroke/render
+  // is what made the page feel frozen. Totals above still use the full
+  // `residents`/`filtered` arrays, so counts stay accurate.
+  const { pageItems: pagedResidents, page, totalPages, total, setPage } = usePagedList(filtered, 50)
 
   function openAdd() { setEditing(null); setForm({ ...empty, tempPassword: generateTempPassword() }); setFormError(''); setModal(true) }
   function openEdit(r) {
@@ -175,7 +181,7 @@ export default function Residents() {
             <table className="data-table">
               <thead><tr><th>Resident</th><th>House number</th><th>ID No.</th><th>Type</th><th>Contact</th><th>Joined</th><th>Status</th><th className="text-right">Actions</th></tr></thead>
               <tbody>
-                {filtered.map((r) => (
+                {pagedResidents.map((r) => (
                   <tr key={r.id}>
                     <td>
                       <button onClick={() => openInfo(r)} className="flex items-center gap-3 text-left hover:opacity-80">
@@ -218,6 +224,7 @@ export default function Residents() {
                 ))}
               </tbody>
             </table>
+            <Pager page={page} totalPages={totalPages} total={total} onChange={setPage} pageSize={50} />
           </div>
         )}
       </div>

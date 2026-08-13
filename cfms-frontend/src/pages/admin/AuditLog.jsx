@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ShieldCheck, Search, RefreshCw, Lock, FileSpreadsheet, FileText } from 'lucide-react'
 import { useData } from '../../context/DataContext'
-import { PageHeader, EmptyState } from '../../components/ui'
+import { PageHeader, EmptyState, usePagedList, Pager } from '../../components/ui'
 import { exportToExcel, exportToPdf } from '../../lib/exportUtils'
 
 const ACTION_TONE = {
@@ -44,6 +44,10 @@ export default function AuditLog() {
     if (!q) return logs
     return logs.filter((l) => [l.actorName, l.action, l.entityType, l.description].join(' ').toLowerCase().includes(q))
   }, [logs, query])
+
+  // Render at most 50 rows at a time (exports/totals still use the full
+  // `filtered` array — only the on-screen table is paginated).
+  const { pageItems: pagedLogs, page: tablePage, totalPages: tableTotalPages, total: tableTotal, setPage: setTablePage } = usePagedList(filtered, 50)
 
   const logColumns = [
     { header: 'When', value: (l) => formatDateTime(l.createdAt), width: 20 },
@@ -127,7 +131,7 @@ export default function AuditLog() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((l) => (
+                {pagedLogs.map((l) => (
                   <tr key={l.id}>
                     <td className="whitespace-nowrap text-xs text-ink-500">{formatDateTime(l.createdAt)}</td>
                     <td>
@@ -143,6 +147,7 @@ export default function AuditLog() {
                 ))}
               </tbody>
             </table>
+            <Pager page={tablePage} totalPages={tableTotalPages} total={tableTotal} onChange={setTablePage} pageSize={50} />
           </div>
         )}
       </div>

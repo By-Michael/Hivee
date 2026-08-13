@@ -42,18 +42,10 @@ const PAYMENT_INCLUDE = {
   recorder: { select: { id: true, fullName: true } },
 };
 
-// Every community-scoped payment query needs to reach a payment via
-// whichever of the three relations it was made through — a fund-direct
-// payment has no fee and no project, so it would otherwise silently
-// disappear from every list/report/aggregate the same way project payments
-// used to before fee-only filters were fixed.
-const communityPaymentFilter = (communityId) => ({
-  OR: [
-    { fee: { communityId } },
-    { project: { communityId } },
-    { fund: { communityId } },
-  ],
-});
+// Payment.communityId is a denormalized, indexed copy of the resident's
+// community (see schema.prisma comment) — a plain equality filter instead
+// of joining out through fee/project/fund on every query.
+const communityPaymentFilter = (communityId) => ({ communityId });
 
 // Helper: resolve the resident record that this request is allowed to act as.
 async function resolveResidentId(req) {
@@ -97,6 +89,7 @@ const createPayment = catchAsync(async (req, res) => {
 
   const payment = await prisma.payment.create({
     data: {
+      communityId: req.communityId,
       residentId,
       feeId: target.feeId,
       projectId: target.projectId,
@@ -397,6 +390,7 @@ const selfVerifyPayment = catchAsync(async (req, res) => {
 
   const payment = await prisma.payment.create({
     data: {
+      communityId: req.communityId,
       residentId: resident.id,
       feeId: fee.id,
       amount,

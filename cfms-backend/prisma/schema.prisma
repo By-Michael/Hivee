@@ -108,6 +108,8 @@ model Community {
   fees     Fee[]
   funds    Fund[]
   projects Project[]
+  payments Payment[]
+  expenses Expense[]
   transferRequests CommitteeTransferRequest[]
   pendingChanges   PendingChange[]
   auditLogs AuditLog[]
@@ -235,6 +237,12 @@ model Fee {
 
 model Payment {
   id                 String        @id @default(uuid())
+  // Denormalized from residentId (a resident's community, always the same
+  // community the fee/project/fund being paid belongs to). Lets every
+  // community-scoped payment query use a plain indexed filter instead of
+  // joining out through fee/project/fund to find the community — see
+  // migration 20260813052537_denormalize_community_id.
+  communityId        String
   residentId         String
   // Exactly one of feeId / projectId / fundId is set — what this payment is
   // *for*. All nullable (rather than a single polymorphic column) so the
@@ -287,6 +295,7 @@ model Payment {
   // threshold"). Null when it passed cleanly or wasn't self-verified.
   reviewFlags        String?
 
+  community Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
   resident Resident @relation(fields: [residentId], references: [id], onDelete: Cascade)
   fee      Fee?     @relation(fields: [feeId], references: [id], onDelete: Cascade)
   project  Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
@@ -298,11 +307,13 @@ model Payment {
   @@index([feeId])
   @@index([projectId])
   @@index([fundId])
+  @@index([communityId])
   // Every list/report/aggregate query filters or sorts on these — without
   // an index Postgres has to scan and sort the whole table, which gets
   // slower every month as more payments accumulate.
   @@index([status])
   @@index([paidAt])
+  @@index([communityId, paidAt])
   @@map("payments")
 }
 
@@ -348,6 +359,9 @@ model Project {
 
 model Expense {
   id          String          @id @default(uuid())
+  // Denormalized from recordedBy's community — see Payment.communityId
+  // comment and migration 20260813052537_denormalize_community_id for why.
+  communityId String
   projectId   String?
   recordedBy  String
   category    ExpenseCategory @default(OTHER)
@@ -377,6 +391,7 @@ model Expense {
   reversesId  String?   @unique
   isVoided    Boolean   @default(false)
 
+  community Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
   project  Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
   recorder User      @relation("ExpenseRecordedBy", fields: [recordedBy], references: [id], onDelete: Restrict)
   receipts Receipt[]
@@ -384,11 +399,10 @@ model Expense {
   reversal  Expense? @relation("ExpenseReversal")
 
   @@index([projectId])
-  // Supports the "expenses recorded by users in my community" half of
-  // listExpenses' OR filter, and ORDER BY spentAt — both currently
-  // unindexed and get slower as the expenses table grows.
   @@index([recordedBy])
   @@index([spentAt])
+  @@index([communityId])
+  @@index([communityId, spentAt])
   @@map("expenses")
 }
 

@@ -8,13 +8,7 @@ const uploadReceipt = catchAsync(async (req, res) => {
   if (!req.file) throw new AppError('Receipt file is required', 422);
 
   const expense = await prisma.expense.findFirst({
-    where: {
-      id: expenseId,
-      OR: [
-        { project: { communityId: req.communityId } },
-        { recorder: { communityId: req.communityId } },
-      ],
-    },
+    where: { id: expenseId, communityId: req.communityId },
   });
   if (!expense) throw new AppError('Expense not found in this community', 404);
   if (expense.isVoided) throw new AppError('This expense has been reversed and no longer accepts new receipts', 409);
@@ -31,13 +25,7 @@ const uploadReceipt = catchAsync(async (req, res) => {
 
 const listReceiptsForExpense = catchAsync(async (req, res) => {
   const expense = await prisma.expense.findFirst({
-    where: {
-      id: req.params.expenseId,
-      OR: [
-        { project: { communityId: req.communityId } },
-        { recorder: { communityId: req.communityId } },
-      ],
-    },
+    where: { id: req.params.expenseId, communityId: req.communityId },
   });
   if (!expense) throw new AppError('Expense not found', 404);
 
@@ -50,15 +38,7 @@ const listReceiptsForExpense = catchAsync(async (req, res) => {
 
 const deleteReceipt = catchAsync(async (req, res) => {
   const receipt = await prisma.receipt.findFirst({
-    where: {
-      id: req.params.id,
-      expense: {
-        OR: [
-          { project: { communityId: req.communityId } },
-          { recorder: { communityId: req.communityId } },
-        ],
-      },
-    },
+    where: { id: req.params.id, expense: { communityId: req.communityId } },
   });
   if (!receipt) throw new AppError('Receipt not found', 404);
 

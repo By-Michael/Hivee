@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { X, AlertTriangle, CheckCircle2, Info } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 
@@ -236,6 +236,50 @@ export function EmptyState({ icon: Icon, title, subtitle, action }) {
       <h3 className="text-base font-semibold text-ink-800">{title}</h3>
       {subtitle && <p className="mt-1 text-sm text-ink-400 max-w-sm">{subtitle}</p>}
       {action && <div className="mt-4">{action}</div>}
+    </div>
+  )
+}
+
+// Client-side pagination for big in-memory lists (residents, payments,
+// expenses, etc). The full filtered array is still what totals/reports are
+// computed from — this only limits how many rows get rendered into the
+// DOM at once, which is what actually got slow with thousands of rows.
+// Resets to page 1 whenever the underlying item count changes (e.g. a new
+// search query narrows the list) so you're never stuck looking at an
+// empty page 7 of 2 results.
+export function usePagedList(items, pageSize = 50) {
+  const [page, setPage] = useState(1)
+  const total = items.length
+  const totalPages = Math.max(1, Math.ceil(total / pageSize))
+  const safePage = Math.min(page, totalPages)
+  const start = (safePage - 1) * pageSize
+  const pageItems = useMemo(() => items.slice(start, start + pageSize), [items, start, pageSize])
+
+  useEffect(() => { setPage(1) }, [total])
+
+  return { pageItems, page: safePage, totalPages, total, setPage }
+}
+
+export function Pager({ page, totalPages, total, onChange, pageSize = 50 }) {
+  if (totalPages <= 1) return null
+  const start = (page - 1) * pageSize + 1
+  const end = Math.min(page * pageSize, total)
+  return (
+    <div className="flex items-center justify-between px-4 py-3 border-t border-ink-100 text-xs text-ink-400">
+      <span>Showing {start}–{end} of {total}</span>
+      <div className="flex items-center gap-1.5">
+        <button
+          onClick={() => onChange(Math.max(1, page - 1))}
+          disabled={page <= 1}
+          className="px-2.5 py-1.5 rounded-lg border border-ink-200 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-ink-50"
+        >Prev</button>
+        <span className="px-2 font-medium text-ink-600">{page} / {totalPages}</span>
+        <button
+          onClick={() => onChange(Math.min(totalPages, page + 1))}
+          disabled={page >= totalPages}
+          className="px-2.5 py-1.5 rounded-lg border border-ink-200 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-ink-50"
+        >Next</button>
+      </div>
     </div>
   )
 }
