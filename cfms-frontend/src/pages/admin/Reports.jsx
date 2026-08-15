@@ -7,7 +7,7 @@ import {
   AreaChart, Area, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar,
 } from 'recharts'
 import { useData } from '../../context/DataContext'
-import { PageHeader, currency, formatDate, Badge, ChartPlaceholder } from '../../components/ui'
+import { PageHeader, currency, formatDate, Badge, ChartPlaceholder, notify } from '../../components/ui'
 import { exportToExcel, exportToPdf, exportRichPdf, captureChartImage } from '../../lib/exportUtils'
 
 // Distinct, purposeful palettes so each chart signals something different at a glance.
@@ -37,6 +37,21 @@ function inRange(dateStr, from, to) {
 export default function Reports() {
   const { payments, expenses, fees, funds, projects, residents, dataFullyLoaded } = useData()
 
+  // Belt-and-braces guard: the export buttons are disabled (and, for the
+  // per-table sections, not even rendered) until dataFullyLoaded — but if
+  // an export is somehow still triggered early (a stale click, a keyboard
+  // shortcut, whatever), this stops it from silently shipping a report
+  // built off the partial first-paint page instead of the full dataset.
+  function runExport(fn) {
+    return (...args) => {
+      if (!dataFullyLoaded) {
+        notify("Still loading the full dataset — please wait a moment and try again so the export isn't missing rows.")
+        return
+      }
+      return fn(...args)
+    }
+  }
+
   // ---- resident filters ----
   const [residentSearch, setResidentSearch] = useState('')
   const [residentStatus, setResidentStatus] = useState('all')
@@ -57,9 +72,13 @@ export default function Reports() {
   const [expTo, setExpTo] = useState('')
   const [expCategory, setExpCategory] = useState('all')
   const [expProject, setExpProject] = useState('all')
+  const [expPage, setExpPage] = useState(1)
+  const EXPENSES_PAGE_SIZE = 8
 
   // ---- project filters ----
   const [projStatus, setProjStatus] = useState('all')
+  const [projPage, setProjPage] = useState(1)
+  const PROJECTS_PAGE_SIZE = 8
 
   // ---- chart DOM refs, used to screenshot charts into rich PDF exports ----
   const byFeeChartRef = useRef(null)
@@ -109,6 +128,15 @@ export default function Reports() {
 
   const filteredProjects = useMemo(() => projects.filter((p) => projStatus === 'all' || p.status === projStatus), [projects, projStatus])
 
+  const expPageCount = Math.max(1, Math.ceil(filteredExpenses.length / EXPENSES_PAGE_SIZE))
+  const pagedExpenses = filteredExpenses.slice((expPage - 1) * EXPENSES_PAGE_SIZE, expPage * EXPENSES_PAGE_SIZE)
+
+  const projPageCount = Math.max(1, Math.ceil(filteredProjects.length / PROJECTS_PAGE_SIZE))
+  const pagedProjects = filteredProjects.slice((projPage - 1) * PROJECTS_PAGE_SIZE, projPage * PROJECTS_PAGE_SIZE)
+
+  useEffect(() => { setExpPage(1) }, [expCategory, expProject, expFrom, expTo])
+  useEffect(() => { setProjPage(1) }, [projStatus])
+
   // ---- chart data ----
   const byFee = fees.map((f, i) => ({
     name: f.name,
@@ -156,46 +184,56 @@ export default function Reports() {
   const collectionRate = Math.round((payments.filter((p) => p.status === 'paid').length / Math.max(payments.length, 1)) * 100)
 
   // ---- export handlers ----
+  const residentColumns = [
+    { header: 'Name', key: 'name', width: 26 },
+    { header: 'Unit', key: 'unit', width: 12 },
+    { header: 'Email', key: 'email', width: 26 },
+    { header: 'Phone', key: 'phone', width: 16 },
+    { header: 'Status', key: 'status', width: 12 },
+    { header: 'Joined', value: (r) => formatDate(r.joined), width: 16 },
+  ]
+  const residentMeta = [
+    { label: 'Report', value: 'Residence Members' },
+    { label: 'Generated', value: new Date().toLocaleString('en-GB') },
+    { label: 'Filter · Status', value: residentStatus },
+    { label: 'Total members', value: filteredResidents.length },
+  ]
   const exportResidentsExcel = () => exportToExcel({
     filename: 'cfms-residents-report',
     sheetName: 'Residents',
-    meta: [
-      { label: 'Report', value: 'Residence Members' },
-      { label: 'Generated', value: new Date().toLocaleString('en-GB') },
-      { label: 'Filter · Status', value: residentStatus },
-      { label: 'Total members', value: filteredResidents.length },
-    ],
-    columns: [
-      { header: 'Name', key: 'name', width: 26 },
-      { header: 'Unit', key: 'unit', width: 12 },
-      { header: 'Email', key: 'email', width: 26 },
-      { header: 'Phone', key: 'phone', width: 16 },
-      { header: 'Status', key: 'status', width: 12 },
-      { header: 'Joined', value: (r) => formatDate(r.joined), width: 16 },
-    ],
+    meta: residentMeta,
+    columns: residentColumns,
     rows: filteredResidents,
   })
+  const exportResidentsPdf = () => exportToPdf({
+    filename: 'cfms-residents-report', title: 'Residence Members Report', subtitle: 'Community membership roster', meta: residentMeta, columns: residentColumns, rows: filteredResidents,
+  })
 
+  const paymentColumns = [
+    { header: 'Resident', value: (p) => residents.find((r) => r.id === p.residentId)?.name || '—', width: 24 },
+    { header: 'Unit', value: (p) => residents.find((r) => r.id === p.residentId)?.unit || '—', width: 10 },
+    { header: 'Fee', value: (p) => fees.find((f) => f.id === p.feeId)?.name || '—', width: 20 },
+    { header: 'Amount', key: 'amount', width: 14 },
+    { header: 'Method', key: 'method', width: 16 },
+    { header: 'Status', key: 'status', width: 12 },
+    { header: 'Reference', key: 'reference', width: 18 },
+    { header: 'Date', value: (p) => formatDate(p.date), width: 16 },
+  ]
+  const paymentMeta = [
+    { label: 'Report', value: 'Collections / Payments' },
+    { label: 'Generated', value: new Date().toLocaleString('en-GB') },
+    { label: 'Range', value: `${payFrom || 'all time'} → ${payTo || 'now'}` },
+    { label: 'Total amount', value: currency(filteredPayments.filter((p) => p.status === 'paid').reduce((s, p) => s + p.amount, 0)) },
+  ]
   const exportPaymentsExcel = () => exportToExcel({
     filename: 'cfms-collections-report',
     sheetName: 'Collections',
-    meta: [
-      { label: 'Report', value: 'Collections / Payments' },
-      { label: 'Generated', value: new Date().toLocaleString('en-GB') },
-      { label: 'Range', value: `${payFrom || 'all time'} → ${payTo || 'now'}` },
-      { label: 'Total amount', value: currency(filteredPayments.filter((p) => p.status === 'paid').reduce((s, p) => s + p.amount, 0)) },
-    ],
-    columns: [
-      { header: 'Resident', value: (p) => residents.find((r) => r.id === p.residentId)?.name || '—', width: 24 },
-      { header: 'Unit', value: (p) => residents.find((r) => r.id === p.residentId)?.unit || '—', width: 10 },
-      { header: 'Fee', value: (p) => fees.find((f) => f.id === p.feeId)?.name || '—', width: 20 },
-      { header: 'Amount', key: 'amount', width: 14 },
-      { header: 'Method', key: 'method', width: 16 },
-      { header: 'Status', key: 'status', width: 12 },
-      { header: 'Reference', key: 'reference', width: 18 },
-      { header: 'Date', value: (p) => formatDate(p.date), width: 16 },
-    ],
+    meta: paymentMeta,
+    columns: paymentColumns,
     rows: filteredPayments,
+  })
+  const exportPaymentsPdf = () => exportToPdf({
+    filename: 'cfms-collections-report', title: 'Collections Report', subtitle: 'Verified & pending resident payments', meta: paymentMeta, columns: paymentColumns, rows: filteredPayments,
   })
 
   const expenseColumns = [
@@ -350,11 +388,11 @@ export default function Reports() {
         subtitle="Financial summaries for committee review and resident transparency."
         action={
           <div className="flex flex-wrap gap-2">
-            <button className="btn-secondary" onClick={exportFullSummaryPdf} disabled={exportingSummary}>
+            <button className="btn-secondary" onClick={runExport(exportFullSummaryPdf)} disabled={exportingSummary || !dataFullyLoaded} title={!dataFullyLoaded ? 'Waiting for all data to finish loading…' : undefined}>
               {exportingSummary ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
               {exportingSummary ? 'Building…' : 'Summary PDF'}
             </button>
-            <button className="btn-primary" onClick={exportEverythingPdf} disabled={exportingEverything}>
+            <button className="btn-primary" onClick={runExport(exportEverythingPdf)} disabled={exportingEverything || !dataFullyLoaded} title={!dataFullyLoaded ? 'Waiting for all data to finish loading…' : undefined}>
               {exportingEverything ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
               {exportingEverything ? 'Building…' : 'Export everything'}
             </button>
@@ -560,7 +598,10 @@ export default function Reports() {
         icon={Users}
         title="Residence members"
         subtitle={`${filteredResidents.length} of ${residents.length} members match the current filters`}
-        exportActions={[{ label: 'Export Excel', icon: FileSpreadsheet, onClick: exportResidentsExcel }]}
+        exportActions={[
+          { label: 'Excel', icon: FileSpreadsheet, onClick: runExport(exportResidentsExcel) },
+          { label: 'PDF', icon: FileText, onClick: runExport(exportResidentsPdf) },
+        ]}
       >
         <div className="flex flex-wrap items-center gap-3 mb-4">
           <FilterInput placeholder="Search name, unit, email…" value={residentSearch} onChange={setResidentSearch} />
@@ -596,7 +637,10 @@ export default function Reports() {
         icon={Wallet}
         title="Collections / payments"
         subtitle={`${filteredPayments.length} of ${payments.length} payments match the current filters`}
-        exportActions={[{ label: 'Export Excel', icon: FileSpreadsheet, onClick: exportPaymentsExcel }]}
+        exportActions={[
+          { label: 'Excel', icon: FileSpreadsheet, onClick: runExport(exportPaymentsExcel) },
+          { label: 'PDF', icon: FileText, onClick: runExport(exportPaymentsPdf) },
+        ]}
       >
         <div className="flex flex-wrap items-center gap-3 mb-4">
           <FilterInput placeholder="Search resident, unit, reference…" value={paySearch} onChange={setPaySearch} />
@@ -637,8 +681,8 @@ export default function Reports() {
         title="Expenses"
         subtitle={`${filteredExpenses.length} of ${expenses.length} expenses · ${currency(filteredExpenses.reduce((s, e) => s + e.amount, 0))} total`}
         exportActions={[
-          { label: 'Excel', icon: FileSpreadsheet, onClick: exportExpensesExcel },
-          { label: 'PDF', icon: FileText, onClick: exportExpensesPdf },
+          { label: 'Excel', icon: FileSpreadsheet, onClick: runExport(exportExpensesExcel) },
+          { label: 'PDF', icon: FileText, onClick: runExport(exportExpensesPdf) },
         ]}
       >
         <div className="flex flex-wrap items-center gap-3 mb-4">
@@ -654,7 +698,7 @@ export default function Reports() {
           <table className="report-table">
             <thead><tr><th>Description</th><th>Category</th><th>Project</th><th>Vendor</th><th>Amount</th><th>Date</th></tr></thead>
             <tbody>
-              {filteredExpenses.slice(0, 12).map((e) => (
+              {pagedExpenses.map((e) => (
                 <tr key={e.id}>
                   <td className="font-medium text-ink-800">{e.description || '—'}</td>
                   <td><span className="badge" style={{ background: `${EXPENSE_COLORS[e.category] || '#64748b'}1a`, color: EXPENSE_COLORS[e.category] || '#64748b' }}>{e.category}</span></td>
@@ -664,10 +708,13 @@ export default function Reports() {
                   <td className="text-ink-500">{formatDate(e.date)}</td>
                 </tr>
               ))}
+              {pagedExpenses.length === 0 && (
+                <tr><td colSpan={6} className="text-center text-ink-400 py-6">No expenses match these filters.</td></tr>
+              )}
             </tbody>
           </table>
         </TableScroll>
-        {filteredExpenses.length > 12 && <p className="text-xs text-ink-400 mt-3">Showing 12 of {filteredExpenses.length} — export for the full list.</p>}
+        <Pagination page={expPage} pageCount={expPageCount} onChange={setExpPage} total={filteredExpenses.length} pageSize={EXPENSES_PAGE_SIZE} label="expenses" />
       </SectionCard>
 
       {/* ---------------- Projects report ---------------- */}
@@ -676,8 +723,8 @@ export default function Reports() {
         title="Projects"
         subtitle={`${filteredProjects.length} of ${projects.length} projects match the current filters`}
         exportActions={[
-          { label: 'Excel', icon: FileSpreadsheet, onClick: exportProjectsExcel },
-          { label: 'PDF', icon: FileText, onClick: exportProjectsPdf },
+          { label: 'Excel', icon: FileSpreadsheet, onClick: runExport(exportProjectsExcel) },
+          { label: 'PDF', icon: FileText, onClick: runExport(exportProjectsPdf) },
         ]}
         last
       >
@@ -689,7 +736,7 @@ export default function Reports() {
           <table className="report-table">
             <thead><tr><th>Project</th><th>Fund</th><th>Budget</th><th>Spent</th><th>Remaining</th><th>Status</th></tr></thead>
             <tbody>
-              {filteredProjects.map((p) => (
+              {pagedProjects.map((p) => (
                 <tr key={p.id}>
                   <td className="font-medium text-ink-800">{p.name}</td>
                   <td className="text-ink-500">{funds.find((f) => f.id === p.fundId)?.name || '—'}</td>
@@ -699,9 +746,13 @@ export default function Reports() {
                   <td><Badge status={p.status} /></td>
                 </tr>
               ))}
+              {pagedProjects.length === 0 && (
+                <tr><td colSpan={6} className="text-center text-ink-400 py-6">No projects match these filters.</td></tr>
+              )}
             </tbody>
           </table>
         </TableScroll>
+        <Pagination page={projPage} pageCount={projPageCount} onChange={setProjPage} total={filteredProjects.length} pageSize={PROJECTS_PAGE_SIZE} label="projects" />
       </SectionCard>
       </>
       )}

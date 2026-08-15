@@ -3,7 +3,7 @@ import { Download, Printer, TrendingUp, Wallet, PiggyBank, Target } from 'lucide
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell, Legend } from 'recharts'
 import { useAuth } from '../../context/AuthContext'
 import { useData } from '../../context/DataContext'
-import { PageHeader, StatCard, currency, formatDate, ChartPlaceholder } from '../../components/ui'
+import { PageHeader, StatCard, currency, formatDate, ChartPlaceholder, notify } from '../../components/ui'
 import { getMeta } from '../../lib/adapters'
 import { exportToExcel } from '../../lib/exportUtils'
 
@@ -54,7 +54,19 @@ export default function ResidentReports() {
             <button className="btn-secondary" onClick={() => window.print()}><Printer className="h-4 w-4" /> Print</button>
             <button
               className="btn-primary"
-              onClick={() => exportToExcel({
+              disabled={!dataFullyLoaded}
+              title={!dataFullyLoaded ? 'Waiting for all data to finish loading…' : undefined}
+              onClick={() => {
+                // myPayments is filtered from the community-wide payments
+                // list, which is still being paged in silently in the
+                // background right after login (see DataContext) — export
+                // once it's fully loaded so this can't ship a report
+                // that's missing some of the resident's own payments.
+                if (!dataFullyLoaded) {
+                  notify("Still loading your full payment history — please wait a moment and try again.")
+                  return
+                }
+                exportToExcel({
                 filename: 'my-cfms-payments',
                 sheetName: 'My Payments',
                 meta: [
@@ -71,7 +83,8 @@ export default function ResidentReports() {
                   { header: 'Reference', key: 'reference', width: 18 },
                 ],
                 rows: myPayments,
-              })}
+                })
+              }}
             >
               <Download className="h-4 w-4" /> Export my payments
             </button>
