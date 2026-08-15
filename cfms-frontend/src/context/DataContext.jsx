@@ -521,6 +521,15 @@ export function DataProvider({ children }) {
       refresh({ silent: true })
       return paymentToUI(data.data)
     },
+    // Resident retracting their own still-pending self-verified payment
+    // (e.g. wrong txn ID / wrong fee). Backend only allows this while the
+    // payment is PENDING_REVIEW — already-VERIFIED or admin-reviewed
+    // payments will reject this with a clear error.
+    retractPayment: async (id) => {
+      await api.delete(endpoints.paymentRetract(id))
+      patchList('payments')((list) => list.filter((p) => p.id !== id))
+      refresh({ silent: true })
+    },
     // Best-effort autofill from a payment screenshot — never trusted
     // directly, just prefills the form for the resident to confirm/edit.
     parsePaymentScreenshot: async (file) => {

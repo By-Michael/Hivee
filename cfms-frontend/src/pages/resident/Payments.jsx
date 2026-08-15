@@ -40,7 +40,7 @@ const emptyForm = { feeId: '', payerName: '', txnId: '', reason: '' }
 
 export default function ResidentPayments() {
   const { user } = useAuth()
-  const { payments, fees, residents, community, submitSelfPayment, parsePaymentScreenshot, loadError, loading } = useData()
+  const { payments, fees, residents, community, submitSelfPayment, retractPayment, parsePaymentScreenshot, loadError, loading } = useData()
   const resident = residents.find((r) => r.id === user?.residentId) || residents[0]
   const mine = payments.filter((p) => p.residentId === resident?.id).sort((a, b) => new Date(b.date) - new Date(a.date))
   const feeOf = (id) => fees.find((f) => f.id === id)
@@ -53,6 +53,7 @@ export default function ResidentPayments() {
   const [error, setError] = useState('')
   const [canRetry, setCanRetry] = useState(false)
   const [successStatus, setSuccessStatus] = useState('paid')
+  const [successReviewFlags, setSuccessReviewFlags] = useState('')
   const [ocrLoading, setOcrLoading] = useState(false)
   const [ocrNote, setOcrNote] = useState('')
   const fileInputRef = useRef(null)
@@ -93,7 +94,16 @@ export default function ResidentPayments() {
       if (Object.keys(updates).length) {
         setForm((f) => ({ ...f, ...updates }))
         setUseMyName(false)
-        setOcrNote('Filled in from your screenshot — please double-check before submitting.')
+        let note = 'Filled in from your screenshot — please double-check before submitting.'
+        // Amount isn't a form field (it's fixed by the selected fee), but if
+        // the screenshot shows a different amount than the fee you picked,
+        // that's exactly the kind of mismatch worth flagging before submit —
+        // plain OCR text alone couldn't tell you this, only the structured
+        // amount field can.
+        if (result.amount != null && selectedFee && Math.abs(result.amount - Number(selectedFee.amount)) > 0.01) {
+          note += ` Heads up: the screenshot shows ${result.amount}, but "${selectedFee.name}" is ${currency(selectedFee.amount)} — double-check you selected the right fee.`
+        }
+        setOcrNote(note)
       } else {
         setOcrNote("Couldn't read a name or transaction ID from that image. Please fill them in manually.")
       }
@@ -117,6 +127,7 @@ export default function ResidentPayments() {
         reason: form.reason.trim(),
       })
       setSuccessStatus(payment?.status || 'paid')
+      setSuccessReviewFlags(payment?.reviewFlags || '')
       setPhase('success')
     } catch (err) {
       // No `response` means the request never reached the server (offline,
@@ -143,6 +154,22 @@ export default function ResidentPayments() {
     await attemptSubmit()
   }
 
+  const [retractingId, setRetractingId] = useState(null)
+  const [retractError, setRetractError] = useState('')
+
+  async function handleRetract(id) {
+    if (!window.confirm("Retract this payment? This can't be undone — you'll need to resubmit if it was actually correct.")) return
+    setRetractingId(id)
+    setRetractError('')
+    try {
+      await retractPayment(id)
+    } catch (err) {
+      setRetractError(err?.response?.data?.message || 'Could not retract this payment.')
+    } finally {
+      setRetractingId(null)
+    }
+  }
+
   return (
     <div>
       <PageHeader
@@ -151,13 +178,17 @@ export default function ResidentPayments() {
         action={<button onClick={openModal} className="btn-primary"><Plus className="h-4 w-4" /> Make a payment</button>}
       />
 
+      {retractError && (
+        <div className="mb-4 rounded-lg bg-rose-50 border border-rose-100 p-3 text-sm text-rose-700">{retractError}</div>
+      )}
+
       <div className="card overflow-hidden">
         {mine.length === 0 ? (
           <EmptyState icon={Wallet} title="No payments yet" subtitle="Once you make a contribution it will show up here." />
         ) : (
           <div className="table-wrap !border-0">
             <table className="data-table">
-              <thead><tr><th>Fee</th><th>Amount</th><th>Method</th><th>Paid by</th><th>Reference</th><th>Date</th><th>Status</th></tr></thead>
+              <thead><tr><th>Fee</th><th>Amount</th><th>Method</th><th>Paid by</th><th>Reference</th><th>Date</th><th>Status</th><th></th></tr></thead>
               <tbody>
                 {mine.map((p) => (
                   <tr key={p.id}>
@@ -168,6 +199,18 @@ export default function ResidentPayments() {
                     <td className="font-mono text-xs text-ink-400">{p.reference}</td>
                     <td>{formatDate(p.date)}</td>
                     <td><Badge status={p.status} /></td>
+                    <td>
+                      {p.status === 'pending_review' && (
+                        <button
+                          onClick={() => handleRetract(p.id)}
+                          disabled={retractingId === p.id}
+                          className="text-xs font-medium text-rose-600 hover:text-rose-700 disabled:opacity-50"
+                          title="Retract — only possible before an admin reviews it"
+                        >
+                          {retractingId === p.id ? 'Retracting…' : 'Retract'}
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -185,10 +228,21 @@ export default function ResidentPayments() {
               </div>
               <p className="mt-4 text-lg font-bold text-ink-900">Submitted for review</p>
               <p className="mt-1 text-sm text-ink-500">
-                We couldn't automatically confirm this transaction — often because the bank lookup
-                service was briefly unavailable. It's been recorded and a committee admin will
-                verify it shortly.
+                We couldn't fully auto-verify this transaction. It's been recorded and a
+                committee admin will review it shortly.
               </p>
+              {successReviewFlags ? (
+                <div className="mt-4 mx-auto max-w-sm rounded-lg bg-amber-50 border border-amber-100 p-3 text-left">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-amber-700 mb-1">
+                    Why this needs review
+                  </p>
+                  <ul className="text-sm text-amber-800 space-y-1 list-disc list-inside">
+                    {successReviewFlags.split('. ').filter(Boolean).map((flag, i) => (
+                      <li key={i}>{flag.replace(/\.$/, '')}.</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
               <button onClick={() => setModal(false)} className="btn-primary mt-6">Done</button>
             </div>
           ) : (

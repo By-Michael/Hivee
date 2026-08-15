@@ -103,6 +103,7 @@ export const endpoints = {
   paymentReceipt: (id) => `/payments/${id}/receipt`,
   paymentSelfVerify: () => '/payments/self-verify',
   paymentParseScreenshot: () => '/payments/parse-screenshot',
+  paymentRetract: (id) => `/payments/${id}/retract`,
 
   funds: () => '/funds',
   fund: (id) => `/funds/${id}`,
