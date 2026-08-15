@@ -17,6 +17,10 @@ import {
 const EMPTY_DATA = {
   community: { name: '', address: '', units: 0 },
   residents: [],
+  // True counts from the server, independent of how many resident rows are
+  // actually loaded (see residentsMeta below) — the "N registered / N
+  // active" header stays correct even when the full list isn't in memory.
+  residentsMeta: { total: 0, activeTotal: 0, page: 1, totalPages: 1, limit: 200 },
   fees: [],
   payments: [],
   funds: [],
@@ -27,6 +31,28 @@ const EMPTY_DATA = {
 }
 
 const DataContext = createContext(null)
+
+// Pages through the (now paginated) residents endpoint until every resident
+// has been fetched. Still bounded per-request (protects the server/browser
+// from one multi-thousand-row response) but only runs once per login/
+// refresh — not on every click — so a community with thousands of
+// residents pays this cost once instead of on every save/delete.
+async function fetchAllResidents() {
+  const limit = 500
+  let page = 1
+  let all = []
+  let meta = { total: 0, activeTotal: 0 }
+  // Safety cap: even if something's wrong with the pagination response,
+  // never loop more than 100 pages (50,000 residents) here.
+  for (let i = 0; i < 100; i++) {
+    const { data } = await api.get(endpoints.residents(), { params: { page, limit } })
+    all = all.concat(data.data || [])
+    meta = data.meta || meta
+    if (!data.meta || page >= data.meta.totalPages) break
+    page += 1
+  }
+  return { residents: all, meta }
+}
 
 export function DataProvider({ children }) {
   const { user, bootstrapped } = useAuth()
@@ -82,9 +108,10 @@ export function DataProvider({ children }) {
         // community's payment account details — residents to see where to
         // send money, admins to edit it — so this is fetched for both.
         api.get(endpoints.communityMe()).catch(label('community')),
-        // Residents: admins list the whole community; residents only get
+        // Residents: admins list the whole community (paged through in the
+        // background by fetchAllResidents, see above); residents only get
         // their own profile (list endpoint is admin-only on the backend).
-        (isAdmin ? api.get(endpoints.residents()) : api.get('/residents/me')).catch(label('residents')),
+        (isAdmin ? fetchAllResidents() : api.get('/residents/me')).catch(label('residents')),
         // Fund balances are derived (allocated vs. spent). A single bulk
         // endpoint replaces the old per-fund summary request.
         api.get(endpoints.fundSummaries()).catch(label('fundSummaries')),
@@ -101,8 +128,11 @@ export function DataProvider({ children }) {
       const residentsRaw = residentsRes?.__failed
         ? []
         : isAdmin
-          ? (residentsRes?.data?.data || [])
+          ? (residentsRes?.residents || [])
           : (residentsRes?.data?.data ? [residentsRes.data.data] : [])
+      const residentsMeta = (isAdmin && !residentsRes?.__failed && residentsRes?.meta)
+        ? residentsRes.meta
+        : { total: residentsRaw.length, activeTotal: residentsRaw.filter((r) => r.status === 'ACTIVE').length, page: 1, totalPages: 1, limit: residentsRaw.length || 200 }
 
       const fundsRaw = fundsRes?.__failed ? [] : fundsRes.data.data
       const summariesById = new Map((fundSummariesRes?.data?.data || []).map((s) => [s.fundId, s]))
@@ -115,6 +145,7 @@ export function DataProvider({ children }) {
       setData({
         community: communityRaw ? communityToUI(communityRaw) : { name: user.community, address: '', paymentBankName: '', paymentAccountName: '', paymentAccountNumber: '' },
         residents: residentsRaw.map(residentToUI),
+        residentsMeta,
         fees: feesRes?.__failed ? [] : feesRes.data.data.map(feeToUI),
         payments: paymentsRes?.__failed ? [] : paymentsRes.data.data.map(paymentToUI),
         funds: fundsRaw.map((f) => fundToUI(f, summariesById.get(f.id) || null)),
@@ -174,28 +205,58 @@ export function DataProvider({ children }) {
     }
   }, [user, refresh])
 
-  // Actions call the real API, then re-sync in the background so the UI
-  // reflects what's actually persisted. Previously every action AWAITED
-  // the full refresh() (8 parallel endpoints) before resolving, so every
-  // "Save"/"Add" button across the whole site sat there for the entire
-  // refetch before the modal closed — slow, and with no feedback in the
-  // meantime it looked like nothing had happened. The actual write is
-  // what the caller needs to wait on; re-syncing the rest of the app's
-  // data can happen right after, without blocking the UI on it.
+  // Actions call the real API and patch local state directly from the
+  // response instead of re-fetching everything. Previously every single
+  // action here — including a plain resident delete — fired a full
+  // refresh() that re-ran all ~9 list endpoints (residents, payments,
+  // funds, projects, expenses, fees, community, fund summaries, pending
+  // changes) unconditionally. With a community seeded to thousands of
+  // rows, that meant clicking Delete on ONE resident re-downloaded and
+  // re-rendered the entire dataset before the row visibly disappeared —
+  // which is why every Save/Delete button felt as slow as the initial
+  // page load. Now the visible list updates immediately from the API's
+  // own response, and only a couple of actions that ripple into numbers
+  // they don't return directly (e.g. a payment changing a fund's balance)
+  // still trigger a background, non-blocking refresh to reconcile those.
+  const patchList = (key) => (updater) => setData((d) => ({ ...d, [key]: updater(d[key]) }))
+
   const actions = useMemo(() => ({
     // ---- residents (ADMIN only on the backend) ----
     addResident: async (form) => {
       const { data: created } = await api.post(endpoints.residents(), residentToCreateAPI(form))
-      refresh({ silent: true })
+      const resident = created.data.resident
+        ? residentToUI({ ...created.data.resident, user: { id: created.data.id, fullName: created.data.fullName, email: created.data.email, role: created.data.role } })
+        : null
+      if (resident) {
+        setData((d) => ({
+          ...d,
+          residents: [resident, ...d.residents],
+          residentsMeta: { ...d.residentsMeta, total: d.residentsMeta.total + 1, activeTotal: d.residentsMeta.activeTotal + (resident.status === 'active' ? 1 : 0) },
+        }))
+      } else {
+        refresh({ silent: true })
+      }
       return created.data.resident?.id
     },
     updateResident: async (id, patch) => {
-      await api.patch(endpoints.resident(id), residentToUpdateAPI(patch))
-      refresh({ silent: true })
+      const { data } = await api.patch(endpoints.resident(id), residentToUpdateAPI(patch))
+      const updated = residentToUI(data.data)
+      patchList('residents')((list) => list.map((r) => (r.id === id ? updated : r)))
     },
     removeResident: async (id) => {
       await api.delete(endpoints.resident(id))
-      refresh({ silent: true })
+      setData((d) => {
+        const removed = d.residents.find((r) => r.id === id)
+        return {
+          ...d,
+          residents: d.residents.filter((r) => r.id !== id),
+          residentsMeta: {
+            ...d.residentsMeta,
+            total: Math.max(0, d.residentsMeta.total - 1),
+            activeTotal: Math.max(0, d.residentsMeta.activeTotal - (removed?.status === 'active' ? 1 : 0)),
+          },
+        }
+      })
     },
     // Full detail for the admin's resident-info popup: profile fields plus
     // every fee this resident is missing a payment for.
@@ -215,16 +276,16 @@ export function DataProvider({ children }) {
 
     // ---- fees ----
     addFee: async (form) => {
-      await api.post(endpoints.fees(), feeToAPI(form))
-      refresh({ silent: true })
+      const { data } = await api.post(endpoints.fees(), feeToAPI(form))
+      patchList('fees')((list) => [feeToUI(data.data), ...list])
     },
     updateFee: async (id, patch) => {
-      await api.patch(endpoints.fee(id), feeToAPI(patch))
-      refresh({ silent: true })
+      const { data } = await api.patch(endpoints.fee(id), feeToAPI(patch))
+      patchList('fees')((list) => list.map((f) => (f.id === id ? feeToUI(data.data) : f)))
     },
     removeFee: async (id) => {
       await api.delete(endpoints.fee(id))
-      refresh({ silent: true })
+      patchList('fees')((list) => list.filter((f) => f.id !== id))
     },
 
     // ---- payments ----
@@ -240,6 +301,11 @@ export function DataProvider({ children }) {
         body.append('receipt', form.receiptFile)
         await api.post(endpoints.paymentReceipt(created.data.id), body, { headers: { 'Content-Type': 'multipart/form-data' } })
       }
+      patchList('payments')((list) => [paymentToUI(created.data), ...list])
+      // A payment can move a fund's real cash balance — that figure lives
+      // in fund summaries, not on the payment itself, so reconcile it in
+      // the background. The payment row above is already visible, so this
+      // doesn't block or delay anything the user sees.
       refresh({ silent: true })
       return created.data.id
     },
@@ -247,19 +313,21 @@ export function DataProvider({ children }) {
     updatePayment: async (id, patch) => {
       if (patch.status) {
         const map = { paid: 'VERIFIED', pending: 'PENDING', overdue: 'REJECTED', rejected: 'REJECTED' }
-        await api.patch(`${endpoints.payment(id)}/status`, { status: map[patch.status] || 'PENDING' })
+        const { data } = await api.patch(`${endpoints.payment(id)}/status`, { status: map[patch.status] || 'PENDING' })
+        patchList('payments')((list) => list.map((p) => (p.id === id ? paymentToUI(data.data) : p)))
       }
       refresh({ silent: true })
     },
     // Edit a manually-recorded payment. The backend rejects this for a
     // resident's own self-verified (bank) payment — see paymentController.js.
     editPayment: async (id, form) => {
-      await api.patch(endpoints.payment(id), paymentToUpdateAPI(form))
+      const { data } = await api.patch(endpoints.payment(id), paymentToUpdateAPI(form))
       if (form.receiptFile) {
         const body = new FormData()
         body.append('receipt', form.receiptFile)
         await api.post(endpoints.paymentReceipt(id), body, { headers: { 'Content-Type': 'multipart/form-data' } })
       }
+      patchList('payments')((list) => list.map((p) => (p.id === id ? paymentToUI(data.data) : p)))
       refresh({ silent: true })
     },
     // Delete a manually-recorded payment. Same recordedBy restriction as
@@ -267,6 +335,7 @@ export function DataProvider({ children }) {
     // deleted here, only rejected via updatePayment/status.
     removePayment: async (id) => {
       await api.delete(endpoints.payment(id))
+      patchList('payments')((list) => list.filter((p) => p.id !== id))
       refresh({ silent: true })
     },
     // Resident self-serve flow: submit a bank txn ID and get verified
@@ -274,6 +343,7 @@ export function DataProvider({ children }) {
     // failure so the caller can show the error inline and let them retry.
     submitSelfPayment: async ({ feeId, txnId, payerName, reason, amount }) => {
       const { data } = await api.post(endpoints.paymentSelfVerify(), { feeId, txnId, payerName, reason, amount })
+      patchList('payments')((list) => [paymentToUI(data.data), ...list])
       refresh({ silent: true })
       return paymentToUI(data.data)
     },
@@ -318,6 +388,10 @@ export function DataProvider({ children }) {
     },
 
     // ---- funds ----
+    // Funds carry a derived `balance`/`actualBalance` that only fund
+    // summaries know how to compute, so a plain create/update response
+    // can't fill that in locally — those two still lean on a background
+    // refresh. Delete is a pure removal, so that one patches instantly.
     addFund: async (form) => {
       const { data: created } = await api.post(endpoints.funds(), fundToAPI(form))
       refresh({ silent: true })
@@ -329,13 +403,13 @@ export function DataProvider({ children }) {
     },
     removeFund: async (id) => {
       await api.delete(endpoints.fund(id))
-      refresh({ silent: true })
+      patchList('funds')((list) => list.filter((f) => f.id !== id))
     },
 
     // ---- projects ----
     addProject: async (form) => {
-      await api.post(endpoints.projects(), projectToAPI(form))
-      refresh({ silent: true })
+      const { data: created } = await api.post(endpoints.projects(), projectToAPI(form))
+      patchList('projects')((list) => [projectToUI(created.data), ...list])
     },
     // Name/description/dates/status apply instantly. Budget only applies
     // instantly if the project has no expenses logged yet — otherwise the
@@ -343,14 +417,14 @@ export function DataProvider({ children }) {
     // `budgetChangeMessage` explaining what happened instead of applying it.
     updateProject: async (id, patch) => {
       const { data } = await api.patch(endpoints.project(id), projectToAPI(patch))
-      refresh({ silent: true })
+      patchList('projects')((list) => list.map((p) => (p.id === id ? projectToUI(data.data) : p)))
       return data
     },
     // Blocked by the backend once the project has any expenses logged —
     // surfaces as a 403 with an explanatory message.
     removeProject: async (id) => {
       await api.delete(endpoints.project(id))
-      refresh({ silent: true })
+      patchList('projects')((list) => list.filter((p) => p.id !== id))
     },
 
     // ---- expenses ----
@@ -362,6 +436,9 @@ export function DataProvider({ children }) {
         body.append('receipt', form.file)
         await api.post('/expenses/receipts', body, { headers: { 'Content-Type': 'multipart/form-data' } })
       }
+      patchList('expenses')((list) => [expenseToUI(created.data), ...list])
+      // Spending a fund's money changes its balance, which lives in fund
+      // summaries — reconciled in the background, not blocking this call.
       refresh({ silent: true })
       return created.data.id
     },
@@ -370,6 +447,7 @@ export function DataProvider({ children }) {
     // logging a fresh correct one. Both stay visible in the trail.
     reverseExpense: async (id, reason) => {
       const { data } = await api.post(endpoints.reverseExpense(id), reason ? { reason } : {})
+      patchList('expenses')((list) => [expenseToUI(data.data), ...list.map((e) => (e.id === id ? { ...e, isVoided: true } : e))])
       refresh({ silent: true })
       return data.data
     },
@@ -378,6 +456,7 @@ export function DataProvider({ children }) {
     // still fail with a 403 explaining why even though the button is shown.
     removeExpense: async (id) => {
       await api.delete(endpoints.expense(id))
+      patchList('expenses')((list) => list.filter((e) => e.id !== id))
       refresh({ silent: true })
     },
 
@@ -389,17 +468,17 @@ export function DataProvider({ children }) {
       const body = new FormData()
       body.append('expenseId', form.expenseId)
       body.append('receipt', form.file)
-      await api.post('/expenses/receipts', body, { headers: { 'Content-Type': 'multipart/form-data' } })
-      refresh({ silent: true })
+      const { data } = await api.post('/expenses/receipts', body, { headers: { 'Content-Type': 'multipart/form-data' } })
+      patchList('receipts')((list) => [receiptToUI(data.data), ...list])
     },
     updateReceipt: async (id, patch) => {
       // SCHEMA GAP: "verified" isn't a real column — stored client-side.
       if (typeof patch.verified === 'boolean') setMeta('receiptVerified', id, patch.verified)
-      refresh({ silent: true })
+      patchList('receipts')((list) => list.map((r) => (r.id === id ? { ...r, ...patch } : r)))
     },
     removeReceipt: async (id) => {
       await api.delete(endpoints.receipt(id))
-      refresh({ silent: true })
+      patchList('receipts')((list) => list.filter((r) => r.id !== id))
     },
 
     refreshAll: () => refresh(),

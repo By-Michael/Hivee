@@ -81,6 +81,20 @@ async function main() {
   // -------------------------------------------------------------------
   // Reset (children first, respecting FK order) so the seed is repeatable
   // -------------------------------------------------------------------
+  // SAFETY GUARD: wipes the ENTIRE database (all communities/users/data),
+  // not just seed data. Require explicit opt-in so it can't nuke a real
+  // or shared database by being run/re-run by accident.
+  if (process.env.CONFIRM_WIPE !== 'yes') {
+    console.error(
+      '\nRefusing to run: this script deletes ALL data in the database.\n' +
+      'If you are sure, re-run with:\n\n  CONFIRM_WIPE=yes node prisma/seed.js\n'
+    );
+    process.exit(1);
+  }
+  if (process.env.NODE_ENV === 'production') {
+    console.error('\nRefusing to run seed.js with NODE_ENV=production.\n');
+    process.exit(1);
+  }
   await prisma.receipt.deleteMany();
   await prisma.expense.deleteMany();
   await prisma.payment.deleteMany();

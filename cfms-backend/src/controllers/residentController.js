@@ -65,13 +65,55 @@ const createResident = catchAsync(async (req, res) => {
 });
 
 // ADMIN: list all residents in their community. RESIDENT: not allowed (route-guarded).
+//
+// Paginated: with communities seeded to thousands of residents, returning
+// every row unconditionally meant one request could ship megabytes of JSON
+// and take many seconds. `page`/`limit` are optional so existing callers
+// that don't pass them still work (default: first 200, generous enough for
+// small/medium communities to keep behaving exactly as before), but any
+// community above that size now needs to explicitly page through results.
+// `search` lets the caller filter server-side instead of pulling everything
+// down to filter client-side.
 const listResidents = catchAsync(async (req, res) => {
-  const residents = await prisma.resident.findMany({
-    where: { user: { communityId: req.communityId } },
-    include: { user: { select: { id: true, fullName: true, email: true, createdAt: true, role: true } } },
-    orderBy: { joinedAt: 'desc' },
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(500, Math.max(1, parseInt(req.query.limit, 10) || 200));
+  const search = (req.query.search || '').trim();
+
+  const where = {
+    user: { communityId: req.communityId },
+    ...(search
+      ? {
+          OR: [
+            { user: { fullName: { contains: search, mode: 'insensitive' } } },
+            { user: { email: { contains: search, mode: 'insensitive' } } },
+            { unitNumber: { contains: search, mode: 'insensitive' } },
+            { idNumber: { contains: search, mode: 'insensitive' } },
+            { phone: { contains: search, mode: 'insensitive' } },
+          ],
+        }
+      : {}),
+  };
+
+  const [residents, total, activeTotal] = await Promise.all([
+    prisma.resident.findMany({
+      where,
+      include: { user: { select: { id: true, fullName: true, email: true, createdAt: true, role: true } } },
+      orderBy: { joinedAt: 'desc' },
+      skip: (page - 1) * limit,
+      take: limit,
+    }),
+    prisma.resident.count({ where }),
+    // Counted separately (not derived from the page in hand) so the
+    // dashboard's "active residents" figure stays correct even when only
+    // one page of residents has actually been fetched.
+    prisma.resident.count({ where: { ...where, status: 'ACTIVE' } }),
+  ]);
+
+  res.json({
+    success: true,
+    data: residents,
+    meta: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)), activeTotal },
   });
-  res.json({ success: true, data: residents });
 });
 
 const getResident = catchAsync(async (req, res) => {
