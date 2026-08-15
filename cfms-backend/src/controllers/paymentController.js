@@ -333,8 +333,21 @@ const selfVerifyPayment = catchAsync(async (req, res) => {
       ...communityPaymentFilter(req.communityId),
       status: { not: 'REJECTED' },
     },
+    include: PAYMENT_INCLUDE,
   });
   if (alreadyUsed) {
+    // Bank verification below can take up to ~25s (3 retries x 8s
+    // timeout). If the client's connection drops before the response
+    // arrives, the request has already completed server-side by the time
+    // the resident sees a "network error" and retries — so a same-resident
+    // resubmit of the exact txnId is very likely their own earlier attempt
+    // succeeding invisibly, not a real double-submission. Return that
+    // existing payment instead of a scary 409 in that case; a *different*
+    // resident reusing someone else's transaction ID is the case we
+    // actually need to block hard.
+    if (alreadyUsed.residentId === resident.id) {
+      return res.json({ success: true, data: alreadyUsed, idempotentReplay: true });
+    }
     throw new AppError('This transaction ID has already been used for a payment', 409);
   }
 
@@ -444,6 +457,59 @@ const parsePaymentScreenshot = catchAsync(async (req, res) => {
   res.json({ success: true, data: { txnId, name, amount, bankName, date, source, rawText } });
 });
 
+// RESIDENT retracts their own self-verified payment while it's still
+// PENDING_REVIEW — i.e. before any admin has acted on it, and before it
+// was ever auto-VERIFIED by the bank lookup. This covers the "I typed the
+// wrong txn ID / picked the wrong fee" case: since nothing has accepted
+// this payment as real yet (no admin decision, no clean auto-verify), the
+// resident retracting it isn't rewriting settled financial history — it's
+// withdrawing a claim nobody has confirmed. Once it's VERIFIED or an admin
+// has moved it to VERIFIED/REJECTED, this is no longer allowed; from that
+// point it falls under the same append-only rule as any other payment.
+const retractOwnPayment = catchAsync(async (req, res) => {
+  if (req.user.role !== 'RESIDENT') {
+    throw new AppError('Only the resident who submitted a payment can retract it', 403);
+  }
+
+  const resident = await prisma.resident.findUnique({ where: { userId: req.user.id } });
+  if (!resident) throw new AppError('Resident profile not found', 404);
+
+  const payment = await prisma.payment.findFirst({
+    where: { id: req.params.id, ...communityPaymentFilter(req.communityId) },
+    include: PAYMENT_INCLUDE,
+  });
+  if (!payment) throw new AppError('Payment not found', 404);
+  if (payment.residentId !== resident.id) {
+    throw new AppError('You can only retract your own payments', 403);
+  }
+  if (payment.status !== 'PENDING_REVIEW') {
+    throw new AppError(
+      payment.status === 'VERIFIED'
+        ? 'This payment has already been verified and can no longer be retracted.'
+        : 'This payment has already been reviewed by an admin and can no longer be retracted.',
+      409
+    );
+  }
+
+  await prisma.payment.delete({ where: { id: payment.id } });
+
+  await recordAudit(req, {
+    action: 'DELETE',
+    entityType: 'Payment',
+    entityId: payment.id,
+    description: `Resident retracted their own pending payment of ${payment.amount} for fee "${payment.fee?.name || ''}" (txn ${payment.transactionReference})`,
+    metadata: {
+      amount: payment.amount,
+      residentId: payment.residentId,
+      feeId: payment.feeId,
+      transactionReference: payment.transactionReference,
+      reviewFlags: payment.reviewFlags,
+    },
+  });
+
+  res.json({ success: true, message: 'Payment retracted' });
+});
+
 module.exports = {
   createPayment,
   listPayments,
@@ -454,4 +520,5 @@ module.exports = {
   uploadPaymentReceipt,
   selfVerifyPayment,
   parsePaymentScreenshot,
+  retractOwnPayment,
 };

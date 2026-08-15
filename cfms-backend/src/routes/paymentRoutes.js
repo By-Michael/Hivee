@@ -36,6 +36,16 @@ router.post(
 );
 
 router.get('/:id', authorize('ADMIN', 'RESIDENT'), validate(idParamSchema), ctrl.getPayment);
+// Resident self-serve retraction of their OWN still-pending self-verified
+// payment. Deliberately a distinct path from DELETE /:id below (which is
+// ADMIN-only and further restricted to manually-recorded payments) so the
+// two permission models can't accidentally overlap.
+router.delete(
+  '/:id/retract',
+  authorize('RESIDENT'),
+  validate(idParamSchema),
+  ctrl.retractOwnPayment
+);
 router.patch(
   '/:id/status',
   authorize('ADMIN'),
