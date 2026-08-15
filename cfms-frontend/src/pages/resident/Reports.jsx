@@ -3,7 +3,7 @@ import { Download, Printer, TrendingUp, Wallet, PiggyBank, Target } from 'lucide
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell, Legend } from 'recharts'
 import { useAuth } from '../../context/AuthContext'
 import { useData } from '../../context/DataContext'
-import { PageHeader, StatCard, currency, formatDate } from '../../components/ui'
+import { PageHeader, StatCard, currency, formatDate, ChartPlaceholder } from '../../components/ui'
 import { getMeta } from '../../lib/adapters'
 import { exportToExcel } from '../../lib/exportUtils'
 
@@ -11,7 +11,7 @@ const COLORS = ['#1554d6', '#2570f5', '#5aa4ff', '#a9caff', '#0c1c44']
 
 export default function ResidentReports() {
   const { user } = useAuth()
-  const { funds, fees, payments, expenses, projects, residents } = useData()
+  const { funds, fees, payments, expenses, projects, residents, dataFullyLoaded } = useData()
   const me = residents.find((r) => r.id === user?.residentId) || residents[0]
 
   const myPayments = useMemo(() => payments.filter((p) => p.residentId === me?.id), [payments, me])
@@ -83,9 +83,20 @@ export default function ResidentReports() {
         <StatCard icon={Wallet} label="Total paid" value={currency(myTotalPaid)} sub={`${myVerified.length} verified payments`} accent="brand" />
         <StatCard icon={TrendingUp} label="Compliance rate" value={`${myComplianceRate}%`} sub={`${unpaidFees.length} fee(s) outstanding`} accent="green" />
         <StatCard icon={PiggyBank} label="Pending verification" value={myPending.length} sub={currency(myPending.reduce((s, p) => s + p.amount, 0))} accent="amber" />
-        <StatCard icon={Target} label="Community spend" value={currency(totalExpenses)} sub={`${projects.length} active project(s)`} accent="rose" />
+        <StatCard icon={Target} label="Community spend" value={currency(totalExpenses)} sub={`${projects.length} active project(s)`} accent="rose" loading={!dataFullyLoaded} />
       </div>
 
+      {!dataFullyLoaded ? (
+        // Fund progress / community spend below is computed across every
+        // resident's payments and every expense, not just this resident's
+        // own — wait for that background page-in to finish (see
+        // DataContext.dataFullyLoaded) rather than show totals that are
+        // still missing most of the community's data.
+        <div className="card p-10">
+          <ChartPlaceholder height={280} label="Loading community-wide totals…" />
+        </div>
+      ) : (
+      <>
       <div className="grid xl:grid-cols-2 gap-5">
         <div className="card p-5">
           <h3 className="font-semibold text-ink-800 mb-4">Fund progress toward goal</h3>
@@ -136,6 +147,8 @@ export default function ResidentReports() {
           </BarChart>
         </ResponsiveContainer>
       </div>
+      </>
+      )}
 
       <div className="card overflow-hidden mt-5">
         <div className="px-5 py-4 border-b border-ink-50">

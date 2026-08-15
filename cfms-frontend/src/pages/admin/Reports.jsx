@@ -7,7 +7,7 @@ import {
   AreaChart, Area, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar,
 } from 'recharts'
 import { useData } from '../../context/DataContext'
-import { PageHeader, currency, formatDate, Badge } from '../../components/ui'
+import { PageHeader, currency, formatDate, Badge, ChartPlaceholder } from '../../components/ui'
 import { exportToExcel, exportToPdf, exportRichPdf, captureChartImage } from '../../lib/exportUtils'
 
 // Distinct, purposeful palettes so each chart signals something different at a glance.
@@ -35,7 +35,7 @@ function inRange(dateStr, from, to) {
 }
 
 export default function Reports() {
-  const { payments, expenses, fees, funds, projects, residents } = useData()
+  const { payments, expenses, fees, funds, projects, residents, dataFullyLoaded } = useData()
 
   // ---- resident filters ----
   const [residentSearch, setResidentSearch] = useState('')
@@ -362,6 +362,17 @@ export default function Reports() {
         }
       />
 
+      {!dataFullyLoaded ? (
+        // Reports summarizes the WHOLE dataset (every resident/payment/
+        // expense) — rendering it off the fast first-paint page would show
+        // totals and charts that quietly change once the rest loads. Wait
+        // for the silent background load (see DataContext) to finish
+        // instead of showing numbers that are simply wrong for a moment.
+        <div className="card p-10">
+          <ChartPlaceholder height={320} label="Loading the full dataset before building your reports…" />
+        </div>
+      ) : (
+      <>
       {/* ---------------- KPI cards ---------------- */}
       <div className="grid sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
         <div className="card p-5">
@@ -692,6 +703,8 @@ export default function Reports() {
           </table>
         </TableScroll>
       </SectionCard>
+      </>
+      )}
 
       <style>{`
         .report-table { width: 100%; border-collapse: collapse; font-size: 13px; }

@@ -63,7 +63,22 @@ export function Toaster() {
   )
 }
 
-export function StatCard({ icon: Icon, label, value, sub, trend, accent = 'brand', to, onClick }) {
+// Shown in place of a chart/diagram while the full dataset it needs
+// (payments/expenses/residents, paged in silently in the background — see
+// DataContext's dataFullyLoaded) hasn't finished loading yet. Charts
+// summarize the WHOLE dataset, so rendering them off a partial page would
+// show numbers that are simply wrong until they jump/change later — better
+// to show a lightweight placeholder for a moment than a misleading graph.
+export function ChartPlaceholder({ height = 260, label = 'Crunching the numbers…' }) {
+  return (
+    <div className="flex flex-col items-center justify-center gap-2 text-ink-300" style={{ height }}>
+      <span className="h-8 w-8 rounded-full border-2 border-ink-200 border-t-brand-500 animate-spin" />
+      <span className="text-xs font-medium">{label}</span>
+    </div>
+  )
+}
+
+export function StatCard({ icon: Icon, label, value, sub, trend, accent = 'brand', to, onClick, loading = false }) {
   const accents = {
     brand: 'from-brand-500 to-brand-600',
     green: 'from-emerald-500 to-emerald-600',
@@ -87,14 +102,23 @@ export function StatCard({ icon: Icon, label, value, sub, trend, accent = 'brand
       <div className="flex items-start justify-between">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-ink-400">{label}</p>
-          <p className="mt-2 text-2xl font-bold font-display text-ink-900">{value}</p>
-          {sub && <p className="mt-1 text-xs text-ink-400">{sub}</p>}
+          {loading ? (
+            <>
+              <span className="mt-2 block h-7 w-20 rounded-md bg-ink-100 animate-pulse" />
+              <span className="mt-2 block h-3 w-28 rounded bg-ink-100 animate-pulse" />
+            </>
+          ) : (
+            <>
+              <p className="mt-2 text-2xl font-bold font-display text-ink-900">{value}</p>
+              {sub && <p className="mt-1 text-xs text-ink-400">{sub}</p>}
+            </>
+          )}
         </div>
         <div className={`h-11 w-11 shrink-0 rounded-2xl bg-gradient-to-br ${accents[accent]} flex items-center justify-center shadow-glow group-hover:scale-105 transition-transform`}>
           <Icon className="h-5 w-5 text-white" strokeWidth={2.2} />
         </div>
       </div>
-      {trend && (
+      {trend && !loading && (
         <div className="mt-3 flex items-center gap-1 text-xs font-medium">
           <span className={trend.direction === 'up' ? 'text-emerald-600' : 'text-rose-500'}>
             {trend.direction === 'up' ? '▲' : '▼'} {trend.value}

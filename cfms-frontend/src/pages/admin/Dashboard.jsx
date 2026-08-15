@@ -3,7 +3,7 @@ import { Wallet, Landmark, FolderKanban, Users, ArrowUpRight, Clock, Receipt, Sh
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, CartesianGrid, BarChart, Bar } from 'recharts'
 import { useData } from '../../context/DataContext'
 import { useAuth } from '../../context/AuthContext'
-import { StatCard, Badge, PageHeader, Modal, currency, formatDate, notify } from '../../components/ui'
+import { StatCard, Badge, PageHeader, Modal, currency, formatDate, notify, ChartPlaceholder } from '../../components/ui'
 
 const CHANGE_TYPE_LABELS = { COMMUNITY_PAYMENT_DETAILS: 'community payment account details', PROJECT_BUDGET: 'a project budget' }
 const DIFF_FIELD_LABELS = { paymentBankName: 'Bank name', paymentAccountName: 'Account holder', paymentAccountNumber: 'Account number', budget: 'Budget' }
@@ -130,7 +130,7 @@ function buildMonthlySeries(payments, expenses) {
 }
 
 export default function AdminDashboard() {
-  const { residents, payments, funds, projects, fees, expenses, pendingChanges, respondToPendingChange, residentsMeta } = useData()
+  const { residents, payments, funds, projects, fees, expenses, pendingChanges, respondToPendingChange, residentsMeta, dataFullyLoaded } = useData()
   const { user } = useAuth()
   // Only ever show one at a time in the slot — the oldest awaiting this
   // admin's approval — so the widget doesn't need to become a list/carousel.
@@ -191,6 +191,7 @@ export default function AdminDashboard() {
           accent="green"
           trend={collectedTrend}
           to="/admin/payments"
+          loading={!dataFullyLoaded}
         />
         <StatCard
           icon={Clock}
@@ -199,6 +200,7 @@ export default function AdminDashboard() {
           sub={`${pendingOnlyCount} awaiting payment, ${overdueOnlyCount} past due`}
           accent="amber"
           to="/admin/payments"
+          loading={!dataFullyLoaded}
         />
         <StatCard
           icon={FolderKanban}
@@ -217,6 +219,7 @@ export default function AdminDashboard() {
             <span className="badge bg-brand-50 text-brand-700 ring-1 ring-brand-200">Last 6 months</span>
           </div>
           <p className="text-xs text-ink-400 mb-4">Monthly totals across all fee categories</p>
+          {dataFullyLoaded ? (
           <ResponsiveContainer width="100%" height={260}>
             <AreaChart data={monthly} margin={{ left: -14, right: 8 }}>
               <defs>
@@ -240,6 +243,7 @@ export default function AdminDashboard() {
               <Area type="monotone" dataKey="expenses" stroke="#f59e0b" strokeWidth={2.5} fill="url(#expenses)" name="Expenses" />
             </AreaChart>
           </ResponsiveContainer>
+          ) : <ChartPlaceholder />}
         </div>
 
         <div className="card p-5 animate-fade-up">

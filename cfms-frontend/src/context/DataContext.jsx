@@ -124,6 +124,13 @@ export function DataProvider({ children }) {
   // re-fetches the first page and merges it in (see mergeById), and only
   // (re)kicks off the full background page-in once, right after login.
   const [fullyLoaded, setFullyLoaded] = useState({ residents: false, payments: false, expenses: false })
+  // True once payments/expenses (and, for admins, residents) have been
+  // paged in completely — i.e. once anything that computes totals or
+  // charts from the full dataset can trust what it sees. Pages/lists can
+  // render progressively as data streams in, but analytics/diagrams should
+  // wait for this before summing or charting, or they'll show numbers that
+  // quietly change/jump once the background load finishes.
+  const dataFullyLoaded = fullyLoaded.residents && fullyLoaded.payments && fullyLoaded.expenses
   // Guards against kicking off a second background page-in pass while one
   // is already running (e.g. a focus event firing mid-load).
   const bgInFlight = useRef(false)
@@ -674,7 +681,7 @@ export function DataProvider({ children }) {
     },
   }), [refresh])
 
-  return <DataContext.Provider value={{ ...data, ...actions, loading, loadError, hasLoadedOnce, backgroundLoading, refresh }}>{children}</DataContext.Provider>
+  return <DataContext.Provider value={{ ...data, ...actions, loading, loadError, hasLoadedOnce, backgroundLoading, dataFullyLoaded, refresh }}>{children}</DataContext.Provider>
 }
 
 export function useData() {
