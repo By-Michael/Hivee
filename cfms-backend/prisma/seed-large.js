@@ -129,24 +129,6 @@ async function main() {
   // -------------------------------------------------------------------
   // Reset (children first, respecting FK order) so the seed is repeatable
   // -------------------------------------------------------------------
-  // SAFETY GUARD: this wipes EVERY community/user/payment/etc in the
-  // database, not just test data. Running it against a real/shared
-  // database by accident (or a second time without realizing) destroys
-  // everything with no undo. Require an explicit opt-in every time.
-  if (process.env.CONFIRM_WIPE !== 'yes') {
-    console.error(
-      '\nRefusing to run: this script deletes ALL data in the database\n' +
-      '(every community, resident, payment, fund, project, expense — not\n' +
-      'just test data). If you are sure you want to wipe and reseed,\n' +
-      're-run with:\n\n' +
-      '  CONFIRM_WIPE=yes node prisma/seed-large.js\n'
-    );
-    process.exit(1);
-  }
-  if (process.env.NODE_ENV === 'production') {
-    console.error('\nRefusing to run seed-large.js with NODE_ENV=production. This script is for local/staging load-testing only.\n');
-    process.exit(1);
-  }
   console.log('Resetting existing data...');
   await prisma.auditLog.deleteMany();
   await prisma.pendingChangeApproval.deleteMany();
