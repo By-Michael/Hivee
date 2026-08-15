@@ -2,6 +2,8 @@ const express = require('express');
 const ctrl = require('../controllers/communityController');
 const authenticate = require('../middleware/authenticate');
 const authorize = require('../middleware/authorize');
+const validate = require('../middleware/validate');
+const { updateCommunitySchema } = require('../validators/communityValidators');
 
 const router = express.Router();
 
@@ -11,6 +13,6 @@ router.use(authenticate);
 // the community's payment account details (bank name/account/number) in
 // the "Make a payment" flow; only ADMIN can edit them.
 router.get('/me/current', authorize('ADMIN', 'RESIDENT'), ctrl.getMyCommunity);
-router.patch('/me/current', authorize('ADMIN'), ctrl.updateMyCommunity);
+router.patch('/me/current', authorize('ADMIN'), validate(updateCommunitySchema), ctrl.updateMyCommunity);
 
 module.exports = router;

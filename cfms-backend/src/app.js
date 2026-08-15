@@ -26,6 +26,16 @@ const auditRoutes = require('./routes/auditRoutes');
 
 const app = express();
 
+// Render (and most PaaS hosts) put the app behind a reverse proxy, so every
+// request arrives with an X-Forwarded-For header. Without telling Express
+// to trust it, express-rate-limit refuses to key off it at all and throws
+// ERR_ERL_UNEXPECTED_X_FORWARDED_FOR instead of silently misidentifying
+// clients — seen crashing rate-limited requests in the Render logs.
+// `1` = trust exactly one hop (Render's own proxy), not an open-ended chain.
+if (process.env.NODE_ENV === 'production') {
+  app.set('trust proxy', 1);
+}
+
 app.disable('x-powered-by');
 app.use(helmet());
 const corsOrigin = process.env.CORS_ORIGIN || '*';
