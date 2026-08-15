@@ -153,6 +153,15 @@ export default function AdminDashboard() {
   }, [monthly])
 
   const fundSplit = funds.map((f) => ({ name: f.name.replace(' Fund', ''), value: f.balance }))
+  // Recharts' Pie can't render negative slice values — if a fund is in
+  // deficit (spent > verified collected, which is common for young/active
+  // funds), a signed value would silently collapse the whole donut to
+  // nothing even though the legend below still lists every fund. We chart
+  // the magnitude of each balance (so the donut always reflects relative
+  // size) while the legend/tooltip continue to show the true signed amount.
+  const fundChartData = fundSplit.map((f) => ({ ...f, magnitude: Math.abs(f.value) }))
+  const hasAnyDeficit = fundSplit.some((f) => f.value < 0)
+  const fundChartTotal = fundChartData.reduce((s, f) => s + f.magnitude, 0)
   const recentPayments = [...payments].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 6)
 
   const residentOf = (id) => residents.find((r) => r.id === id)?.name || '—'
@@ -235,42 +244,54 @@ export default function AdminDashboard() {
 
         <div className="card p-5 animate-fade-up">
           <h3 className="font-semibold text-ink-800 mb-1">Fund Distribution</h3>
-          <p className="text-xs text-ink-400 mb-2">Balance share by fund</p>
-          <ResponsiveContainer width="100%" height={190}>
-            <PieChart>
-              <Pie
-                data={fundSplit}
-                dataKey="value"
-                nameKey="name"
-                innerRadius={56}
-                outerRadius={78}
-                paddingAngle={3}
-                cornerRadius={7}
-                stroke="none"
-                startAngle={90}
-                endAngle={-270}
-                isAnimationActive
-                animationDuration={700}
-                animationEasing="ease-out"
-              >
-                {fundSplit.map((_, i) => (
-                  <Cell key={i} fill={COLORS[i % COLORS.length]} style={{ filter: 'drop-shadow(0 2px 6px rgba(16,30,66,0.18))' }} />
+          <p className="text-xs text-ink-400 mb-2">
+            {hasAnyDeficit ? 'Relative size by fund — some funds are running a deficit' : 'Balance share by fund'}
+          </p>
+          {fundChartTotal > 0 ? (
+            <>
+              <ResponsiveContainer width="100%" height={190}>
+                <PieChart>
+                  <Pie
+                    data={fundChartData}
+                    dataKey="magnitude"
+                    nameKey="name"
+                    innerRadius={56}
+                    outerRadius={78}
+                    paddingAngle={3}
+                    cornerRadius={7}
+                    stroke="none"
+                    startAngle={90}
+                    endAngle={-270}
+                    isAnimationActive
+                    animationDuration={700}
+                    animationEasing="ease-out"
+                  >
+                    {fundChartData.map((_, i) => (
+                      <Cell key={i} fill={COLORS[i % COLORS.length]} style={{ filter: 'drop-shadow(0 2px 6px rgba(16,30,66,0.18))' }} />
+                    ))}
+                  </Pie>
+                  <Tooltip formatter={(_, __, item) => currency(item?.payload?.value ?? 0)} contentStyle={{ borderRadius: 12, border: '1px solid #eef1f8' }} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="space-y-2 mt-1 max-h-64 overflow-y-auto pr-1">
+                {fundSplit.map((f, i) => (
+                  <div key={f.name} className="flex items-center justify-between text-xs">
+                    <span className="flex items-center gap-2 text-ink-500">
+                      <span className="h-2 w-2 rounded-full shrink-0" style={{ background: COLORS[i % COLORS.length] }} />
+                      {f.name}
+                    </span>
+                    <span className={`font-semibold ${f.value < 0 ? 'text-rose-600' : 'text-ink-700'}`}>{currency(f.value)}</span>
+                  </div>
                 ))}
-              </Pie>
-              <Tooltip formatter={(v) => currency(v)} contentStyle={{ borderRadius: 12, border: '1px solid #eef1f8' }} />
-            </PieChart>
-          </ResponsiveContainer>
-          <div className="space-y-2 mt-1">
-            {fundSplit.map((f, i) => (
-              <div key={f.name} className="flex items-center justify-between text-xs">
-                <span className="flex items-center gap-2 text-ink-500">
-                  <span className="h-2 w-2 rounded-full" style={{ background: COLORS[i % COLORS.length] }} />
-                  {f.name}
-                </span>
-                <span className="font-semibold text-ink-700">{currency(f.value)}</span>
               </div>
-            ))}
-          </div>
+            </>
+          ) : (
+            <div className="h-[190px] flex flex-col items-center justify-center text-center text-ink-400 gap-1.5">
+              <Landmark className="h-6 w-6 text-ink-200" />
+              <p className="text-xs">No fund balances yet</p>
+              <p className="text-[11px] text-ink-300">Balances appear once payments are verified</p>
+            </div>
+          )}
         </div>
       </div>
 
