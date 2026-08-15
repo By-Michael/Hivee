@@ -1,14 +1,23 @@
 // -----------------------------------------------------------------------
 // Screenshot autofill: sends the uploaded payment screenshot to OCR.space
-// to get raw text, then applies best-effort heuristics to pull out a
-// transaction ID and a sender name from it. OCR.space returns plain text,
-// not structured fields, so this is pattern-matching over that text —
-// treat the result as a prefill suggestion, not ground truth. The caller
-// (paymentController) never trusts this for verification; only the typed/
-// confirmed txnId is ever sent to verifyBankTransaction.
+// to get raw text, then to Groq (an LLM) to turn that raw, messy text into
+// structured fields. OCR.space alone only returns a flat text blob with no
+// concept of "this number is the amount vs. this is the txn ID" — regex
+// heuristics over that text are brittle across the many different bank
+// receipt layouts. Groq is asked to read the OCR text and *classify* which
+// substrings are which field, given the fields already found by regex as a
+// hint. It is NOT given the image — it never re-does OCR, it only
+// interprets text OCR already extracted, so a bad OCR read stays a bad OCR
+// read either way; this step only helps when the raw text is decent but
+// unstructured.
+// Treat all of this as a prefill suggestion, never ground truth — the
+// resident still sees and can correct every field, and the caller
+// (paymentController) never trusts txnId/amount for verification purposes
+// without the bank lookup in bankVerification.js.
 // -----------------------------------------------------------------------
 
 const AppError = require('../utils/AppError');
+const { extractReceiptFields } = require('./groqReceiptParser');
 
 const OCR_SPACE_URL = 'https://api.ocr.space/parse/image';
 
@@ -69,15 +78,49 @@ function extractName(text) {
 }
 
 /**
- * @returns {Promise<{ txnId: string|null, name: string|null, rawText: string }>}
+ * @returns {Promise<{
+ *   txnId: string|null, name: string|null, amount: number|null,
+ *   bankName: string|null, date: string|null,
+ *   source: 'groq'|'regex', rawText: string
+ * }>}
  */
 async function parseReceiptImage(fileBuffer, mimetype, filename) {
   const rawText = await ocrSpaceParse(fileBuffer, mimetype, filename);
-  return {
+
+  // Regex pass always runs first — it's free, fast, and is the fallback if
+  // Groq is unavailable or returns something unusable.
+  const regexResult = {
     txnId: extractTxnId(rawText),
     name: extractName(rawText),
-    rawText,
+    amount: null,
+    bankName: null,
+    date: null,
   };
+
+  if (!rawText.trim()) {
+    return { ...regexResult, source: 'regex', rawText };
+  }
+
+  try {
+    const aiResult = await extractReceiptFields(rawText, regexResult);
+    if (aiResult) {
+      return {
+        txnId: aiResult.txnId ?? regexResult.txnId,
+        name: aiResult.name ?? regexResult.name,
+        amount: aiResult.amount ?? null,
+        bankName: aiResult.bankName ?? null,
+        date: aiResult.date ?? null,
+        source: 'groq',
+        rawText,
+      };
+    }
+  } catch (err) {
+    // Groq being down/misconfigured/rate-limited must never block the
+    // upload flow — the regex result is still a usable prefill.
+    console.error('[ocrReceipt] Groq extraction failed, falling back to regex:', err.message);
+  }
+
+  return { ...regexResult, source: 'regex', rawText };
 }
 
 module.exports = { parseReceiptImage };

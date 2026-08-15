@@ -433,13 +433,15 @@ const selfVerifyPayment = catchAsync(async (req, res) => {
   res.status(201).json({ success: true, data: payment });
 });
 
-// Best-effort autofill: OCR the uploaded screenshot and try to pull out a
-// name and transaction ID. Never trusted directly — the resident still
-// sees and can correct these fields before submitting.
+// Best-effort autofill: OCR the uploaded screenshot, then let an LLM
+// (Groq) turn that raw text into structured fields. Never trusted
+// directly — the resident still sees and can correct every field before
+// submitting, and nothing here is used for bank verification.
 const parsePaymentScreenshot = catchAsync(async (req, res) => {
   if (!req.file) throw new AppError('Screenshot file is required', 422);
-  const { txnId, name, rawText } = await parseReceiptImage(req.file.buffer, req.file.mimetype, req.file.originalname);
-  res.json({ success: true, data: { txnId, name, rawText } });
+  const { txnId, name, amount, bankName, date, source, rawText } =
+    await parseReceiptImage(req.file.buffer, req.file.mimetype, req.file.originalname);
+  res.json({ success: true, data: { txnId, name, amount, bankName, date, source, rawText } });
 });
 
 module.exports = {
