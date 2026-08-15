@@ -113,6 +113,10 @@ const createPayment = catchAsync(async (req, res) => {
   res.status(201).json({ success: true, data: payment });
 });
 
+// Paginated for the same reason residents are (see residentController.js):
+// with thousands of rows, returning everything unconditionally in one
+// response is a multi-second, multi-megabyte request. Ordered + filtered
+// on communityId/paidAt/residentId, all of which are indexed.
 const listPayments = catchAsync(async (req, res) => {
   let where = communityPaymentFilter(req.communityId);
 
@@ -122,13 +126,25 @@ const listPayments = catchAsync(async (req, res) => {
     where = { AND: [where, { residentId: resident.id }] };
   }
 
-  const payments = await prisma.payment.findMany({
-    where,
-    include: PAYMENT_INCLUDE,
-    orderBy: { paidAt: 'desc' },
-  });
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(1000, Math.max(1, parseInt(req.query.limit, 10) || 300));
 
-  res.json({ success: true, data: payments });
+  const [payments, total] = await Promise.all([
+    prisma.payment.findMany({
+      where,
+      include: PAYMENT_INCLUDE,
+      orderBy: { paidAt: 'desc' },
+      skip: (page - 1) * limit,
+      take: limit,
+    }),
+    prisma.payment.count({ where }),
+  ]);
+
+  res.json({
+    success: true,
+    data: payments,
+    meta: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) },
+  });
 });
 
 const getPayment = catchAsync(async (req, res) => {

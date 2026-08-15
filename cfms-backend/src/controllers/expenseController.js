@@ -21,19 +21,34 @@ const createExpense = catchAsync(async (req, res) => {
 // Expense.communityId is a denormalized, indexed copy of the recorder's
 // community (see schema.prisma comment) — a plain equality filter instead
 // of joining out through project/recorder on every query.
+// Paginated for the same reason payments/residents are — see
+// paymentController.js / residentController.js comments.
 const listExpenses = catchAsync(async (req, res) => {
-  const expenses = await prisma.expense.findMany({
-    where: { communityId: req.communityId },
-    include: {
-      project: { select: { id: true, name: true } },
-      recorder: { select: { id: true, fullName: true } },
-      receipts: true,
-      reversal: true,
-      reverses: { select: { id: true, description: true, amount: true, category: true } },
-    },
-    orderBy: { spentAt: 'desc' },
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(1000, Math.max(1, parseInt(req.query.limit, 10) || 300));
+
+  const [expenses, total] = await Promise.all([
+    prisma.expense.findMany({
+      where: { communityId: req.communityId },
+      include: {
+        project: { select: { id: true, name: true } },
+        recorder: { select: { id: true, fullName: true } },
+        receipts: true,
+        reversal: true,
+        reverses: { select: { id: true, description: true, amount: true, category: true } },
+      },
+      orderBy: { spentAt: 'desc' },
+      skip: (page - 1) * limit,
+      take: limit,
+    }),
+    prisma.expense.count({ where: { communityId: req.communityId } }),
+  ]);
+
+  res.json({
+    success: true,
+    data: expenses,
+    meta: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) },
   });
-  res.json({ success: true, data: expenses });
 });
 
 const getExpense = catchAsync(async (req, res) => {

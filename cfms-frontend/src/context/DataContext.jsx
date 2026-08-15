@@ -30,6 +30,22 @@ const EMPTY_DATA = {
   pendingChanges: { asApprover: [], asProposer: [] },
 }
 
+// Generic pager for the (now paginated) payments/expenses endpoints — pages
+// through in bounded chunks (using the existing communityId/date indexes)
+// until everything's loaded, once per login/refresh rather than per click.
+async function fetchAllPages(url, extraParams) {
+  const limit = 500
+  let page = 1
+  let all = []
+  for (let i = 0; i < 200; i++) {
+    const { data } = await api.get(url, { params: { page, limit, ...extraParams } })
+    all = all.concat(data.data || [])
+    if (!data.meta || page >= data.meta.totalPages) break
+    page += 1
+  }
+  return all
+}
+
 const DataContext = createContext(null)
 
 // Pages through the (now paginated) residents endpoint until every resident
@@ -102,8 +118,11 @@ export function DataProvider({ children }) {
         api.get(endpoints.fees()).catch(label('fees')),
         api.get(endpoints.funds()).catch(label('funds')),
         api.get(endpoints.projects()).catch(label('projects')),
-        api.get(endpoints.expenses()).catch(label('expenses')),
-        api.get(endpoints.payments()).catch(label('payments')),
+        // expenses/payments are paged through in bounded chunks in the
+        // background (see fetchAllPages above) instead of one unbounded
+        // request — same reasoning as fetchAllResidents.
+        fetchAllPages(endpoints.expenses()).catch(label('expenses')),
+        fetchAllPages(endpoints.payments()).catch(label('payments')),
         // Every logged-in user (admin or resident) needs to read the
         // community's payment account details — residents to see where to
         // send money, admins to edit it — so this is fetched for both.
@@ -137,7 +156,7 @@ export function DataProvider({ children }) {
       const fundsRaw = fundsRes?.__failed ? [] : fundsRes.data.data
       const summariesById = new Map((fundSummariesRes?.data?.data || []).map((s) => [s.fundId, s]))
 
-      const expensesRaw = expensesRes?.__failed ? [] : expensesRes.data.data
+      const expensesRaw = expensesRes?.__failed ? [] : expensesRes
       const receiptsFlat = expensesRaw.flatMap((e) => (e.receipts || []).map(receiptToUI))
 
       const communityRaw = communityRes?.__failed ? null : communityRes?.data?.data
@@ -147,7 +166,7 @@ export function DataProvider({ children }) {
         residents: residentsRaw.map(residentToUI),
         residentsMeta,
         fees: feesRes?.__failed ? [] : feesRes.data.data.map(feeToUI),
-        payments: paymentsRes?.__failed ? [] : paymentsRes.data.data.map(paymentToUI),
+        payments: paymentsRes?.__failed ? [] : paymentsRes.map(paymentToUI),
         funds: fundsRaw.map((f) => fundToUI(f, summariesById.get(f.id) || null)),
         projects: projectsRes?.__failed ? [] : projectsRes.data.data.map(projectToUI),
         expenses: expensesRaw.map(expenseToUI),

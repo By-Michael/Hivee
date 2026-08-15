@@ -11,8 +11,7 @@
     "prisma:deploy": "prisma migrate deploy",
     "prisma:studio": "prisma studio",
     "seed": "node prisma/seed.js",
-    "seed:large": "node prisma/seed-large.js",
-    "test": "jest --runInBand"
+    "seed:large": "node prisma/seed-large.js"
   },
   "keywords": [],
   "author": "",
@@ -34,8 +33,6 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "jest": "^30.4.2",
-    "nodemon": "^3.1.14",
-    "supertest": "^7.2.2"
+    "nodemon": "^3.1.14"
   }
 }

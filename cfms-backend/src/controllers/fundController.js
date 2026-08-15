@@ -27,41 +27,74 @@ const getFund = catchAsync(async (req, res) => {
   res.json({ success: true, data: fund });
 });
 
-// Sums a fund's real cash: VERIFIED payments made directly to the fund,
-// plus VERIFIED payments made to any project under it, minus everything
-// spent via those projects' expenses. Fee payments never appear here on
-// purpose — fees fund operating costs, not fund-linked projects, so they
-// don't affect any fund's balance (see Payment.fundId schema comment).
-function computeFundMoney(fund) {
-  let allocated = 0;
-  let spent = 0;
-  let collectedViaProjects = 0;
-  for (const project of fund.projects) {
-    allocated += Number(project.budget);
-    for (const expense of project.expenses) spent += Number(expense.amount);
-    for (const payment of project.payments) {
-      if (payment.status === 'VERIFIED') collectedViaProjects += Number(payment.amount);
-    }
-  }
-  const collectedDirect = fund.payments
-    .filter((p) => p.status === 'VERIFIED')
-    .reduce((s, p) => s + Number(p.amount), 0);
-  const verifiedCollected = collectedViaProjects + collectedDirect;
+// Sums a fund's real cash straight from the database with grouped
+// aggregates, instead of fetching every project/expense/payment row into
+// Node and summing them in JavaScript. The old approach (still visible in
+// git history) fetched the ENTIRE expenses and payments tables a second
+// time — nested under funds->projects->expenses/payments — on top of the
+// already-separate /payments and /expenses list calls, which is why
+// dashboard load got dramatically slower as those tables grew. This does
+// the same math as five small grouped-by-fund queries, each backed by an
+// existing index (Project.communityId, Expense.projectId, Payment.fundId/
+// projectId/status), and combines the results in memory — a handful of
+// rows per fund, not every transaction ever recorded.
+async function computeFundMoneyForCommunity(communityId, fundIds) {
+  const [projectTotals, projectCounts, expenseTotals, paymentsViaProjects, paymentsDirect] = await Promise.all([
+    prisma.project.groupBy({
+      by: ['fundId'],
+      where: { communityId, fundId: { in: fundIds } },
+      _sum: { budget: true },
+    }),
+    prisma.project.groupBy({
+      by: ['fundId'],
+      where: { communityId, fundId: { in: fundIds } },
+      _count: { _all: true },
+    }),
+    // Expense has no fundId column (only projectId), so this one join is
+    // unavoidable — but it's a single grouped query, not a full-table
+    // fetch, and it's backed by Expense.projectId's index.
+    prisma.$queryRaw`
+      SELECT pr."fundId" as "fundId", COALESCE(SUM(e.amount), 0)::float AS total
+      FROM expenses e
+      JOIN projects pr ON pr.id = e."projectId"
+      WHERE pr."communityId" = ${communityId} AND pr."fundId" = ANY(${fundIds}::text[])
+      GROUP BY pr."fundId"
+    `,
+    prisma.$queryRaw`
+      SELECT pr."fundId" as "fundId", COALESCE(SUM(pay.amount), 0)::float AS total
+      FROM payments pay
+      JOIN projects pr ON pr.id = pay."projectId"
+      WHERE pay.status = 'VERIFIED' AND pr."communityId" = ${communityId} AND pr."fundId" = ANY(${fundIds}::text[])
+      GROUP BY pr."fundId"
+    `,
+    prisma.payment.groupBy({
+      by: ['fundId'],
+      where: { communityId, status: 'VERIFIED', fundId: { in: fundIds } },
+      _sum: { amount: true },
+    }),
+  ]);
 
-  return {
-    // Budget-vs-actual view (unchanged): what was planned to spend, and
-    // what has actually gone out the door via expenses.
-    totalAllocated: allocated,
-    totalSpent: spent,
-    remaining: allocated - spent,
-    // Real-money view (new): what has actually come in from residents,
-    // verified, from any source that counts toward this fund, minus what's
-    // actually been spent. This — not `remaining` — answers "how much
-    // money do we actually have in this fund right now?"
-    verifiedCollected,
-    actualBalance: verifiedCollected - spent,
-    projectCount: fund.projects.length,
-  };
+  const allocatedByFund = new Map(projectTotals.map((r) => [r.fundId, Number(r._sum.budget || 0)]));
+  const projectCountByFund = new Map(projectCounts.map((r) => [r.fundId, r._count._all]));
+  const spentByFund = new Map(expenseTotals.map((r) => [r.fundId, Number(r.total || 0)]));
+  const collectedViaProjectsByFund = new Map(paymentsViaProjects.map((r) => [r.fundId, Number(r.total || 0)]));
+  const collectedDirectByFund = new Map(paymentsDirect.map((r) => [r.fundId, Number(r._sum.amount || 0)]));
+
+  const byFund = new Map();
+  for (const fundId of fundIds) {
+    const allocated = allocatedByFund.get(fundId) || 0;
+    const spent = spentByFund.get(fundId) || 0;
+    const verifiedCollected = (collectedViaProjectsByFund.get(fundId) || 0) + (collectedDirectByFund.get(fundId) || 0);
+    byFund.set(fundId, {
+      totalAllocated: allocated,
+      totalSpent: spent,
+      remaining: allocated - spent,
+      verifiedCollected,
+      actualBalance: verifiedCollected - spent,
+      projectCount: projectCountByFund.get(fundId) || 0,
+    });
+  }
+  return byFund;
 }
 
 const FUND_SUMMARY_INCLUDE = {
@@ -74,29 +107,34 @@ const FUND_SUMMARY_INCLUDE = {
 const getFundSummary = catchAsync(async (req, res) => {
   const fund = await prisma.fund.findFirst({
     where: { id: req.params.id, communityId: req.communityId },
-    include: FUND_SUMMARY_INCLUDE,
+    select: { id: true, name: true },
   });
   if (!fund) throw new AppError('Fund not found', 404);
 
+  const byFund = await computeFundMoneyForCommunity(req.communityId, [fund.id]);
+
   res.json({
     success: true,
-    data: { fundId: fund.id, fundName: fund.name, ...computeFundMoney(fund) },
+    data: { fundId: fund.id, fundName: fund.name, ...byFund.get(fund.id) },
   });
 });
 
-// Bulk version of getFundSummary: one query for every fund in the
-// community instead of one round trip per fund (avoids N+1 when the
-// frontend renders a fund list).
+// Bulk version of getFundSummary: one round trip of small grouped
+// aggregates covering every fund in the community, instead of one round
+// trip per fund AND instead of fetching every project/expense/payment row.
 const listFundSummaries = catchAsync(async (req, res) => {
   const funds = await prisma.fund.findMany({
     where: { communityId: req.communityId },
-    include: FUND_SUMMARY_INCLUDE,
+    select: { id: true, name: true },
   });
+  if (funds.length === 0) return res.json({ success: true, data: [] });
+
+  const byFund = await computeFundMoneyForCommunity(req.communityId, funds.map((f) => f.id));
 
   const data = funds.map((fund) => ({
     fundId: fund.id,
     fundName: fund.name,
-    ...computeFundMoney(fund),
+    ...byFund.get(fund.id),
   }));
 
   res.json({ success: true, data });

@@ -14,7 +14,7 @@ function generateTempPassword() {
 }
 
 export default function Residents() {
-  const { residents, addResident, updateResident, removeResident, fetchResidentSummary } = useData()
+  const { residents, addResident, updateResident, removeResident, fetchResidentSummary, residentsMeta } = useData()
   const { user } = useAuth()
   const [query, setQuery] = useState('')
   const [modal, setModal] = useState(false)
@@ -162,7 +162,7 @@ export default function Residents() {
     <div>
       <PageHeader
         title="Residents"
-        subtitle={`${residents.length} registered · ${residents.filter((r) => r.status === 'active').length} active`}
+        subtitle={`${residentsMeta.total} registered · ${residentsMeta.activeTotal} active`}
         action={<button onClick={openAdd} className="btn-primary"><Plus className="h-4 w-4" /> Add resident</button>}
       />
 

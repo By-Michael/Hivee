@@ -130,7 +130,7 @@ function buildMonthlySeries(payments, expenses) {
 }
 
 export default function AdminDashboard() {
-  const { residents, payments, funds, projects, fees, expenses, pendingChanges, respondToPendingChange } = useData()
+  const { residents, payments, funds, projects, fees, expenses, pendingChanges, respondToPendingChange, residentsMeta } = useData()
   const { user } = useAuth()
   // Only ever show one at a time in the slot — the oldest awaiting this
   // admin's approval — so the widget doesn't need to become a list/carousel.
@@ -327,8 +327,8 @@ export default function AdminDashboard() {
           <div className="card p-5 animate-fade-up">
             <h3 className="font-semibold text-ink-800 mb-4">Community snapshot</h3>
             <div className="space-y-4">
-              <SnapshotRow icon={Users} label="Total residents" value={residents.length} />
-              <SnapshotRow icon={Users} label="Active residents" value={residents.filter((r) => r.status === 'active').length} />
+              <SnapshotRow icon={Users} label="Total residents" value={residentsMeta.total} />
+              <SnapshotRow icon={Users} label="Active residents" value={residentsMeta.activeTotal} />
               <SnapshotRow icon={Receipt} label="Fee categories" value={fees.length} />
               <SnapshotRow icon={FolderKanban} label="Projects in progress" value={activeProjects} />
             </div>
