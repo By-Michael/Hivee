@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState, useCallback } from 'react'
+import { createContext, useContext, useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import api, { endpoints } from '../lib/api'
 import { useAuth } from './AuthContext'
 import {
@@ -46,13 +46,30 @@ async function fetchAllPages(url, extraParams) {
   return all
 }
 
+// Fetches just ONE page of a paginated list endpoint — used for the fast
+// first paint (see FIRST_PAINT_LIMIT below) so the very first thing the
+// user sees after login doesn't wait on the whole table.
+async function fetchFirstPage(url, limit, extraParams) {
+  const { data } = await api.get(url, { params: { page: 1, limit, ...extraParams } })
+  return { items: data.data || [], meta: data.meta || null }
+}
+
 const DataContext = createContext(null)
+
+// How many rows of a big list (residents/payments/expenses) to fetch
+// synchronously as part of the blocking "first paint" load. Small enough
+// to be fast even for communities with thousands of rows; the rest is
+// paged in afterwards, silently, in the background (see loadRestInBackground
+// in DataProvider below).
+const FIRST_PAINT_LIMIT = 200
 
 // Pages through the (now paginated) residents endpoint until every resident
 // has been fetched. Still bounded per-request (protects the server/browser
-// from one multi-thousand-row response) but only runs once per login/
-// refresh — not on every click — so a community with thousands of
-// residents pays this cost once instead of on every save/delete.
+// from one multi-thousand-row response). Used only for the silent
+// background pass and for explicit "load everything" calls — not for the
+// initial blocking load any more, so a community with thousands of
+// residents doesn't make the user stare at a skeleton while 5,000 rows page
+// in one request at a time.
 async function fetchAllResidents() {
   const limit = 500
   let page = 1
@@ -70,6 +87,22 @@ async function fetchAllResidents() {
   return { residents: all, meta }
 }
 
+// Merges a freshly-fetched batch of rows into an already-cached list by id:
+// existing rows are updated in place (so edits made elsewhere show up),
+// rows not present in the batch are left untouched (so a full list that was
+// already paged in via the background load isn't truncated back down to
+// just the batch), and brand-new rows are added to the front. This is what
+// lets silent background/interval refreshes stay cheap (fetch one page)
+// without ever discarding data the app already has cached in memory.
+function mergeById(existing, batch) {
+  if (!batch.length) return existing
+  const byId = new Map(batch.map((item) => [item.id, item]))
+  const merged = existing.map((item) => byId.get(item.id) || item)
+  const existingIds = new Set(existing.map((item) => item.id))
+  const fresh = batch.filter((item) => !existingIds.has(item.id))
+  return [...fresh, ...merged]
+}
+
 export function DataProvider({ children }) {
   const { user, bootstrapped } = useAuth()
   const [data, setData] = useState(EMPTY_DATA)
@@ -80,6 +113,20 @@ export function DataProvider({ children }) {
   // load" (show a skeleton) from "a background/action refresh is in
   // flight" (keep showing the page — see AppLayout).
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false)
+  // True while the post-first-paint background pass (paging in the rest of
+  // residents/payments/expenses beyond FIRST_PAINT_LIMIT) is running.
+  // Exposed in case a page wants a tiny "still syncing…" hint, but nothing
+  // in the UI is blocked on it.
+  const [backgroundLoading, setBackgroundLoading] = useState(false)
+  // Tracks, per login session, whether each big list has already been
+  // paged in fully — so the periodic silent refresh (every 60s / on tab
+  // focus) never re-pages thousands of rows from scratch. It only ever
+  // re-fetches the first page and merges it in (see mergeById), and only
+  // (re)kicks off the full background page-in once, right after login.
+  const [fullyLoaded, setFullyLoaded] = useState({ residents: false, payments: false, expenses: false })
+  // Guards against kicking off a second background page-in pass while one
+  // is already running (e.g. a focus event firing mid-load).
+  const bgInFlight = useRef(false)
 
   // Fetches everything the logged-in user's role is allowed to see,
   // straight from the real Express + PostgreSQL API, whenever the user
@@ -112,25 +159,45 @@ export function DataProvider({ children }) {
         return { __failed: name, error: err }
       }
 
+      // "First paint" phase: only the first FIRST_PAINT_LIMIT rows of each
+      // big list (residents/payments/expenses) are fetched here, so this
+      // Promise.all resolves quickly even for a community with thousands
+      // of rows — the skeleton clears fast and the user sees real data.
+      // Everything else (fees/funds/projects/community/fund
+      // summaries/pending changes) is already small, so it's fetched in
+      // full as before.
+      //
+      // On a *silent* background/interval refresh we skip re-paging the
+      // big lists altogether if they're already fully loaded — we only
+      // pull page 1 (to pick up edits/new rows) and merge it into the
+      // cached list (see mergeById), instead of re-downloading everything
+      // on every 60s tick / tab focus.
+      const skipBigListPage1 = opts.silent && fullyLoaded.residents && fullyLoaded.payments && fullyLoaded.expenses
+
       const [
         feesRes, fundsRes, projectsRes, expensesRes, paymentsRes, communityRes, residentsRes, fundSummariesRes, pendingChangesRes,
       ] = await Promise.all([
         api.get(endpoints.fees()).catch(label('fees')),
         api.get(endpoints.funds()).catch(label('funds')),
         api.get(endpoints.projects()).catch(label('projects')),
-        // expenses/payments are paged through in bounded chunks in the
-        // background (see fetchAllPages above) instead of one unbounded
-        // request — same reasoning as fetchAllResidents.
-        fetchAllPages(endpoints.expenses()).catch(label('expenses')),
-        fetchAllPages(endpoints.payments()).catch(label('payments')),
+        skipBigListPage1
+          ? Promise.resolve(null)
+          : fetchFirstPage(endpoints.expenses(), FIRST_PAINT_LIMIT).catch(label('expenses')),
+        skipBigListPage1
+          ? Promise.resolve(null)
+          : fetchFirstPage(endpoints.payments(), FIRST_PAINT_LIMIT).catch(label('payments')),
         // Every logged-in user (admin or resident) needs to read the
         // community's payment account details — residents to see where to
         // send money, admins to edit it — so this is fetched for both.
         api.get(endpoints.communityMe()).catch(label('community')),
-        // Residents: admins list the whole community (paged through in the
-        // background by fetchAllResidents, see above); residents only get
-        // their own profile (list endpoint is admin-only on the backend).
-        (isAdmin ? fetchAllResidents() : api.get('/residents/me')).catch(label('residents')),
+        // Residents: admins get the first page only here (fast); the rest
+        // is paged in afterwards, silently, by loadRestInBackground below.
+        // Residents only get their own profile (list endpoint is
+        // admin-only on the backend).
+        (skipBigListPage1
+          ? Promise.resolve(null)
+          : (isAdmin ? fetchFirstPage(endpoints.residents(), FIRST_PAINT_LIMIT) : api.get('/residents/me'))
+        ).catch(label('residents')),
         // Fund balances are derived (allocated vs. spent). A single bulk
         // endpoint replaces the old per-fund summary request.
         api.get(endpoints.fundSummaries()).catch(label('fundSummaries')),
@@ -144,37 +211,55 @@ export function DataProvider({ children }) {
         .filter((r) => r?.__failed)
         .map((r) => r.__failed)
 
-      const residentsRaw = residentsRes?.__failed
-        ? []
-        : isAdmin
-          ? (residentsRes?.residents || [])
-          : (residentsRes?.data?.data ? [residentsRes.data.data] : [])
-      const residentsMeta = (isAdmin && !residentsRes?.__failed && residentsRes?.meta)
-        ? residentsRes.meta
-        : { total: residentsRaw.length, activeTotal: residentsRaw.filter((r) => r.status === 'ACTIVE').length, page: 1, totalPages: 1, limit: residentsRaw.length || 200 }
-
       const fundsRaw = fundsRes?.__failed ? [] : fundsRes.data.data
       const summariesById = new Map((fundSummariesRes?.data?.data || []).map((s) => [s.fundId, s]))
-
-      const expensesRaw = expensesRes?.__failed ? [] : expensesRes
-      const receiptsFlat = expensesRaw.flatMap((e) => (e.receipts || []).map(receiptToUI))
-
       const communityRaw = communityRes?.__failed ? null : communityRes?.data?.data
       const pendingChangesRaw = pendingChangesRes?.__failed ? { asApprover: [], asProposer: [] } : (pendingChangesRes?.data?.data || { asApprover: [], asProposer: [] })
-      setData({
-        community: communityRaw ? communityToUI(communityRaw) : { name: user.community, address: '', paymentBankName: '', paymentAccountName: '', paymentAccountNumber: '' },
-        residents: residentsRaw.map(residentToUI),
-        residentsMeta,
-        fees: feesRes?.__failed ? [] : feesRes.data.data.map(feeToUI),
-        payments: paymentsRes?.__failed ? [] : paymentsRes.map(paymentToUI),
-        funds: fundsRaw.map((f) => fundToUI(f, summariesById.get(f.id) || null)),
-        projects: projectsRes?.__failed ? [] : projectsRes.data.data.map(projectToUI),
-        expenses: expensesRaw.map(expenseToUI),
-        receipts: receiptsFlat,
-        pendingChanges: {
-          asApprover: (pendingChangesRaw.asApprover || []).map(pendingChangeToUI),
-          asProposer: (pendingChangesRaw.asProposer || []).map(pendingChangeToUI),
-        },
+
+      setData((prev) => {
+        // If we skipped the big-list page-1 fetch (already fully loaded,
+        // silent refresh), keep the cached lists exactly as they are —
+        // nothing to merge.
+        const residentsUI = residentsRes === null
+          ? prev.residents
+          : (residentsRes?.__failed
+            ? prev.residents
+            : isAdmin
+              ? (residentsRes?.items || []).map(residentToUI)
+              : (residentsRes?.data?.data ? [residentToUI(residentsRes.data.data)] : []))
+        const residentsMeta = residentsRes === null
+          ? prev.residentsMeta
+          : (isAdmin && !residentsRes?.__failed && residentsRes?.meta)
+            ? residentsRes.meta
+            : { total: residentsUI.length, activeTotal: residentsUI.filter((r) => r.status === 'active').length, page: 1, totalPages: 1, limit: residentsUI.length || FIRST_PAINT_LIMIT }
+
+        const paymentsUI = paymentsRes === null
+          ? prev.payments
+          : (paymentsRes?.__failed ? prev.payments : (paymentsRes.items || []).map(paymentToUI))
+        const expensesUI = expensesRes === null
+          ? prev.expenses
+          : (expensesRes?.__failed ? prev.expenses : (expensesRes.items || []).map(expenseToUI))
+
+        const isFirstLoad = !opts.silent
+        return {
+          community: communityRaw ? communityToUI(communityRaw) : (prev.community.name ? prev.community : { name: user.community, address: '', paymentBankName: '', paymentAccountName: '', paymentAccountNumber: '' }),
+          // On first load, use the fetched page straight away. On a silent
+          // refresh, merge the fresh page into whatever's cached (which
+          // may already be the FULL list from the background pass) so we
+          // never truncate data we've already paged in.
+          residents: isFirstLoad || residentsRes === null ? residentsUI : mergeById(prev.residents, residentsUI),
+          residentsMeta,
+          fees: feesRes?.__failed ? prev.fees : feesRes.data.data.map(feeToUI),
+          payments: isFirstLoad || paymentsRes === null ? paymentsUI : mergeById(prev.payments, paymentsUI),
+          funds: fundsRes?.__failed ? prev.funds : fundsRaw.map((f) => fundToUI(f, summariesById.get(f.id) || null)),
+          projects: projectsRes?.__failed ? prev.projects : projectsRes.data.data.map(projectToUI),
+          expenses: isFirstLoad || expensesRes === null ? expensesUI : mergeById(prev.expenses, expensesUI),
+          receipts: (isFirstLoad || expensesRes === null ? expensesUI : mergeById(prev.expenses, expensesUI)).flatMap((e) => (e.receipts || []).map(receiptToUI)),
+          pendingChanges: {
+            asApprover: (pendingChangesRaw.asApprover || []).map(pendingChangeToUI),
+            asProposer: (pendingChangesRaw.asProposer || []).map(pendingChangeToUI),
+          },
+        }
       })
 
       // Surface a visible (but non-fatal) warning if part of the dashboard
@@ -182,17 +267,80 @@ export function DataProvider({ children }) {
       if (failed.length && !opts.silent) {
         setLoadError(`Some data failed to load (${failed.join(', ')}). Showing what did load — check the console for details.`)
       }
+
+      // Kick off the silent background pass exactly once per login: pages
+      // in the rest of residents/payments/expenses beyond FIRST_PAINT_LIMIT
+      // without blocking or re-showing the skeleton. Skipped entirely for
+      // small communities where the first page already had everything.
+      if (!opts.silent && !bgInFlight.current) {
+        loadRestInBackground(isAdmin)
+      }
     } catch (err) {
       if (!opts.silent) setLoadError(err?.response?.data?.message || err.message || 'Failed to load data from the server.')
     } finally {
       if (!opts.silent) setLoading(false)
       if (!opts.silent) setHasLoadedOnce(true)
     }
-  }, [user])
+  }, [user, fullyLoaded])
+
+  // Silently pages in whatever didn't fit in the first paint (residents
+  // beyond 200, payments/expenses beyond 200), then replaces the cached
+  // list with the complete, authoritative set in one go. Runs in the
+  // background — the user can already see and use the app while this is
+  // happening. Marks each list "fully loaded" so future silent refreshes
+  // stop re-paging it (see fullyLoaded / skipBigListPage1 above).
+  const loadRestInBackground = useCallback(async (isAdmin) => {
+    bgInFlight.current = true
+    setBackgroundLoading(true)
+    try {
+      const jobs = []
+      if (isAdmin) {
+        jobs.push(
+          fetchAllResidents()
+            .then(({ residents, meta }) => {
+              setData((d) => ({ ...d, residents: residents.map(residentToUI), residentsMeta: meta }))
+              setFullyLoaded((f) => ({ ...f, residents: true }))
+            })
+            .catch((err) => console.error('[DataContext] Background residents load failed:', err?.response?.data || err.message))
+        )
+      } else {
+        setFullyLoaded((f) => ({ ...f, residents: true }))
+      }
+      jobs.push(
+        fetchAllPages(endpoints.payments())
+          .then((all) => {
+            setData((d) => ({ ...d, payments: all.map(paymentToUI) }))
+            setFullyLoaded((f) => ({ ...f, payments: true }))
+          })
+          .catch((err) => console.error('[DataContext] Background payments load failed:', err?.response?.data || err.message))
+      )
+      jobs.push(
+        fetchAllPages(endpoints.expenses())
+          .then((all) => {
+            setData((d) => ({ ...d, expenses: all.map(expenseToUI), receipts: all.flatMap((e) => (e.receipts || []).map(receiptToUI)) }))
+            setFullyLoaded((f) => ({ ...f, expenses: true }))
+          })
+          .catch((err) => console.error('[DataContext] Background expenses load failed:', err?.response?.data || err.message))
+      )
+      await Promise.all(jobs)
+    } finally {
+      bgInFlight.current = false
+      setBackgroundLoading(false)
+    }
+  }, [])
 
   useEffect(() => {
     if (bootstrapped && user) refresh()
-    if (!user) { setData(EMPTY_DATA); setHasLoadedOnce(false) }
+    if (!user) {
+      setData(EMPTY_DATA)
+      setHasLoadedOnce(false)
+      // Reset the "already fully loaded" bookkeeping so the next login
+      // (possibly a different user/community) does its own fresh
+      // first-paint + background-page-in cycle instead of assuming
+      // yesterday's session's big lists are still complete.
+      setFullyLoaded({ residents: false, payments: false, expenses: false })
+      bgInFlight.current = false
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, bootstrapped])
 
@@ -526,7 +674,7 @@ export function DataProvider({ children }) {
     },
   }), [refresh])
 
-  return <DataContext.Provider value={{ ...data, ...actions, loading, loadError, hasLoadedOnce, refresh }}>{children}</DataContext.Provider>
+  return <DataContext.Provider value={{ ...data, ...actions, loading, loadError, hasLoadedOnce, backgroundLoading, refresh }}>{children}</DataContext.Provider>
 }
 
 export function useData() {
