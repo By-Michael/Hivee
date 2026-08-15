@@ -34,16 +34,17 @@ module.exports = function errorHandler(err, req, res, next) {
     error = new AppError(error.message || 'Internal server error', 500);
   }
 
-  if (process.env.NODE_ENV !== 'production' && error.statusCode === 500) {
-    console.error(err);
-  }
+  // Always log server-side, regardless of env or status code. This used to
+  // only log 500s in non-production, which meant Render (NODE_ENV=production)
+  // never logged ANY error server-side — including the original Prisma error
+  // getting mapped to a generic 400 message, making prod issues undebuggable
+  // from the logs. Client response still stays generic/no-stack in prod.
+  console.error(`[${req.method} ${req.originalUrl}]`, err);
 
   res.status(error.statusCode).json({
     success: false,
     message: error.message,
     details: error.details,
-    ...(process.env.NODE_ENV !== 'production' && error.statusCode === 500
-      ? { stack: err.stack }
-      : {}),
+    ...(process.env.NODE_ENV !== 'production' ? { stack: err.stack } : {}),
   });
 };
