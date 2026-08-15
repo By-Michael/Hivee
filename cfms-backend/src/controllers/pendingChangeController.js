@@ -40,6 +40,14 @@ async function sweepExpired(communityId) {
 // exposed as its own generic public route — the caller already knows the
 // changeType/entityId/proposed fields for its own domain.
 async function createPendingChange(req, { changeType, entityId, currentEntity, proposedFields }) {
+  if (!req.communityId) {
+    // Fails loudly and specifically instead of letting `communityId:
+    // undefined` reach Prisma, where it surfaces as an opaque
+    // PrismaClientValidationError with no hint that a route forgot the
+    // tenantScope middleware (see communityRoutes.js history).
+    throw new AppError('Internal error: request is missing tenant scope', 500);
+  }
+
   const def = getChangeType(changeType);
   const diff = def.buildDiff(currentEntity, proposedFields);
 
