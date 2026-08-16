@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react'
-import { Landmark, Target, Users, TrendingUp, HandCoins, Copy, Check, Camera, Loader2, ShieldCheck } from 'lucide-react'
+import { Landmark, Target, Users, TrendingUp, HandCoins, Copy, Check, Camera, Loader2, ShieldCheck, Clock, RotateCw } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import { useData } from '../../context/DataContext'
 import { PageHeader, Modal, currency } from '../../components/ui'
@@ -43,7 +43,7 @@ function CopyRow({ label, value, mono }) {
   )
 }
 
-const emptyForm = { feeId: '', amount: '', payerName: '', txnId: '', reason: '' }
+const emptyForm = { amount: '', payerName: '', txnId: '', reason: '' }
 
 export default function ResidentFunds() {
   const { user } = useAuth()
@@ -57,23 +57,16 @@ export default function ResidentFunds() {
   // phase: 'form' | 'verifying' | 'success'
   const [phase, setPhase] = useState('form')
   const [error, setError] = useState('')
+  const [canRetry, setCanRetry] = useState(false)
+  const [successStatus, setSuccessStatus] = useState('paid')
+  const [successReviewFlags, setSuccessReviewFlags] = useState('')
   const [ocrLoading, setOcrLoading] = useState(false)
   const [ocrNote, setOcrNote] = useState('')
   const fileInputRef = useRef(null)
 
-  const selectedFee = fees.find((f) => f.id === form.feeId)
-
-  // NOTE: `feesInCategory` is still used below purely to drive the
-  // "Contribute" form's fee picker — the resident-facing self-verify
-  // endpoint (submitSelfPayment) is fee-only for now, so contributing to a
-  // fund still works by paying a category-matched fee, not a true
-  // direct-to-fund payment. That's a separate follow-up (wiring fundId
-  // through selfVerifyPayment) — not done here. The *display* numbers below
-  // (`collected`/balance) now come from the real backend fund summary
-  // instead of being re-derived from fee-category matching, so what's shown
-  // is accurate even though the contribute flow itself hasn't been upgraded.
+  // Contributing directly to a fund (any amount the resident chooses) uses
+  // the fundId branch of the self-verify endpoint — no fee involved at all.
   const enriched = useMemo(() => funds.map((f) => {
-    const feesInCategory = fees.filter((x) => x.category === f.category)
     const projectIdsInFund = new Set(projects.filter((p) => p.fundId === f.id).map((p) => p.id))
     const contributorIds = new Set(
       payments.filter((p) => p.status === 'paid' && (p.fundId === f.id || projectIdsInFund.has(p.projectId))).map((p) => p.residentId)
@@ -82,7 +75,6 @@ export default function ResidentFunds() {
     const collected = f.verifiedCollected
     return {
       ...f,
-      feesInCategory,
       collected,
       contributors: contributorIds.size,
       nonContributors: Math.max(residents.length - contributorIds.size, 0),
@@ -92,12 +84,12 @@ export default function ResidentFunds() {
   }), [funds, fees, projects, payments, residents])
 
   function openContribute(f) {
-    const fee = f.feesInCategory[0]
     setContribute(f)
-    setForm({ ...emptyForm, feeId: fee?.id || '', amount: fee ? String(fee.amount) : '' })
+    setForm({ ...emptyForm })
     setUseMyName(false)
     setPhase('form')
     setError('')
+    setCanRetry(false)
     setOcrNote('')
   }
 
@@ -140,18 +132,28 @@ export default function ResidentFunds() {
   async function submit(e) {
     e.preventDefault()
     setError('')
+    setCanRetry(false)
     setPhase('verifying')
     try {
-      await submitSelfPayment({
-        feeId: form.feeId,
+      const payment = await submitSelfPayment({
+        fundId: contribute?.id,
         amount: Number(form.amount),
         txnId: form.txnId.trim(),
         payerName: form.payerName.trim(),
         reason: form.reason.trim() || `Contribution to ${contribute?.name || ''}`,
       })
+      setSuccessStatus(payment?.status || 'paid')
+      setSuccessReviewFlags(payment?.reviewFlags || '')
       setPhase('success')
     } catch (err) {
-      setError(err?.response?.data?.message || err.message || 'Could not verify this payment.')
+      const isNetworkError = !err?.response
+      setError(
+        err?.response?.data?.message ||
+        (isNetworkError
+          ? "Couldn't reach the server. Check your connection and try again."
+          : err.message || 'Could not verify this payment.')
+      )
+      setCanRetry(isNetworkError || err?.response?.status >= 500)
       setPhase('form')
     }
   }
@@ -199,8 +201,7 @@ export default function ResidentFunds() {
 
             <button
               onClick={() => openContribute(f)}
-              disabled={f.feesInCategory.length === 0}
-              className="mt-4 w-full btn-secondary disabled:opacity-40"
+              className="mt-4 w-full btn-secondary"
             >
               <HandCoins className="h-4 w-4" /> Contribute
             </button>
@@ -210,16 +211,42 @@ export default function ResidentFunds() {
 
       <Modal open={!!contribute} onClose={closeModal} title={`Contribute to ${contribute?.name || ''}`} dismissible={phase !== 'verifying'} wide>
         {phase === 'success' ? (
-          <div className="text-center py-6">
-            <div className="mx-auto h-14 w-14 rounded-full bg-emerald-50 flex items-center justify-center">
-              <ShieldCheck className="h-7 w-7 text-emerald-600" />
+          successStatus === 'pending_review' ? (
+            <div className="text-center py-6">
+              <div className="mx-auto h-14 w-14 rounded-full bg-amber-50 flex items-center justify-center">
+                <Clock className="h-7 w-7 text-amber-600" />
+              </div>
+              <p className="mt-4 text-lg font-bold text-ink-900">Submitted for review</p>
+              <p className="mt-1 text-sm text-ink-500">
+                We couldn't fully auto-verify this transaction. It's been recorded and a
+                committee admin will review it shortly.
+              </p>
+              {successReviewFlags ? (
+                <div className="mt-4 mx-auto max-w-sm rounded-lg bg-amber-50 border border-amber-100 p-3 text-left">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-amber-700 mb-1">
+                    Why this needs review
+                  </p>
+                  <ul className="text-sm text-amber-800 space-y-1 list-disc list-inside">
+                    {successReviewFlags.split('. ').filter(Boolean).map((flag, i) => (
+                      <li key={i}>{flag.replace(/\.$/, '')}.</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              <button onClick={() => setContribute(null)} className="btn-primary mt-6">Done</button>
             </div>
-            <p className="mt-4 text-lg font-bold text-ink-900">Contribution recorded</p>
-            <p className="mt-1 text-sm text-ink-500">
-              Your bank transaction was verified and this contribution has been added to {contribute?.name}.
-            </p>
-            <button onClick={() => setContribute(null)} className="btn-primary mt-6">Done</button>
-          </div>
+          ) : (
+            <div className="text-center py-6">
+              <div className="mx-auto h-14 w-14 rounded-full bg-emerald-50 flex items-center justify-center">
+                <ShieldCheck className="h-7 w-7 text-emerald-600" />
+              </div>
+              <p className="mt-4 text-lg font-bold text-ink-900">Contribution recorded</p>
+              <p className="mt-1 text-sm text-ink-500">
+                Your bank transaction was verified and this contribution has been added to {contribute?.name}.
+              </p>
+              <button onClick={() => setContribute(null)} className="btn-primary mt-6">Done</button>
+            </div>
+          )
         ) : phase === 'verifying' ? (
           <div className="text-center py-10">
             <Loader2 className="h-10 w-10 text-brand-600 mx-auto animate-spin" />
@@ -228,40 +255,28 @@ export default function ResidentFunds() {
           </div>
         ) : (
           <form onSubmit={submit} className="space-y-5">
-            <p className="text-sm text-ink-500 -mt-1">Pay more than the usual amount if you'd like — every extra birr goes straight to this fund.</p>
-
-            <div>
-              <label className="label">Fee</label>
-              <select required className="input" value={form.feeId} onChange={(e) => {
-                const fee = fees.find((x) => x.id === e.target.value)
-                setForm({ ...form, feeId: e.target.value, amount: fee ? String(fee.amount) : form.amount })
-              }}>
-                {contribute?.feesInCategory.map((fe) => <option key={fe.id} value={fe.id}>{fe.name} · usually {currency(fe.amount)}</option>)}
-              </select>
-            </div>
+            <p className="text-sm text-ink-500 -mt-1">Give any amount you'd like — it goes straight to this fund.</p>
 
             <div>
               <label className="label">Amount (ETB)</label>
               <input
-                required type="number" min={selectedFee?.amount || 1} className="input"
+                required type="number" min={1} step="0.01" autoFocus className="input"
+                placeholder="e.g. 500"
                 value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })}
               />
-              {selectedFee && <p className="mt-1 text-xs text-ink-400">Minimum {currency(selectedFee.amount)} — enter more to top up the fund.</p>}
             </div>
 
-            {selectedFee && (
-              <div className="rounded-xl bg-brand-50/60 ring-1 ring-brand-100 p-4">
-                <p className="text-xs font-semibold uppercase tracking-wide text-brand-700 flex items-center gap-1.5 mb-1.5">
-                  <Landmark className="h-3.5 w-3.5" /> Send payment to
-                </p>
-                <div className="divide-y divide-brand-100/80">
-                  <CopyRow label="Bank" value={community?.paymentBankName || '—'} />
-                  <CopyRow label="Account name" value={community?.paymentAccountName || '—'} />
-                  <CopyRow label="Account number" value={community?.paymentAccountNumber || '—'} mono />
-                  <CopyRow label="Amount" value={currency(Number(form.amount) || selectedFee.amount)} />
-                </div>
+            <div className="rounded-xl bg-brand-50/60 ring-1 ring-brand-100 p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-brand-700 flex items-center gap-1.5 mb-1.5">
+                <Landmark className="h-3.5 w-3.5" /> Send payment to
+              </p>
+              <div className="divide-y divide-brand-100/80">
+                <CopyRow label="Bank" value={community?.paymentBankName || '—'} />
+                <CopyRow label="Account name" value={community?.paymentAccountName || '—'} />
+                <CopyRow label="Account number" value={community?.paymentAccountNumber || '—'} mono />
+                <CopyRow label="Amount" value={form.amount ? currency(Number(form.amount)) : '—'} />
               </div>
-            )}
+            </div>
 
             <div>
               <div className="flex items-center justify-between mb-1.5">
@@ -317,7 +332,22 @@ export default function ResidentFunds() {
               {ocrNote && <p className="mt-2 text-xs text-center text-ink-500">{ocrNote}</p>}
             </div>
 
-            {error && <div className="rounded-xl bg-rose-50 border border-rose-100 px-3.5 py-2.5 text-sm text-rose-600">{error}</div>}
+            {error && (
+              <div className="rounded-xl bg-rose-50 border border-rose-100 px-3.5 py-2.5 text-sm text-rose-600">
+                <div className="flex items-start justify-between gap-3">
+                  <span>{error}</span>
+                  {canRetry && (
+                    <button
+                      type="button"
+                      onClick={submit}
+                      className="shrink-0 flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-semibold text-rose-700 bg-rose-100 hover:bg-rose-200 transition"
+                    >
+                      <RotateCw className="h-3.5 w-3.5" /> Retry
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
 
             <div className="flex gap-2 pt-2">
               <button type="button" onClick={closeModal} className="btn-secondary flex-1">Cancel</button>

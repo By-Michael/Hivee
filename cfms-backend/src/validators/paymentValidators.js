@@ -51,13 +51,17 @@ const idParamSchema = z.object({ params: z.object({ id: z.string().uuid() }) });
 
 const selfVerifyPaymentSchema = z.object({
   body: z.object({
-    feeId: z.string().uuid(),
+    // Exactly one of feeId or fundId — feeId for "pay a fee", fundId for a
+    // free-standing "contribute whatever amount to this fund" payment
+    // (Community Funds page). Enforced by the .refine() below.
+    feeId: z.string().uuid().optional(),
+    fundId: z.string().uuid().optional(),
     txnId: z.string().min(1),
     payerName: z.string().min(1),
     reason: z.string().optional(),
-    // Optional — lets a resident contribute more than the fee's usual
-    // amount (e.g. "top up" a fund). Must be >= the fee amount; enforced
-    // in the controller where the fee itself is loaded.
+    // Optional for feeId (defaults to the fee's amount, must be >= it —
+    // enforced in the controller). Required for fundId — a direct fund
+    // contribution has no "usual amount" to fall back to.
     amount: z.number().positive().optional(),
     // Which bank/provider the receipt is from — lets Veritas skip
     // auto-detection and lets us know which secondary field to require.
@@ -66,6 +70,12 @@ const selfVerifyPaymentSchema = z.object({
     suffix: z.string().optional(),
     // Required by CBE Birr, format 251XXXXXXXXX.
     phoneNumber: z.string().optional(),
+  }).refine((body) => [!!body.feeId, !!body.fundId].filter(Boolean).length === 1, {
+    message: 'Provide exactly one of feeId or fundId',
+    path: ['feeId'],
+  }).refine((body) => !body.fundId || body.amount !== undefined, {
+    message: 'amount is required when contributing directly to a fund',
+    path: ['amount'],
   }),
 });
 

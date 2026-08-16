@@ -285,14 +285,17 @@ const uploadPaymentReceipt = catchAsync(async (req, res) => {
 
 // Resident self-serve flow: submit a bank txn ID + the name it was sent
 // under, and get verified against the bank instantly instead of waiting
-// on an admin. Required fields are just feeId + txnId + payerName.
+// on an admin. Required fields are txnId + payerName plus exactly one of
+// feeId (pay a fee) or fundId (free-form contribution to a fund, any
+// amount of the resident's choosing — no "usual amount" involved).
 const selfVerifyPayment = catchAsync(async (req, res) => {
   if (req.user.role !== 'RESIDENT') {
     throw new AppError('Only residents can submit self-verified payments', 403);
   }
 
-  const { feeId, txnId, payerName, reason, provider, suffix, phoneNumber } = req.body;
-  if (!feeId) throw new AppError('feeId is required', 422);
+  const { feeId, fundId, txnId, payerName, reason, provider, suffix, phoneNumber } = req.body;
+  if (!feeId && !fundId) throw new AppError('feeId or fundId is required', 422);
+  if (feeId && fundId) throw new AppError('Provide exactly one of feeId or fundId', 422);
   if (!txnId || !txnId.trim()) throw new AppError('Transaction ID is required', 422);
   if (!payerName || !payerName.trim()) throw new AppError('Payer name is required', 422);
   if (provider && PROVIDERS_NEEDING_SUFFIX.has(provider) && !suffix) {
@@ -308,17 +311,32 @@ const selfVerifyPayment = catchAsync(async (req, res) => {
   });
   if (!resident) throw new AppError('Resident profile not found', 404);
 
-  const fee = await prisma.fee.findFirst({ where: { id: feeId, communityId: req.communityId } });
-  if (!fee) throw new AppError('Fee not found in this community', 404);
+  let fee = null;
+  let fund = null;
+  let amount;
 
-  // A resident can pay more than the fee's usual amount (e.g. topping up
-  // a fund) but never less — an underpayment isn't a valid settlement of
-  // the fee, it'd just create confusing partial-payment bookkeeping.
-  let amount = Number(fee.amount);
-  if (req.body.amount !== undefined) {
-    if (req.body.amount < Number(fee.amount)) {
-      throw new AppError(`Amount can't be less than ${fee.amount} for this fee`, 422);
+  if (feeId) {
+    fee = await prisma.fee.findFirst({ where: { id: feeId, communityId: req.communityId } });
+    if (!fee) throw new AppError('Fee not found in this community', 404);
+
+    // A resident can pay more than the fee's usual amount (e.g. topping up
+    // a fund) but never less — an underpayment isn't a valid settlement of
+    // the fee, it'd just create confusing partial-payment bookkeeping.
+    amount = Number(fee.amount);
+    if (req.body.amount !== undefined) {
+      if (req.body.amount < Number(fee.amount)) {
+        throw new AppError(`Amount can't be less than ${fee.amount} for this fee`, 422);
+      }
+      amount = req.body.amount;
     }
+  } else {
+    fund = await prisma.fund.findFirst({ where: { id: fundId, communityId: req.communityId } });
+    if (!fund) throw new AppError('Fund not found in this community', 404);
+
+    // A direct fund contribution has no fee to anchor an amount to — the
+    // resident picks whatever they want to give, as long as it's positive.
+    if (req.body.amount === undefined) throw new AppError('amount is required to contribute to a fund', 422);
+    if (req.body.amount <= 0) throw new AppError('amount must be greater than 0', 422);
     amount = req.body.amount;
   }
 
@@ -417,11 +435,14 @@ const selfVerifyPayment = catchAsync(async (req, res) => {
 
   const status = flags.length > 0 ? 'PENDING_REVIEW' : 'VERIFIED';
 
+  const targetLabel = fee ? `fee "${fee.name}"` : `fund "${fund.name}"`;
+
   const payment = await prisma.payment.create({
     data: {
       communityId: req.communityId,
       residentId: resident.id,
-      feeId: fee.id,
+      feeId: fee ? fee.id : undefined,
+      fundId: fund ? fund.id : undefined,
       amount,
       paymentMethod: 'BANK_TRANSFER',
       transactionReference: txnId.trim(),
@@ -439,8 +460,8 @@ const selfVerifyPayment = catchAsync(async (req, res) => {
     entityType: 'Payment',
     entityId: payment.id,
     description: status === 'VERIFIED'
-      ? `Auto-verified payment of ${payment.amount} for fee "${fee.name}" via bank transaction lookup`
-      : `Self-verified payment of ${payment.amount} for fee "${fee.name}" flagged for admin review: ${flags.join(' ')}`,
+      ? `Auto-verified payment of ${payment.amount} for ${targetLabel} via bank transaction lookup`
+      : `Self-verified payment of ${payment.amount} for ${targetLabel} flagged for admin review: ${flags.join(' ')}`,
   });
 
   res.status(201).json({ success: true, data: payment });

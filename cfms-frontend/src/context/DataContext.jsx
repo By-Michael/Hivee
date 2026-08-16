@@ -515,8 +515,8 @@ export function DataProvider({ children }) {
     // Resident self-serve flow: submit a bank txn ID and get verified
     // against the bank instantly (no admin step). Throws on mismatch/
     // failure so the caller can show the error inline and let them retry.
-    submitSelfPayment: async ({ feeId, txnId, payerName, reason, amount }) => {
-      const { data } = await api.post(endpoints.paymentSelfVerify(), { feeId, txnId, payerName, reason, amount })
+    submitSelfPayment: async ({ feeId, fundId, txnId, payerName, reason, amount }) => {
+      const { data } = await api.post(endpoints.paymentSelfVerify(), { feeId, fundId, txnId, payerName, reason, amount })
       patchList('payments')((list) => [paymentToUI(data.data), ...list])
       refresh({ silent: true })
       return paymentToUI(data.data)
