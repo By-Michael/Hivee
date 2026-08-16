@@ -380,6 +380,12 @@ export default function Payments() {
       .finally(() => setVerifyingId(null))
   }
 
+  // Render at most 50 rows at a time — see Residents.jsx for why. `total`
+  // (defined below, from `filtered`) still sums the full filtered set, so
+  // the header stays accurate regardless of pagination.
+  const { pageItems: pagedPayments, page: tablePage, totalPages: tableTotalPages, total: tableTotal, setPage: setTablePage } = usePagedList(filtered, 50)
+  const { pageItems: pagedNonPayers, page: npPage, totalPages: npTotalPages, total: npTotal, setPage: setNpPage } = usePagedList(nonPayers, 50)
+
   // Only pending / needs-review rows are ever selectable — verified/
   // rejected rows have nothing to batch-verify.
   const selectablePaged = pagedPayments.filter((p) => p.status === 'pending' || p.status === 'pending_review')
@@ -427,11 +433,6 @@ export default function Payments() {
   }
 
   const total = filtered.reduce((s, p) => s + p.amount, 0)
-
-  // Render at most 50 rows at a time — see Residents.jsx for why. `total`
-  // above still sums the full filtered set, so the header stays accurate.
-  const { pageItems: pagedPayments, page: tablePage, totalPages: tableTotalPages, total: tableTotal, setPage: setTablePage } = usePagedList(filtered, 50)
-  const { pageItems: pagedNonPayers, page: npPage, totalPages: npTotalPages, total: npTotal, setPage: setNpPage } = usePagedList(nonPayers, 50)
 
   return (
     <div>
