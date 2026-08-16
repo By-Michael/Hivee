@@ -68,7 +68,24 @@ const listProjects = catchAsync(async (req, res) => {
     },
     orderBy: { startDate: 'desc' },
   });
-  res.json({ success: true, data: projects });
+
+  // The list view only needs each project's total spend, not every expense
+  // row (that would balloon the payload for communities with a lot of
+  // expense history) — so sum per project with one groupBy instead of the
+  // `expenses: true` include getProject uses below. Without this, the
+  // frontend's "spent"/"% utilized" always computed against an empty
+  // array here and silently showed 0 for every project on this page.
+  const spentByProject = await prisma.expense.groupBy({
+    by: ['projectId'],
+    where: { projectId: { in: projects.map((p) => p.id) } },
+    _sum: { amount: true },
+  });
+  const spentById = new Map(spentByProject.map((row) => [row.projectId, Number(row._sum.amount || 0)]));
+
+  res.json({
+    success: true,
+    data: projects.map((p) => ({ ...p, spent: spentById.get(p.id) || 0 })),
+  });
 });
 
 const getProject = catchAsync(async (req, res) => {

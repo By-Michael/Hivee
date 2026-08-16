@@ -455,9 +455,9 @@ export default function Payments() {
           <button
             type="button"
             onClick={openFilter}
-            className={`badge border transition ${activeFilterCount > 0 ? 'bg-brand-gradient text-white border-transparent' : 'bg-white text-ink-500 border-ink-200 hover:border-brand-300'}`}
+            className={`inline-flex items-center gap-1.5 rounded-xl border px-4 py-2.5 text-sm font-semibold transition ${activeFilterCount > 0 ? 'bg-brand-gradient text-white border-transparent shadow-glow' : 'bg-white text-ink-600 border-ink-200 hover:border-brand-300 dark:bg-[#131b30] dark:border-[#2a3557] dark:text-ink-300'}`}
           >
-            <SlidersHorizontal className="h-3.5 w-3.5" />
+            <SlidersHorizontal className="h-4 w-4" />
             Filter{activeFilterCount > 0 ? ` (${activeFilterCount})` : ''}
           </button>
           {filters.nonPayersOnly && (
@@ -475,10 +475,10 @@ export default function Payments() {
               type="button"
               onClick={runBatchVerify}
               disabled={batchVerifying}
-              className="btn-primary !py-1.5 !px-3 text-xs disabled:opacity-50"
+              className="btn-primary text-sm disabled:opacity-50"
               title="Marks the selected payments as verified. The bulk bank re-check API isn't wired in yet — this is a placeholder until that's connected."
             >
-              <CheckCheck className="h-3.5 w-3.5" /> {batchVerifying ? 'Verifying…' : `Batch verify (${selectedIds.size})`}
+              <CheckCheck className="h-4 w-4" /> {batchVerifying ? 'Verifying…' : `Batch verify (${selectedIds.size})`}
             </button>
           )}
         </div>

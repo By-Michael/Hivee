@@ -282,9 +282,12 @@ export function projectToUI(p) {
       amount: Number(a.amount),
     })),
     budget: Number(p.budget),
+    // list endpoint sends a pre-summed `spent` (see listProjects); the
+    // single-project endpoint instead sends the full `expenses` array and
+    // no `spent` field, so fall back to summing it here for that case.
     // Reversal entries carry negative amounts, so this sum nets out
     // automatically without any special-casing for voided/reversed rows.
-    spent: (p.expenses || []).reduce((s, e) => s + Number(e.amount), 0),
+    spent: p.spent !== undefined ? Number(p.spent) : (p.expenses || []).reduce((s, e) => s + Number(e.amount), 0),
     status: PROJECT_STATUS_TO_UI[p.status] || 'planned',
     cancelReason: p.cancelReason || '',
     startDate: p.startDate,
