@@ -47,6 +47,38 @@ const PAYMENT_INCLUDE = {
 // of joining out through fee/project/fund on every query.
 const communityPaymentFilter = (communityId) => ({ communityId });
 
+// The bank-verification response (Veritas) already captures who actually
+// sent the money — it's saved wholesale in verificationRaw for admin
+// review, but was never surfaced as its own field on the payment, so the
+// committee had no quick way to see it next to the payer name they
+// registered under. Pull it back out here (same candidate-field logic as
+// bankVerification.js's pickField, since Veritas's schema isn't fixed
+// across providers) rather than adding a DB column, so nothing needs a
+// migration to show it.
+const SENDER_NAME_CANDIDATES = ['senderName', 'payerName', 'payer', 'senderFullName', 'sender', 'fromName'];
+const RECEIVER_ACCOUNT_CANDIDATES = ['receiverAccount', 'creditAccount', 'toAccount', 'accountNumber', 'beneficiaryAccount'];
+function extractField(raw, candidates) {
+  if (!raw || typeof raw !== 'object') return null;
+  for (const key of candidates) {
+    if (raw[key]) return raw[key];
+  }
+  for (const nestKey of ['data', 'result', 'receipt', 'payload']) {
+    if (raw[nestKey] && typeof raw[nestKey] === 'object') {
+      const nested = extractField(raw[nestKey], candidates);
+      if (nested) return nested;
+    }
+  }
+  return null;
+}
+function withSenderName(payment) {
+  if (!payment) return payment;
+  return {
+    ...payment,
+    senderName: extractField(payment.verificationRaw, SENDER_NAME_CANDIDATES),
+    receiverAccount: extractField(payment.verificationRaw, RECEIVER_ACCOUNT_CANDIDATES),
+  };
+}
+
 // Helper: resolve the resident record that this request is allowed to act as.
 async function resolveResidentId(req) {
   if (req.user.role === 'RESIDENT') {
@@ -142,7 +174,7 @@ const listPayments = catchAsync(async (req, res) => {
 
   res.json({
     success: true,
-    data: payments,
+    data: payments.map(withSenderName),
     meta: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) },
   });
 });
@@ -164,7 +196,7 @@ const getPayment = catchAsync(async (req, res) => {
     }
   }
 
-  res.json({ success: true, data: payment });
+  res.json({ success: true, data: withSenderName(payment) });
 });
 
 // ADMIN verifies or rejects a payment.
@@ -188,6 +220,51 @@ const updatePaymentStatus = catchAsync(async (req, res) => {
   });
 
   res.json({ success: true, data: updated });
+});
+
+// ADMIN batch-verifies a set of pending payments at once.
+//
+// PLACEHOLDER IMPLEMENTATION: batch lookup against Veritas isn't wired up
+// yet (single-transaction /verify only, see bankVerification.js) — this
+// currently just marks every selected pending/pending_review payment as
+// VERIFIED without re-checking the bank, per explicit instruction to ship
+// the button now and fill in the real batch call later.
+//
+// TODO(batch-verification-api): once the batch endpoint is available,
+// replace the block below with a single call like
+// `verifyBankTransactionsBatch(pendingPayments.map(p => p.transactionReference))`
+// and only mark as VERIFIED the ones that come back matched — mirroring
+// the safeguard flagging in selfVerifyPayment above (do NOT blind-trust a
+// batch "matched: true" any more than the single-lookup path does).
+const batchVerifyPayments = catchAsync(async (req, res) => {
+  const ids = Array.isArray(req.body.ids) ? req.body.ids : [];
+  if (ids.length === 0) throw new AppError('No payment ids provided', 422);
+
+  const payments = await prisma.payment.findMany({
+    where: { id: { in: ids }, ...communityPaymentFilter(req.communityId), status: { in: ['PENDING', 'PENDING_REVIEW'] } },
+  });
+  if (payments.length === 0) throw new AppError('No matching pending payments found', 404);
+
+  // ---- BLIND MARK-AS-VERIFIED (placeholder — see TODO above) ----
+  await prisma.payment.updateMany({
+    where: { id: { in: payments.map((p) => p.id) } },
+    data: { status: 'VERIFIED', verifiedBy: req.user.id },
+  });
+  // ---- end placeholder ----
+
+  await Promise.all(payments.map((p) => recordAudit(req, {
+    action: 'VERIFY',
+    entityType: 'Payment',
+    entityId: p.id,
+    description: `Batch-verified payment ${p.id.slice(0, 8)} (blind mark — batch bank lookup not yet integrated)`,
+  })));
+
+  const updated = await prisma.payment.findMany({
+    where: { id: { in: payments.map((p) => p.id) } },
+    include: PAYMENT_INCLUDE,
+  });
+
+  res.json({ success: true, data: updated.map(withSenderName), meta: { verifiedCount: updated.length } });
 });
 
 // ADMIN edits a payment they (or a fellow committee member) typed in
@@ -293,7 +370,7 @@ const selfVerifyPayment = catchAsync(async (req, res) => {
     throw new AppError('Only residents can submit self-verified payments', 403);
   }
 
-  const { feeId, fundId, txnId, payerName, reason, provider, suffix, phoneNumber } = req.body;
+  const { feeId, fundId, txnId, payerName, reason, provider, suffix, phoneNumber, receiptAmount } = req.body;
   if (!feeId && !fundId) throw new AppError('feeId or fundId is required', 422);
   if (feeId && fundId) throw new AppError('Provide exactly one of feeId or fundId', 422);
   if (!txnId || !txnId.trim()) throw new AppError('Transaction ID is required', 422);
@@ -424,8 +501,36 @@ const selfVerifyPayment = catchAsync(async (req, res) => {
     // its own — fieldsIncomplete already covers "couldn't cross-check".
   }
 
+  // The resident's uploaded receipt screenshot was OCR'd client-side and
+  // may have surfaced an amount (see parsePaymentScreenshot). If it's
+  // present and disagrees with what they actually typed/submitted, that's
+  // a real discrepancy worth a human's eyes — e.g. uploading a receipt for
+  // a different, smaller transfer than the amount entered — regardless of
+  // whether the bank lookup itself came back "matched". This is on top of,
+  // not instead of, the result.amount cross-check above.
+  if (receiptAmount !== undefined && receiptAmount !== null) {
+    const receiptDiff = Math.abs(Number(receiptAmount) - Number(amount));
+    if (receiptDiff > AMOUNT_TOLERANCE_BIRR) {
+      flags.push(`Uploaded receipt appears to show ${receiptAmount}, which doesn't match the submitted amount (${amount}) — please verify before approving.`);
+    }
+  }
+
   if (result.receiverAccount && community?.paymentAccountNumber && result.receiverAccount !== community.paymentAccountNumber) {
-    flags.push('Bank-reported receiving account does not match the community\'s registered account.');
+    // Before treating a receiving-account mismatch as suspicious, check
+    // whether it matches an account the community used to pay into
+    // *before* a bank-details change (see CommunityBankAccountHistory /
+    // pendingChanges.js apply()) — a resident sending to an account that
+    // was genuinely correct at some point isn't the same signal as one
+    // sent to a random/wrong account.
+    const historicalAccount = await prisma.communityBankAccountHistory.findFirst({
+      where: { communityId: req.communityId, accountNumber: result.receiverAccount },
+      orderBy: { replacedAt: 'desc' },
+    });
+    if (historicalAccount) {
+      flags.push(`Bank-reported receiving account matches a PREVIOUS community account (${historicalAccount.bankName || 'bank'}, replaced ${historicalAccount.replacedAt.toDateString()}), not the current one — likely fine if this payment predates the switch, but worth a quick look.`);
+    } else {
+      flags.push('Bank-reported receiving account does not match the community\'s registered account.');
+    }
   }
 
   const threshold = community?.autoVerifyMaxAmount ? Number(community.autoVerifyMaxAmount) : null;
@@ -536,6 +641,7 @@ module.exports = {
   listPayments,
   getPayment,
   updatePaymentStatus,
+  batchVerifyPayments,
   updatePayment,
   deletePayment,
   uploadPaymentReceipt,

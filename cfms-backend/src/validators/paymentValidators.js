@@ -70,6 +70,12 @@ const selfVerifyPaymentSchema = z.object({
     suffix: z.string().optional(),
     // Required by CBE Birr, format 251XXXXXXXXX.
     phoneNumber: z.string().optional(),
+    // Best-effort amount OCR'd off the receipt screenshot the resident
+    // uploaded (see parsePaymentScreenshot). Purely a client-side signal —
+    // never trusted as proof by itself — but if it disagrees with the
+    // amount the resident actually typed/submitted, that's worth flagging
+    // for admin review rather than silently ignoring (see selfVerifyPayment).
+    receiptAmount: z.number().positive().optional(),
   }).refine((body) => [!!body.feeId, !!body.fundId].filter(Boolean).length === 1, {
     message: 'Provide exactly one of feeId or fundId',
     path: ['feeId'],

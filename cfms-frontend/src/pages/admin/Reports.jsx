@@ -1,14 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Download, FileSpreadsheet, FileText, Users, Wallet, Receipt, FolderKanban, Filter, X, Loader2, ChevronLeft, ChevronRight,
+  Download, FileSpreadsheet, FileText, Users, Wallet, Receipt, FolderKanban, Loader2, ChevronLeft, ChevronRight,
 } from 'lucide-react'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell, Legend,
   AreaChart, Area, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar,
 } from 'recharts'
 import { useData } from '../../context/DataContext'
-import { PageHeader, currency, formatDate, Badge, ChartPlaceholder, notify } from '../../components/ui'
+import {
+  PageHeader, currency, formatDate, Badge, ChartPlaceholder, notify,
+  FilterPopover, FilterGrid, FilterField, FilterTextInput, FilterSelectInput, FilterDateInput, FilterNumberInput,
+} from '../../components/ui'
 import { exportToExcel, exportToPdf, exportRichPdf, captureChartImage } from '../../lib/exportUtils'
+
+const PAYMENT_METHODS = ['CASH', 'BANK_TRANSFER', 'MOBILE_MONEY', 'CARD', 'OTHER']
+function methodLabel(m) { return m === 'OTHER' ? 'Other' : m.replace('_', ' ').replace(/\b\w/g, (c) => c.toUpperCase()) }
 
 // Distinct, purposeful palettes so each chart signals something different at a glance.
 const FEE_COLORS = ['#2570f5', '#22b8cf', '#7c5cf5', '#4fd1c5', '#3a5fd9', '#a78bfa']
@@ -55,8 +61,14 @@ export default function Reports() {
   // ---- resident filters ----
   const [residentSearch, setResidentSearch] = useState('')
   const [residentStatus, setResidentStatus] = useState('all')
+  const [residentJoinedFrom, setResidentJoinedFrom] = useState('')
+  const [residentJoinedTo, setResidentJoinedTo] = useState('')
   const [residentPage, setResidentPage] = useState(1)
   const RESIDENTS_PAGE_SIZE = 8
+  const residentActiveCount = [
+    !!residentSearch, residentStatus !== 'all', !!(residentJoinedFrom || residentJoinedTo),
+  ].filter(Boolean).length
+  const clearResidentFilters = () => { setResidentSearch(''); setResidentStatus('all'); setResidentJoinedFrom(''); setResidentJoinedTo('') }
 
   // ---- payment filters ----
   const [paySearch, setPaySearch] = useState('')
@@ -64,21 +76,41 @@ export default function Reports() {
   const [payTo, setPayTo] = useState('')
   const [payFee, setPayFee] = useState('all')
   const [payStatus, setPayStatus] = useState('all')
+  const [payMethod, setPayMethod] = useState('all')
   const [payPage, setPayPage] = useState(1)
   const PAYMENTS_PAGE_SIZE = 8
+  const payActiveCount = [
+    !!paySearch, payFee !== 'all', payStatus !== 'all', payMethod !== 'all', !!(payFrom || payTo),
+  ].filter(Boolean).length
+  const clearPayFilters = () => { setPaySearch(''); setPayFee('all'); setPayStatus('all'); setPayMethod('all'); setPayFrom(''); setPayTo('') }
 
   // ---- expense filters ----
+  const [expSearch, setExpSearch] = useState('')
   const [expFrom, setExpFrom] = useState('')
   const [expTo, setExpTo] = useState('')
   const [expCategory, setExpCategory] = useState('all')
   const [expProject, setExpProject] = useState('all')
+  const [expMinAmount, setExpMinAmount] = useState('')
+  const [expMaxAmount, setExpMaxAmount] = useState('')
   const [expPage, setExpPage] = useState(1)
   const EXPENSES_PAGE_SIZE = 8
+  const expActiveCount = [
+    !!expSearch, expCategory !== 'all', expProject !== 'all', !!(expFrom || expTo), !!(expMinAmount || expMaxAmount),
+  ].filter(Boolean).length
+  const clearExpFilters = () => { setExpSearch(''); setExpCategory('all'); setExpProject('all'); setExpFrom(''); setExpTo(''); setExpMinAmount(''); setExpMaxAmount('') }
 
   // ---- project filters ----
+  const [projSearch, setProjSearch] = useState('')
   const [projStatus, setProjStatus] = useState('all')
+  const [projFund, setProjFund] = useState('all')
+  const [projStartFrom, setProjStartFrom] = useState('')
+  const [projStartTo, setProjStartTo] = useState('')
   const [projPage, setProjPage] = useState(1)
   const PROJECTS_PAGE_SIZE = 8
+  const projActiveCount = [
+    !!projSearch, projStatus !== 'all', projFund !== 'all', !!(projStartFrom || projStartTo),
+  ].filter(Boolean).length
+  const clearProjFilters = () => { setProjSearch(''); setProjStatus('all'); setProjFund('all'); setProjStartFrom(''); setProjStartTo('') }
 
   // ---- chart DOM refs, used to screenshot charts into rich PDF exports ----
   const byFeeChartRef = useRef(null)
@@ -94,12 +126,14 @@ export default function Reports() {
   const filteredResidents = useMemo(() => residents.filter((r) => {
     if (residentStatus !== 'all' && r.status !== residentStatus) return false
     if (residentSearch && !(`${r.name} ${r.unit} ${r.email}`.toLowerCase().includes(residentSearch.toLowerCase()))) return false
+    if ((residentJoinedFrom || residentJoinedTo) && !inRange(r.joined, residentJoinedFrom, residentJoinedTo)) return false
     return true
-  }), [residents, residentStatus, residentSearch])
+  }), [residents, residentStatus, residentSearch, residentJoinedFrom, residentJoinedTo])
 
   const filteredPayments = useMemo(() => payments.filter((p) => {
     if (payFee !== 'all' && p.feeId !== payFee) return false
     if (payStatus !== 'all' && p.status !== payStatus) return false
+    if (payMethod !== 'all' && p.method !== payMethod) return false
     if ((payFrom || payTo) && !inRange(p.date, payFrom, payTo)) return false
     if (paySearch) {
       const r = residents.find((x) => x.id === p.residentId)
@@ -107,7 +141,7 @@ export default function Reports() {
       if (!haystack.includes(paySearch.toLowerCase())) return false
     }
     return true
-  }), [payments, payFee, payStatus, payFrom, payTo, paySearch, residents])
+  }), [payments, payFee, payStatus, payMethod, payFrom, payTo, paySearch, residents])
 
   const residentPageCount = Math.max(1, Math.ceil(filteredResidents.length / RESIDENTS_PAGE_SIZE))
   const pagedResidents = filteredResidents.slice((residentPage - 1) * RESIDENTS_PAGE_SIZE, residentPage * RESIDENTS_PAGE_SIZE)
@@ -116,17 +150,29 @@ export default function Reports() {
   const pagedPayments = filteredPayments.slice((payPage - 1) * PAYMENTS_PAGE_SIZE, payPage * PAYMENTS_PAGE_SIZE)
 
   // Reset to page 1 whenever the underlying filter criteria change.
-  useEffect(() => { setResidentPage(1) }, [residentSearch, residentStatus])
-  useEffect(() => { setPayPage(1) }, [paySearch, payFee, payStatus, payFrom, payTo])
+  useEffect(() => { setResidentPage(1) }, [residentSearch, residentStatus, residentJoinedFrom, residentJoinedTo])
+  useEffect(() => { setPayPage(1) }, [paySearch, payFee, payStatus, payMethod, payFrom, payTo])
 
   const filteredExpenses = useMemo(() => expenses.filter((e) => {
     if (expCategory !== 'all' && e.category !== expCategory) return false
     if (expProject !== 'all' && e.projectId !== expProject) return false
     if ((expFrom || expTo) && !inRange(e.date, expFrom, expTo)) return false
+    if (expMinAmount && e.amount < Number(expMinAmount)) return false
+    if (expMaxAmount && e.amount > Number(expMaxAmount)) return false
+    if (expSearch) {
+      const haystack = `${e.description || ''} ${e.vendor || ''}`.toLowerCase()
+      if (!haystack.includes(expSearch.toLowerCase())) return false
+    }
     return true
-  }), [expenses, expCategory, expProject, expFrom, expTo])
+  }), [expenses, expCategory, expProject, expFrom, expTo, expMinAmount, expMaxAmount, expSearch])
 
-  const filteredProjects = useMemo(() => projects.filter((p) => projStatus === 'all' || p.status === projStatus), [projects, projStatus])
+  const filteredProjects = useMemo(() => projects.filter((p) => {
+    if (projStatus !== 'all' && p.status !== projStatus) return false
+    if (projFund !== 'all' && p.fundId !== projFund) return false
+    if ((projStartFrom || projStartTo) && !inRange(p.startDate, projStartFrom, projStartTo)) return false
+    if (projSearch && !p.name.toLowerCase().includes(projSearch.toLowerCase())) return false
+    return true
+  }), [projects, projStatus, projFund, projStartFrom, projStartTo, projSearch])
 
   const expPageCount = Math.max(1, Math.ceil(filteredExpenses.length / EXPENSES_PAGE_SIZE))
   const pagedExpenses = filteredExpenses.slice((expPage - 1) * EXPENSES_PAGE_SIZE, expPage * EXPENSES_PAGE_SIZE)
@@ -134,8 +180,8 @@ export default function Reports() {
   const projPageCount = Math.max(1, Math.ceil(filteredProjects.length / PROJECTS_PAGE_SIZE))
   const pagedProjects = filteredProjects.slice((projPage - 1) * PROJECTS_PAGE_SIZE, projPage * PROJECTS_PAGE_SIZE)
 
-  useEffect(() => { setExpPage(1) }, [expCategory, expProject, expFrom, expTo])
-  useEffect(() => { setProjPage(1) }, [projStatus])
+  useEffect(() => { setExpPage(1) }, [expCategory, expProject, expFrom, expTo, expMinAmount, expMaxAmount, expSearch])
+  useEffect(() => { setProjPage(1) }, [projStatus, projFund, projStartFrom, projStartTo, projSearch])
 
   // ---- chart data ----
   const byFee = fees.map((f, i) => ({
@@ -196,6 +242,8 @@ export default function Reports() {
     { label: 'Report', value: 'Residence Members' },
     { label: 'Generated', value: new Date().toLocaleString('en-GB') },
     { label: 'Filter · Status', value: residentStatus },
+    { label: 'Filter · Search', value: residentSearch || 'none' },
+    { label: 'Filter · Joined', value: `${residentJoinedFrom || 'all time'} → ${residentJoinedTo || 'now'}` },
     { label: 'Total members', value: filteredResidents.length },
   ]
   const exportResidentsExcel = () => exportToExcel({
@@ -223,6 +271,10 @@ export default function Reports() {
     { label: 'Report', value: 'Collections / Payments' },
     { label: 'Generated', value: new Date().toLocaleString('en-GB') },
     { label: 'Range', value: `${payFrom || 'all time'} → ${payTo || 'now'}` },
+    { label: 'Filter · Fee', value: payFee === 'all' ? 'all fees' : fees.find((f) => f.id === payFee)?.name || payFee },
+    { label: 'Filter · Status', value: payStatus },
+    { label: 'Filter · Method', value: payMethod === 'all' ? 'all methods' : methodLabel(payMethod) },
+    { label: 'Filter · Search', value: paySearch || 'none' },
     { label: 'Total amount', value: currency(filteredPayments.filter((p) => p.status === 'paid').reduce((s, p) => s + p.amount, 0)) },
   ]
   const exportPaymentsExcel = () => exportToExcel({
@@ -248,6 +300,10 @@ export default function Reports() {
     { label: 'Report', value: 'Expenses' },
     { label: 'Generated', value: new Date().toLocaleString('en-GB') },
     { label: 'Range', value: `${expFrom || 'all time'} → ${expTo || 'now'}` },
+    { label: 'Filter · Category', value: expCategory === 'all' ? 'all categories' : expCategory },
+    { label: 'Filter · Project', value: expProject === 'all' ? 'all projects' : projects.find((p) => p.id === expProject)?.name || expProject },
+    { label: 'Filter · Amount', value: `${expMinAmount ? currency(Number(expMinAmount)) : 'any'} – ${expMaxAmount ? currency(Number(expMaxAmount)) : 'any'}` },
+    { label: 'Filter · Search', value: expSearch || 'none' },
     { label: 'Total spent', value: currency(filteredExpenses.reduce((s, e) => s + e.amount, 0)) },
   ]
   const exportExpensesExcel = () => exportToExcel({ filename: 'cfms-expenses-report', sheetName: 'Expenses', meta: expenseMeta, columns: expenseColumns, rows: filteredExpenses })
@@ -268,6 +324,10 @@ export default function Reports() {
   const projectMeta = [
     { label: 'Report', value: 'Projects' },
     { label: 'Generated', value: new Date().toLocaleString('en-GB') },
+    { label: 'Filter · Status', value: projStatus },
+    { label: 'Filter · Fund', value: projFund === 'all' ? 'all funds' : funds.find((f) => f.id === projFund)?.name || projFund },
+    { label: 'Filter · Start date', value: `${projStartFrom || 'all time'} → ${projStartTo || 'now'}` },
+    { label: 'Filter · Search', value: projSearch || 'none' },
     { label: 'Total budget', value: currency(filteredProjects.reduce((s, p) => s + p.budget, 0)) },
     { label: 'Total spent', value: currency(filteredProjects.reduce((s, p) => s + p.spent, 0)) },
   ]
@@ -604,11 +664,22 @@ export default function Reports() {
         ]}
       >
         <div className="flex flex-wrap items-center gap-3 mb-4">
-          <FilterInput placeholder="Search name, unit, email…" value={residentSearch} onChange={setResidentSearch} />
-          <FilterSelect value={residentStatus} onChange={setResidentStatus} options={[['all', 'All statuses'], ['active', 'Active'], ['inactive', 'Inactive']]} />
-          {(residentSearch || residentStatus !== 'all') && (
-            <ClearButton onClick={() => { setResidentSearch(''); setResidentStatus('all') }} />
-          )}
+          <FilterPopover active={residentActiveCount} onClear={clearResidentFilters}>
+            <FilterGrid>
+              <FilterField label="Search" full>
+                <FilterTextInput placeholder="Search name, unit, email…" value={residentSearch} onChange={setResidentSearch} />
+              </FilterField>
+              <FilterField label="Status">
+                <FilterSelectInput value={residentStatus} onChange={setResidentStatus} options={[['all', 'All statuses'], ['active', 'Active'], ['inactive', 'Inactive']]} />
+              </FilterField>
+              <FilterField label="Joined from">
+                <FilterDateInput value={residentJoinedFrom} onChange={setResidentJoinedFrom} />
+              </FilterField>
+              <FilterField label="Joined to">
+                <FilterDateInput value={residentJoinedTo} onChange={setResidentJoinedTo} />
+              </FilterField>
+            </FilterGrid>
+          </FilterPopover>
         </div>
         <TableScroll>
           <table className="report-table">
@@ -643,14 +714,28 @@ export default function Reports() {
         ]}
       >
         <div className="flex flex-wrap items-center gap-3 mb-4">
-          <FilterInput placeholder="Search resident, unit, reference…" value={paySearch} onChange={setPaySearch} />
-          <FilterSelect value={payFee} onChange={setPayFee} options={[['all', 'All fees'], ...fees.map((f) => [f.id, f.name])]} />
-          <FilterSelect value={payStatus} onChange={setPayStatus} options={[['all', 'All statuses'], ['paid', 'Paid'], ['pending', 'Pending'], ['rejected', 'Rejected']]} />
-          <FilterDate value={payFrom} onChange={setPayFrom} label="From" />
-          <FilterDate value={payTo} onChange={setPayTo} label="To" />
-          {(paySearch || payFee !== 'all' || payStatus !== 'all' || payFrom || payTo) && (
-            <ClearButton onClick={() => { setPaySearch(''); setPayFee('all'); setPayStatus('all'); setPayFrom(''); setPayTo('') }} />
-          )}
+          <FilterPopover active={payActiveCount} onClear={clearPayFilters}>
+            <FilterGrid>
+              <FilterField label="Search" full>
+                <FilterTextInput placeholder="Search resident, unit, reference…" value={paySearch} onChange={setPaySearch} />
+              </FilterField>
+              <FilterField label="Fee">
+                <FilterSelectInput value={payFee} onChange={setPayFee} options={[['all', 'All fees'], ...fees.map((f) => [f.id, f.name])]} />
+              </FilterField>
+              <FilterField label="Status">
+                <FilterSelectInput value={payStatus} onChange={setPayStatus} options={[['all', 'All statuses'], ['paid', 'Paid'], ['pending', 'Pending'], ['rejected', 'Rejected']]} />
+              </FilterField>
+              <FilterField label="Method">
+                <FilterSelectInput value={payMethod} onChange={setPayMethod} options={[['all', 'All methods'], ...PAYMENT_METHODS.map((m) => [m, methodLabel(m)])]} />
+              </FilterField>
+              <FilterField label="From">
+                <FilterDateInput value={payFrom} onChange={setPayFrom} />
+              </FilterField>
+              <FilterField label="To">
+                <FilterDateInput value={payTo} onChange={setPayTo} />
+              </FilterField>
+            </FilterGrid>
+          </FilterPopover>
         </div>
         <TableScroll>
           <table className="report-table">
@@ -686,13 +771,31 @@ export default function Reports() {
         ]}
       >
         <div className="flex flex-wrap items-center gap-3 mb-4">
-          <FilterSelect value={expCategory} onChange={setExpCategory} options={[['all', 'All categories'], ...EXPENSE_CATEGORIES.map((c) => [c, c.charAt(0) + c.slice(1).toLowerCase()])]} />
-          <FilterSelect value={expProject} onChange={setExpProject} options={[['all', 'All projects'], ...projects.map((p) => [p.id, p.name])]} />
-          <FilterDate value={expFrom} onChange={setExpFrom} label="From" />
-          <FilterDate value={expTo} onChange={setExpTo} label="To" />
-          {(expCategory !== 'all' || expProject !== 'all' || expFrom || expTo) && (
-            <ClearButton onClick={() => { setExpCategory('all'); setExpProject('all'); setExpFrom(''); setExpTo('') }} />
-          )}
+          <FilterPopover active={expActiveCount} onClear={clearExpFilters}>
+            <FilterGrid>
+              <FilterField label="Search" full>
+                <FilterTextInput placeholder="Search description, vendor…" value={expSearch} onChange={setExpSearch} />
+              </FilterField>
+              <FilterField label="Category">
+                <FilterSelectInput value={expCategory} onChange={setExpCategory} options={[['all', 'All categories'], ...EXPENSE_CATEGORIES.map((c) => [c, c.charAt(0) + c.slice(1).toLowerCase()])]} />
+              </FilterField>
+              <FilterField label="Project">
+                <FilterSelectInput value={expProject} onChange={setExpProject} options={[['all', 'All projects'], ...projects.map((p) => [p.id, p.name])]} />
+              </FilterField>
+              <FilterField label="From">
+                <FilterDateInput value={expFrom} onChange={setExpFrom} />
+              </FilterField>
+              <FilterField label="To">
+                <FilterDateInput value={expTo} onChange={setExpTo} />
+              </FilterField>
+              <FilterField label="Min amount">
+                <FilterNumberInput placeholder="0" value={expMinAmount} onChange={setExpMinAmount} />
+              </FilterField>
+              <FilterField label="Max amount">
+                <FilterNumberInput placeholder="Any" value={expMaxAmount} onChange={setExpMaxAmount} />
+              </FilterField>
+            </FilterGrid>
+          </FilterPopover>
         </div>
         <TableScroll>
           <table className="report-table">
@@ -729,8 +832,25 @@ export default function Reports() {
         last
       >
         <div className="flex flex-wrap items-center gap-3 mb-4">
-          <FilterSelect value={projStatus} onChange={setProjStatus} options={[['all', 'All statuses'], ['planned', 'Planned'], ['in-progress', 'In progress'], ['completed', 'Completed'], ['cancelled', 'Cancelled']]} />
-          {projStatus !== 'all' && <ClearButton onClick={() => setProjStatus('all')} />}
+          <FilterPopover active={projActiveCount} onClear={clearProjFilters}>
+            <FilterGrid>
+              <FilterField label="Search" full>
+                <FilterTextInput placeholder="Search project name…" value={projSearch} onChange={setProjSearch} />
+              </FilterField>
+              <FilterField label="Status">
+                <FilterSelectInput value={projStatus} onChange={setProjStatus} options={[['all', 'All statuses'], ['planned', 'Planned'], ['in-progress', 'In progress'], ['completed', 'Completed'], ['cancelled', 'Cancelled']]} />
+              </FilterField>
+              <FilterField label="Fund">
+                <FilterSelectInput value={projFund} onChange={setProjFund} options={[['all', 'All funds'], ...funds.map((f) => [f.id, f.name])]} />
+              </FilterField>
+              <FilterField label="Start from">
+                <FilterDateInput value={projStartFrom} onChange={setProjStartFrom} />
+              </FilterField>
+              <FilterField label="Start to">
+                <FilterDateInput value={projStartTo} onChange={setProjStartTo} />
+              </FilterField>
+            </FilterGrid>
+          </FilterPopover>
         </div>
         <TableScroll>
           <table className="report-table">
@@ -827,41 +947,4 @@ function TableScroll({ children }) {
   return <div className="overflow-x-auto rounded-xl border border-ink-100">{children}</div>
 }
 
-function FilterInput({ value, onChange, placeholder }) {
-  return (
-    <div className="flex items-center gap-2 bg-ink-50 rounded-xl px-3 py-2">
-      <Filter className="h-3.5 w-3.5 text-ink-400" />
-      <input
-        className="bg-transparent text-sm outline-none placeholder:text-ink-400 w-48"
-        placeholder={placeholder}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-      />
-    </div>
-  )
-}
 
-function FilterSelect({ value, onChange, options }) {
-  return (
-    <select className="bg-ink-50 rounded-xl px-3 py-2 text-sm text-ink-700 outline-none" value={value} onChange={(e) => onChange(e.target.value)}>
-      {options.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
-    </select>
-  )
-}
-
-function FilterDate({ value, onChange, label }) {
-  return (
-    <label className="flex items-center gap-2 bg-ink-50 rounded-xl px-3 py-2 text-sm text-ink-500">
-      {label}
-      <input type="date" className="bg-transparent outline-none text-ink-700" value={value} onChange={(e) => onChange(e.target.value)} />
-    </label>
-  )
-}
-
-function ClearButton({ onClick }) {
-  return (
-    <button className="flex items-center gap-1 text-xs text-ink-400 hover:text-ink-700 transition" onClick={onClick}>
-      <X className="h-3.5 w-3.5" /> Clear filters
-    </button>
-  )
-}

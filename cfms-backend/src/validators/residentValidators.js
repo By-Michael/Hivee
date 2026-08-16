@@ -6,7 +6,8 @@ const createResidentSchema = z.object({
     email: z.string().email(),
     password: z.string().min(8),
     unitNumber: z.string().min(1),
-    status: z.enum(['ACTIVE', 'INACTIVE', 'MOVED_OUT']).optional(),
+    // No `status` here on purpose — residents are always created ACTIVE.
+    // Deactivation happens afterwards via the dedicated deactivate action.
     phone: z.string().min(3).optional(),
     idNumber: z.string().min(1).optional(),
     address: z.string().optional(),
@@ -20,7 +21,8 @@ const updateResidentSchema = z.object({
     fullName: z.string().min(2).optional(),
     email: z.string().email().optional(),
     unitNumber: z.string().min(1).optional(),
-    status: z.enum(['ACTIVE', 'INACTIVE', 'MOVED_OUT']).optional(),
+    // No `status` here either — use deactivateResident/reactivateResident
+    // so an inactivation always carries a reason and triggers the email.
     phone: z.string().min(3).optional(),
     idNumber: z.string().min(1).optional(),
     address: z.string().optional(),
@@ -32,4 +34,11 @@ const idParamSchema = z.object({
   params: z.object({ id: z.string().uuid() }),
 });
 
-module.exports = { createResidentSchema, updateResidentSchema, idParamSchema };
+const deactivateResidentSchema = z.object({
+  params: z.object({ id: z.string().uuid() }),
+  body: z.object({
+    reason: z.string().min(2, 'A reason is required').max(500),
+  }),
+});
+
+module.exports = { createResidentSchema, updateResidentSchema, idParamSchema, deactivateResidentSchema };

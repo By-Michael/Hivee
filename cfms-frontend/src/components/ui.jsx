@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import { X, AlertTriangle, CheckCircle2, Info } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { X, AlertTriangle, CheckCircle2, Info, Filter } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 
 // ---------------------------------------------------------------------------
@@ -72,7 +72,7 @@ export function Toaster() {
 export function ChartPlaceholder({ height = 260, label = 'Crunching the numbers…' }) {
   return (
     <div className="flex flex-col items-center justify-center gap-2 text-ink-300" style={{ height }}>
-      <span className="h-8 w-8 rounded-full border-2 border-ink-200 border-t-brand-500 animate-spin" />
+      <span className="h-8 w-8 rounded-full border-2 border-ink-200 border-t-brand-500 dark:border-[#2a3557] dark:border-t-brand-400 animate-spin" />
       <span className="text-xs font-medium">{label}</span>
     </div>
   )
@@ -174,11 +174,174 @@ export function PageHeader({ title, subtitle, action }) {
   )
 }
 
+// ---------------------------------------------------------------------------
+// FilterPopover — a single "Filter" button that opens a dropdown panel of
+// detailed filter fields (search, selects, date ranges, etc). Replaces rows
+// of always-visible filter controls with one compact control per table.
+//
+// - `active`  — count of currently-applied filters; drives the badge and
+//               whether the little inline "x" clear button appears.
+// - `onClear` — resets every filter for this table back to its default.
+// - `children` — the actual filter fields, laid out by the caller (usually
+//               inside a <FilterGrid> for a responsive multi-column layout).
+//
+// The panel closes on outside click and on Escape, and always exposes a
+// "Clear all" action at the bottom in addition to the quick inline "x".
+// ---------------------------------------------------------------------------
+export function FilterPopover({ active = 0, onClear, label = 'Filter', children, align = 'left' }) {
+  const [open, setOpen] = useState(false)
+  const rootRef = useRef(null)
+
+  useEffect(() => {
+    function onDocPointer(e) {
+      if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false)
+    }
+    function onKey(e) {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', onDocPointer)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDocPointer)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [])
+
+  return (
+    <div className="relative inline-block" ref={rootRef}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className={`btn-secondary text-xs !pl-3 ${active > 0 ? '!pr-1.5' : '!pr-3'} ${active > 0 ? 'border-brand-300 text-brand-700 bg-brand-50' : ''}`}
+        aria-expanded={open}
+      >
+        <Filter className="h-3.5 w-3.5" />
+        {label}
+        {active > 0 && (
+          <span className="ml-1 inline-flex items-center justify-center h-4 min-w-[16px] px-1 rounded-full bg-brand-600 text-white text-[10px] font-semibold leading-none">
+            {active}
+          </span>
+        )}
+        {active > 0 && (
+          <span
+            role="button"
+            aria-label="Clear filters"
+            title="Clear filters"
+            tabIndex={0}
+            onClick={(e) => { e.stopPropagation(); onClear?.() }}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); onClear?.() } }}
+            className="ml-1 flex items-center justify-center h-4 w-4 rounded-full hover:bg-brand-100 text-brand-500 transition"
+          >
+            <X className="h-3 w-3" />
+          </span>
+        )}
+      </button>
+
+      {open && (
+        <div
+          className={`absolute z-30 top-full ${align === 'right' ? 'right-0' : 'left-0'} mt-2 w-[min(94vw,620px)] card p-4 shadow-xl border border-ink-100 animate-fade-up`}
+        >
+          {children}
+          <div className="flex items-center justify-between gap-2 mt-4 pt-3 border-t border-ink-100">
+            {active > 0 ? (
+              <button
+                type="button"
+                onClick={onClear}
+                className="flex items-center gap-1 text-xs text-ink-400 hover:text-rose-600 transition"
+              >
+                <X className="h-3.5 w-3.5" /> Clear all
+              </button>
+            ) : <span />}
+            <button type="button" onClick={() => setOpen(false)} className="btn-primary !py-1.5 text-xs">
+              Done
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Responsive grid used inside a FilterPopover panel to lay out mixed field
+// types (text inputs, selects, date pickers) evenly.
+export function FilterGrid({ children }) {
+  return <div className="grid sm:grid-cols-2 gap-3">{children}</div>
+}
+
+// Labelled wrapper for a single field inside a FilterPopover panel.
+export function FilterField({ label, full, children }) {
+  return (
+    <label className={`block ${full ? 'sm:col-span-2' : ''}`}>
+      <span className="block text-[11px] font-semibold uppercase tracking-wide text-ink-400 mb-1">{label}</span>
+      {children}
+    </label>
+  )
+}
+
+const filterFieldCls = 'w-full rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm text-ink-800 placeholder:text-ink-400 outline-none focus:ring-2 focus:ring-brand-300 focus:border-brand-400 transition dark:bg-[#131b30] dark:border-[#2a3557] dark:text-ink-100'
+
+// Compact text input for use inside a FilterField/FilterGrid.
+export function FilterTextInput({ value, onChange, placeholder }) {
+  return (
+    <input
+      className={filterFieldCls}
+      placeholder={placeholder}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+    />
+  )
+}
+
+// Compact <select> for use inside a FilterField/FilterGrid.
+export function FilterSelectInput({ value, onChange, options }) {
+  return (
+    <select className={filterFieldCls} value={value} onChange={(e) => onChange(e.target.value)}>
+      {options.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+    </select>
+  )
+}
+
+// Compact date input for use inside a FilterField/FilterGrid.
+export function FilterDateInput({ value, onChange }) {
+  return (
+    <input type="date" className={filterFieldCls} value={value} onChange={(e) => onChange(e.target.value)} />
+  )
+}
+
+// Compact number input (for amount/budget ranges) for use inside a
+// FilterField/FilterGrid.
+export function FilterNumberInput({ value, onChange, placeholder }) {
+  return (
+    <input
+      type="number"
+      inputMode="decimal"
+      className={filterFieldCls}
+      placeholder={placeholder}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+    />
+  )
+}
+
 export function Modal({ open, onClose, title, children, wide, dismissible = true }) {
+  // Lock the page behind the modal while it's open — otherwise the mouse
+  // wheel / trackpad keeps scrolling the (invisible, but still there) body
+  // underneath the overlay, which then jumps back into view scrolled to a
+  // different spot once the modal closes.
+  useEffect(() => {
+    if (!open) return undefined
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = prevOverflow }
+  }, [open])
+
   if (!open) return null
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-ink-900/40 backdrop-blur-sm" onClick={dismissible ? onClose : undefined} />
+      {/* Clicking the backdrop intentionally does NOT close the modal — only
+          the explicit X (or a Cancel button in the form) does, so an
+          accidental click outside a half-filled form never discards it. */}
+      <div className="absolute inset-0 bg-ink-900/40 backdrop-blur-sm" />
       <div className={`relative w-full ${wide ? 'max-w-2xl' : 'max-w-md'} card p-6 animate-fade-up max-h-[90vh] overflow-y-auto`}>
         <div className="flex items-center justify-between mb-5">
           <h3 className="text-lg font-bold text-ink-900">{title}</h3>
@@ -195,10 +358,18 @@ export function Modal({ open, onClose, title, children, wide, dismissible = true
 }
 
 export function ConfirmDialog({ open, title = 'Are you sure?', message, confirmLabel = 'Delete', cancelLabel = 'Cancel', danger = true, loading = false, error = '', onConfirm, onCancel }) {
+  useEffect(() => {
+    if (!open) return undefined
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = prevOverflow }
+  }, [open])
+
   if (!open) return null
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-ink-900/40 backdrop-blur-sm" onClick={loading ? undefined : onCancel} />
+      {/* Backdrop click intentionally does not cancel — same reasoning as Modal above. */}
+      <div className="absolute inset-0 bg-ink-900/40 backdrop-blur-sm" />
       <div className="relative w-full max-w-sm card p-6 animate-fade-up">
         <h3 className="text-lg font-bold text-ink-900">{title}</h3>
         {message && <p className="mt-2 text-sm text-ink-500">{message}</p>}

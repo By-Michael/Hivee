@@ -35,6 +35,10 @@ router.post(
   ctrl.parsePaymentScreenshot
 );
 
+// Batch-verify: must be registered before '/:id' routes or 'batch-verify'
+// would be swallowed as an :id param.
+router.post('/batch-verify', authorize('ADMIN'), ctrl.batchVerifyPayments);
+
 router.get('/:id', authorize('ADMIN', 'RESIDENT'), validate(idParamSchema), ctrl.getPayment);
 // Resident self-serve retraction of their OWN still-pending self-verified
 // payment. Deliberately a distinct path from DELETE /:id below (which is

@@ -26,15 +26,25 @@ function timeLeftLabel(expiresAt) {
   return `${mins}m left`
 }
 
-// Dashboard-slot widget: when the current committee member has a sensitive
-// change awaiting their approval, it temporarily replaces the "Community
-// snapshot" card in this exact grid position. Reverts to the normal
-// snapshot card automatically once resolved (approved/rejected/expired) —
-// no separate "dismiss" state to manage, it just reflects pendingChanges.
+// Same widget as before, but now lives in the top stat-card row (replacing
+// "Active projects" there) instead of buried at the bottom of the page —
+// that's the one thing a committee member is most likely to need to act on
+// the moment they log in, so it shouldn't require scrolling to find.
+// Height grows with the number of committee members who still need to
+// confirm (one row per approver) instead of a fixed StatCard height, so a
+// community with many committee members doesn't get a cramped, scrolling
+// mini-list. It reverts to the plain "Active projects" stat automatically
+// once nothing is left in `pendingChanges.asApprover` — see AdminDashboard.
 function PendingChangeSlot({ pendingChange, onDecide }) {
   const [confirmDecision, setConfirmDecision] = useState(null) // 'APPROVED' | 'REJECTED' | null
   const [submitting, setSubmitting] = useState(false)
   const rows = describeDiff(pendingChange.diff)
+  const approvals = pendingChange.approvals || []
+  // Grow the card by roughly one approver-row's worth of height for every
+  // extra confirmation still needed, on top of a sane minimum — so two
+  // committee members still awaiting sign-off doesn't look identical to
+  // eight.
+  const minHeight = 220 + Math.max(0, approvals.length - 1) * 34
 
   async function submit() {
     setSubmitting(true)
@@ -49,7 +59,10 @@ function PendingChangeSlot({ pendingChange, onDecide }) {
   }
 
   return (
-    <div className="card p-5 animate-fade-up border-2 border-amber-200 bg-amber-50/40">
+    <div
+      className="card p-5 animate-fade-up border-2 border-amber-200 bg-amber-50/40 sm:col-span-2 xl:col-span-1 flex flex-col"
+      style={{ minHeight }}
+    >
       <div className="flex items-center gap-2 mb-1">
         <ShieldCheck className="h-4.5 w-4.5 text-amber-600 shrink-0" />
         <h3 className="font-semibold text-ink-800">Committee approval needed</h3>
@@ -61,7 +74,7 @@ function PendingChangeSlot({ pendingChange, onDecide }) {
         <strong className="text-ink-800">{CHANGE_TYPE_LABELS[pendingChange.changeType] || pendingChange.changeType}</strong>:
       </p>
 
-      <div className="rounded-xl border border-amber-100 bg-white divide-y divide-amber-50 mb-4">
+      <div className="rounded-xl border border-amber-100 bg-white divide-y divide-amber-50 mb-3">
         {rows.map((r) => (
           <div key={r.field} className="px-3.5 py-2.5 text-xs">
             <p className="font-semibold text-ink-700 mb-0.5">{r.field}</p>
@@ -72,7 +85,24 @@ function PendingChangeSlot({ pendingChange, onDecide }) {
         ))}
       </div>
 
-      <div className="flex gap-2">
+      {approvals.length > 0 && (
+        <div className="rounded-xl border border-amber-100 bg-white divide-y divide-amber-50 mb-4">
+          {approvals.map((a) => (
+            <div key={a.id || a.member?.id} className="px-3.5 py-2 text-xs flex items-center justify-between">
+              <span className="text-ink-600">{a.member?.fullName || 'Committee member'}</span>
+              {a.decision === 'APPROVED' ? (
+                <span className="flex items-center gap-1 text-emerald-600 font-medium"><Check className="h-3.5 w-3.5" /> Confirmed</span>
+              ) : a.decision === 'REJECTED' ? (
+                <span className="flex items-center gap-1 text-rose-600 font-medium"><X className="h-3.5 w-3.5" /> Rejected</span>
+              ) : (
+                <span className="text-amber-600 font-medium">Awaiting</span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="flex gap-2 mt-auto">
         <button onClick={() => setConfirmDecision('APPROVED')} className="btn-primary flex-1 !py-2 text-sm">
           <Check className="h-4 w-4" /> Confirm
         </button>
@@ -202,14 +232,18 @@ export default function AdminDashboard() {
           to="/admin/payments"
           loading={!dataFullyLoaded}
         />
-        <StatCard
-          icon={FolderKanban}
-          label="Active projects"
-          value={activeProjects}
-          sub={`${projects.length} total projects`}
-          accent="rose"
-          to="/admin/projects"
-        />
+        {slotPendingChange ? (
+          <PendingChangeSlot pendingChange={slotPendingChange} onDecide={respondToPendingChange} />
+        ) : (
+          <StatCard
+            icon={FolderKanban}
+            label="Active projects"
+            value={activeProjects}
+            sub={`${projects.length} total projects`}
+            accent="rose"
+            to="/admin/projects"
+          />
+        )}
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-5 mb-6">
@@ -325,31 +359,27 @@ export default function AdminDashboard() {
           </div>
         </div>
 
-        {slotPendingChange ? (
-          <PendingChangeSlot pendingChange={slotPendingChange} onDecide={respondToPendingChange} />
-        ) : (
-          <div className="card p-5 animate-fade-up">
-            <h3 className="font-semibold text-ink-800 mb-4">Community snapshot</h3>
-            <div className="space-y-4">
-              <SnapshotRow icon={Users} label="Total residents" value={residentsMeta.total} />
-              <SnapshotRow icon={Users} label="Active residents" value={residentsMeta.activeTotal} />
-              <SnapshotRow icon={Receipt} label="Fee categories" value={fees.length} />
-              <SnapshotRow icon={FolderKanban} label="Projects in progress" value={activeProjects} />
-            </div>
-            <div className="mt-5 h-[1px] bg-ink-100" />
-            <div className="mt-5">
-              <p className="text-xs font-semibold text-ink-400 uppercase mb-3">Project budget usage</p>
-              <ResponsiveContainer width="100%" height={140}>
-                <BarChart data={projects.slice(0, 4).map((p) => ({ name: p.name.split(' ')[0], pct: Math.round((p.spent / p.budget) * 100) }))}>
-                  <XAxis dataKey="name" tick={{ fill: '#8790b3', fontSize: 11 }} axisLine={false} tickLine={false} />
-                  <YAxis hide />
-                  <Tooltip formatter={(v) => `${v}%`} contentStyle={{ borderRadius: 12, border: '1px solid #eef1f8' }} />
-                  <Bar dataKey="pct" fill="#2570f5" radius={[6, 6, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
+        <div className="card p-5 animate-fade-up">
+          <h3 className="font-semibold text-ink-800 mb-4">Community snapshot</h3>
+          <div className="space-y-4">
+            <SnapshotRow icon={Users} label="Total residents" value={residentsMeta.total} />
+            <SnapshotRow icon={Users} label="Active residents" value={residentsMeta.activeTotal} />
+            <SnapshotRow icon={Receipt} label="Fee categories" value={fees.length} />
+            <SnapshotRow icon={FolderKanban} label="Projects in progress" value={activeProjects} />
           </div>
-        )}
+          <div className="mt-5 h-[1px] bg-ink-100" />
+          <div className="mt-5">
+            <p className="text-xs font-semibold text-ink-400 uppercase mb-3">Project budget usage</p>
+            <ResponsiveContainer width="100%" height={140}>
+              <BarChart data={projects.slice(0, 4).map((p) => ({ name: p.name.split(' ')[0], pct: Math.round((p.spent / p.budget) * 100) }))}>
+                <XAxis dataKey="name" tick={{ fill: '#8790b3', fontSize: 11 }} axisLine={false} tickLine={false} />
+                <YAxis hide />
+                <Tooltip formatter={(v) => `${v}%`} contentStyle={{ borderRadius: 12, border: '1px solid #eef1f8' }} />
+                <Bar dataKey="pct" fill="#2570f5" radius={[6, 6, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
       </div>
     </div>
   )

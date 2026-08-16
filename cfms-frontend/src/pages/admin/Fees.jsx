@@ -3,7 +3,7 @@ import { Plus, Pencil, Trash2, Receipt as ReceiptIcon } from 'lucide-react'
 import { useData } from '../../context/DataContext'
 import { PageHeader, Modal, EmptyState, currency, ConfirmDialog, notify } from '../../components/ui'
 
-const empty = { name: '', amount: '', frequency: 'monthly', category: 'Security' }
+const empty = { name: '', amount: '', frequency: 'monthly', dueDay: '', category: 'Security' }
 
 export default function Fees() {
   const { fees, addFee, updateFee, removeFee } = useData()
@@ -28,8 +28,12 @@ export default function Fees() {
 
   function submit(e) {
     e.preventDefault()
+    if (form.frequency !== 'one-time' && !form.dueDay) {
+      notify('Pick which day of the month this fee should recur on.')
+      return
+    }
     setSaving(true)
-    const payload = { ...form, amount: Number(form.amount) }
+    const payload = { ...form, amount: Number(form.amount), dueDay: form.frequency === 'one-time' ? undefined : Number(form.dueDay) }
     const wasEditing = !!editing
     const action = wasEditing ? updateFee(editing.id, payload) : addFee(payload)
     action
@@ -67,6 +71,9 @@ export default function Fees() {
                 <p className="text-2xl font-bold font-display text-brand-700">{currency(f.amount)}</p>
                 <span className="badge bg-ink-100 text-ink-600 capitalize">{f.frequency}</span>
               </div>
+              {f.frequency !== 'one-time' && f.dueDay ? (
+                <p className="mt-2 text-xs text-ink-400">Recurs on day {f.dueDay} of the {f.frequency === 'monthly' ? 'month' : f.frequency === 'quarterly' ? 'quarter' : 'year'}</p>
+              ) : null}
             </div>
           ))}
         </div>
@@ -85,7 +92,7 @@ export default function Fees() {
             </div>
             <div>
               <label className="label">Frequency</label>
-              <select className="input" value={form.frequency} onChange={(e) => setForm({ ...form, frequency: e.target.value })}>
+              <select className="input" value={form.frequency} onChange={(e) => setForm({ ...form, frequency: e.target.value, dueDay: e.target.value === 'one-time' ? '' : form.dueDay })}>
                 <option value="monthly">Monthly</option>
                 <option value="quarterly">Quarterly</option>
                 <option value="yearly">Yearly</option>
@@ -93,6 +100,20 @@ export default function Fees() {
               </select>
             </div>
           </div>
+          {form.frequency !== 'one-time' && (
+            <div>
+              <label className="label">Recurs on day</label>
+              <select required className="input" value={form.dueDay} onChange={(e) => setForm({ ...form, dueDay: e.target.value })}>
+                <option value="" disabled>Choose a day…</option>
+                {Array.from({ length: 31 }, (_, i) => i + 1).map((d) => (
+                  <option key={d} value={d}>{d}</option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-ink-400">
+                Which day of the {form.frequency === 'monthly' ? 'month' : form.frequency === 'quarterly' ? 'quarter' : 'year'} this fee is due — e.g. day 1 for "due on the 1st".
+              </p>
+            </div>
+          )}
           <div>
             <label className="label">Category</label>
             <select

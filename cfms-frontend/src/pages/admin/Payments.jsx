@@ -1,9 +1,46 @@
 import { useMemo, useRef, useState } from 'react'
-import { Plus, Search, Wallet, Filter, Check, X as XIcon, Paperclip, Pencil, Trash2, FileText, AlertTriangle } from 'lucide-react'
+import { Plus, Search, Wallet, Filter, Check, CheckCheck, X as XIcon, Paperclip, Pencil, Trash2, FileText, AlertTriangle, UserX, SlidersHorizontal, Landmark } from 'lucide-react'
 import { useData } from '../../context/DataContext'
 import { PageHeader, Modal, Badge, EmptyState, currency, formatDate, ConfirmDialog, notify, usePagedList, Pager } from '../../components/ui'
 
 const empty = { residentId: '', targetType: 'fee', feeId: '', projectId: '', amount: '', method: 'Bank Transfer', reference: '', receiptFile: null }
+
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
+const STATUS_OPTIONS = [
+  { value: 'all', label: 'Any status' },
+  { value: 'pending', label: 'Pending' },
+  { value: 'pending_review', label: 'Needs review' },
+  { value: 'paid', label: 'Verified' },
+  { value: 'rejected', label: 'Rejected' },
+]
+const METHOD_OPTIONS = ['Cash', 'Bank Transfer', 'Mobile Money', 'Card', 'Other']
+
+const emptyFilters = {
+  residentQuery: '',
+  target: 'all', // 'all' | `fee:<id>` | `project:<id>`
+  status: 'all',
+  method: 'all',
+  year: 'all',
+  month: 'all',
+  minAmount: '',
+  maxAmount: '',
+  nonPayersOnly: false,
+  includeInactiveResidents: false,
+}
+
+function countActiveFilters(f) {
+  let n = 0
+  if (f.residentQuery.trim()) n++
+  if (f.target !== 'all') n++
+  if (f.status !== 'all') n++
+  if (f.method !== 'all') n++
+  if (f.year !== 'all') n++
+  if (f.month !== 'all') n++
+  if (f.minAmount !== '') n++
+  if (f.maxAmount !== '') n++
+  if (f.nonPayersOnly) n++
+  return n
+}
 
 function ResidentPicker({ residents, value, onChange }) {
   const [term, setTerm] = useState('')
@@ -159,7 +196,7 @@ function PaymentForm({ form, setForm, fees, projects, residents, showResidentPic
 }
 
 export default function Payments() {
-  const { payments, residents, fees, projects, addPayment, updatePayment, editPayment, removePayment } = useData()
+  const { payments, residents, fees, projects, addPayment, updatePayment, batchVerifyPayments, editPayment, removePayment, dataFullyLoaded } = useData()
   const [query, setQuery] = useState('')
   const [modal, setModal] = useState(false)
   const [form, setForm] = useState(empty)
@@ -167,9 +204,8 @@ export default function Payments() {
   const [rejectTarget, setRejectTarget] = useState(null)
   const [rejecting, setRejecting] = useState(false)
   const [verifyingId, setVerifyingId] = useState(null)
-  const [year, setYear] = useState('all')
-  const [month, setMonth] = useState('all')
-  const [needsReviewOnly, setNeedsReviewOnly] = useState(false)
+  const [selectedIds, setSelectedIds] = useState(() => new Set())
+  const [batchVerifying, setBatchVerifying] = useState(false)
   const [editTarget, setEditTarget] = useState(null)
   const [editForm, setEditForm] = useState(empty)
   const [editSaving, setEditSaving] = useState(false)
@@ -177,6 +213,15 @@ export default function Payments() {
   const [deleting, setDeleting] = useState(false)
   const fileInputRef = useRef(null)
   const editFileInputRef = useRef(null)
+
+  // ---- Comprehensive filter panel ----
+  // `filters` is what's actually applied to the list; `draft` is what the
+  // modal edits — nothing changes in the table until "Apply filters" is
+  // pressed, so partial edits (e.g. picking a fee before picking a month)
+  // never flash intermediate results.
+  const [filterOpen, setFilterOpen] = useState(false)
+  const [filters, setFilters] = useState(emptyFilters)
+  const [draft, setDraft] = useState(emptyFilters)
 
   const residentOf = (id) => residents.find((r) => r.id === id)
   const feeOf = (id) => fees.find((f) => f.id === id)
@@ -190,8 +235,6 @@ export default function Payments() {
     return Array.from(years).sort((a, b) => b - a)
   }, [payments])
 
-  const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
-
   // Anything sitting in 'pending' (basic unverified) or 'pending_review'
   // (bank lookup matched but a safeguard flagged it, or the verification
   // service was unreachable) needs an admin to actually look at it —
@@ -201,18 +244,89 @@ export default function Payments() {
     [payments]
   )
 
+  const activeFilterCount = countActiveFilters(filters)
+  const selectedFeeId = filters.target.startsWith('fee:') ? filters.target.slice(4) : ''
+  const selectedFee = feeOf(selectedFeeId)
+
+  function openFilter() { setDraft(filters); setFilterOpen(true) }
+  function applyFilters(e) {
+    e?.preventDefault()
+    setFilters(draft)
+    setFilterOpen(false)
+  }
+  function clearFilters() {
+    setDraft(emptyFilters)
+    setFilters(emptyFilters)
+    setFilterOpen(false)
+  }
+
+  // ---- Regular filtered payment rows (used unless "non-payers only") ----
   const filtered = useMemo(() => {
+    if (filters.nonPayersOnly) return []
+    const targetFeeId = filters.target.startsWith('fee:') ? filters.target.slice(4) : ''
+    const targetProjectId = filters.target.startsWith('project:') ? filters.target.slice(8) : ''
+    const min = filters.minAmount !== '' ? Number(filters.minAmount) : null
+    const max = filters.maxAmount !== '' ? Number(filters.maxAmount) : null
     return payments.filter((p) => {
       const q = query.toLowerCase()
       const label = p.feeId ? feeOf(p.feeId)?.name : p.projectName
       const matchesQuery = [residentOf(p.residentId)?.name, label, p.reference].join(' ').toLowerCase().includes(q)
+      const matchesResident = !filters.residentQuery.trim() ||
+        [residentOf(p.residentId)?.name, residentOf(p.residentId)?.unit, residentOf(p.residentId)?.phone]
+          .join(' ').toLowerCase().includes(filters.residentQuery.trim().toLowerCase())
       const d = p.date ? new Date(p.date) : null
-      const matchesYear = year === 'all' || (d && String(d.getFullYear()) === year)
-      const matchesMonth = month === 'all' || (d && String(d.getMonth()) === month)
-      const matchesReview = !needsReviewOnly || p.status === 'pending' || p.status === 'pending_review'
-      return matchesQuery && matchesYear && matchesMonth && matchesReview
+      const matchesYear = filters.year === 'all' || (d && String(d.getFullYear()) === filters.year)
+      const matchesMonth = filters.month === 'all' || (d && String(d.getMonth()) === filters.month)
+      const matchesTarget = filters.target === 'all' ||
+        (targetFeeId && p.feeId === targetFeeId) ||
+        (targetProjectId && p.projectId === targetProjectId)
+      const matchesStatus = filters.status === 'all' || p.status === filters.status
+      const matchesMethod = filters.method === 'all' || p.method === filters.method
+      const matchesMin = min === null || p.amount >= min
+      const matchesMax = max === null || p.amount <= max
+      return matchesQuery && matchesResident && matchesYear && matchesMonth && matchesTarget &&
+        matchesStatus && matchesMethod && matchesMin && matchesMax
     }).sort((a, b) => new Date(b.date) - new Date(a.date))
-  }, [payments, query, year, month, needsReviewOnly, residents, fees])
+  }, [payments, query, filters, residents, fees])
+
+  // ---- "Who hasn't paid" — residents with no non-rejected payment for
+  // the selected fee within the selected period. This is the answer to
+  // "which people didn't pay which month": the payments table only ever
+  // lists payments that *were* made, so finding gaps means cross-checking
+  // every resident against that fee instead of filtering payment rows.
+  const nonPayers = useMemo(() => {
+    if (!filters.nonPayersOnly || !selectedFeeId) return []
+    const pool = residents.filter((r) => filters.includeInactiveResidents || r.status === 'active')
+    return pool.filter((r) => {
+      const matchesResident = !filters.residentQuery.trim() ||
+        [r.name, r.unit, r.phone].join(' ').toLowerCase().includes(filters.residentQuery.trim().toLowerCase())
+      if (!matchesResident) return false
+      const hasPayment = payments.some((p) => {
+        if (p.residentId !== r.id || p.feeId !== selectedFeeId || p.status === 'rejected') return false
+        if (filters.year === 'all' && filters.month === 'all') return true
+        if (!p.date) return false
+        const d = new Date(p.date)
+        const matchesYear = filters.year === 'all' || String(d.getFullYear()) === filters.year
+        const matchesMonth = filters.month === 'all' || String(d.getMonth()) === filters.month
+        return matchesYear && matchesMonth
+      })
+      return !hasPayment
+    }).sort((a, b) => a.name.localeCompare(b.name))
+  }, [filters, residents, payments, selectedFeeId])
+
+  function periodLabel() {
+    if (filters.year === 'all' && filters.month === 'all') return 'ever'
+    if (filters.month === 'all') return filters.year
+    return `${MONTH_NAMES[Number(filters.month)]} ${filters.year === 'all' ? '' : filters.year}`.trim()
+  }
+
+  // Jumps straight into "Record payment" prefilled for a non-payer found
+  // above, so following up on the list is one click instead of a
+  // separate resident lookup.
+  function recordForNonPayer(resident) {
+    setForm({ ...empty, residentId: resident.id, targetType: 'fee', feeId: selectedFeeId, amount: selectedFee ? String(selectedFee.amount) : '' })
+    setModal(true)
+  }
 
   function submit(e) {
     e.preventDefault()
@@ -266,6 +380,43 @@ export default function Payments() {
       .finally(() => setVerifyingId(null))
   }
 
+  // Only pending / needs-review rows are ever selectable — verified/
+  // rejected rows have nothing to batch-verify.
+  const selectablePaged = pagedPayments.filter((p) => p.status === 'pending' || p.status === 'pending_review')
+  const allPagedSelected = selectablePaged.length > 0 && selectablePaged.every((p) => selectedIds.has(p.id))
+
+  function toggleRow(id) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+  }
+  function toggleAllOnPage() {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (allPagedSelected) {
+        selectablePaged.forEach((p) => next.delete(p.id))
+      } else {
+        selectablePaged.forEach((p) => next.add(p.id))
+      }
+      return next
+    })
+  }
+
+  function runBatchVerify() {
+    const ids = Array.from(selectedIds)
+    if (ids.length === 0) return
+    setBatchVerifying(true)
+    batchVerifyPayments(ids)
+      .then((count) => {
+        notify(`${count} payment${count === 1 ? '' : 's'} verified.`, 'success')
+        setSelectedIds(new Set())
+      })
+      .catch((err) => notify(err?.response?.data?.message || err.message))
+      .finally(() => setBatchVerifying(false))
+  }
+
   function confirmReject() {
     if (!rejectTarget) return
     setRejecting(true)
@@ -280,63 +431,112 @@ export default function Payments() {
   // Render at most 50 rows at a time — see Residents.jsx for why. `total`
   // above still sums the full filtered set, so the header stays accurate.
   const { pageItems: pagedPayments, page: tablePage, totalPages: tableTotalPages, total: tableTotal, setPage: setTablePage } = usePagedList(filtered, 50)
+  const { pageItems: pagedNonPayers, page: npPage, totalPages: npTotalPages, total: npTotal, setPage: setNpPage } = usePagedList(nonPayers, 50)
 
   return (
     <div>
       <PageHeader
         title="Payments"
-        subtitle={`${filtered.length} records · ${currency(total)} in view${needsReviewCount > 0 ? ` · ${needsReviewCount} awaiting review` : ''}`}
-        action={<button onClick={() => setModal(true)} className="btn-primary"><Plus className="h-4 w-4" /> Record payment</button>}
+        subtitle={
+          filters.nonPayersOnly
+            ? `${nonPayers.length} residents haven't paid "${selectedFee?.name || '—'}" (${periodLabel()})`
+            : `${filtered.length} records · ${currency(total)} in view${needsReviewCount > 0 ? ` · ${needsReviewCount} awaiting review` : ''}`
+        }
+        action={<button onClick={() => { setForm(empty); setModal(true) }} className="btn-primary"><Plus className="h-4 w-4" /> Record payment</button>}
       />
 
-      <div className="card p-4 mb-5 flex flex-col sm:flex-row gap-3">
+      <div className="card p-4 mb-5 flex flex-col sm:flex-row gap-3 sm:items-center">
         <div className="relative flex-1 max-w-sm">
           <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-400" />
-          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search resident, fee, reference…" className="input pl-10" />
+          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Quick search resident, fee, reference…" className="input pl-10" />
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <Filter className="h-4 w-4 text-ink-400" />
           <button
             type="button"
-            onClick={() => setNeedsReviewOnly((v) => !v)}
-            className={`badge border transition ${needsReviewOnly ? 'bg-orange-50 text-orange-700 border-orange-300' : 'bg-white text-ink-500 border-ink-200 hover:border-orange-300'}`}
+            onClick={openFilter}
+            className={`badge border transition ${activeFilterCount > 0 ? 'bg-brand-gradient text-white border-transparent' : 'bg-white text-ink-500 border-ink-200 hover:border-brand-300'}`}
           >
-            <AlertTriangle className="h-3.5 w-3.5" />
-            Needs review{needsReviewCount > 0 ? ` (${needsReviewCount})` : ''}
+            <SlidersHorizontal className="h-3.5 w-3.5" />
+            Filter{activeFilterCount > 0 ? ` (${activeFilterCount})` : ''}
           </button>
-          <select
-            value={year}
-            onChange={(e) => setYear(e.target.value)}
-            className="input !w-auto !py-1.5 text-sm"
-          >
-            <option value="all">All years</option>
-            {yearOptions.map((y) => (
-              <option key={y} value={String(y)}>{y}</option>
-            ))}
-          </select>
-          <select
-            value={month}
-            onChange={(e) => setMonth(e.target.value)}
-            className="input !w-auto !py-1.5 text-sm"
-          >
-            <option value="all">All months</option>
-            {MONTH_NAMES.map((label, idx) => (
-              <option key={label} value={String(idx)}>{label}</option>
-            ))}
-          </select>
+          {filters.nonPayersOnly && (
+            <span className="badge bg-orange-50 text-orange-700 border border-orange-300">
+              <UserX className="h-3.5 w-3.5" /> Showing who hasn't paid
+            </span>
+          )}
+          {activeFilterCount > 0 && (
+            <button type="button" onClick={clearFilters} className="text-xs text-ink-400 hover:text-rose-500 underline underline-offset-2">
+              Clear filters
+            </button>
+          )}
+          {selectedIds.size > 0 && (
+            <button
+              type="button"
+              onClick={runBatchVerify}
+              disabled={batchVerifying}
+              className="btn-primary !py-1.5 !px-3 text-xs disabled:opacity-50"
+              title="Marks the selected payments as verified. The bulk bank re-check API isn't wired in yet — this is a placeholder until that's connected."
+            >
+              <CheckCheck className="h-3.5 w-3.5" /> {batchVerifying ? 'Verifying…' : `Batch verify (${selectedIds.size})`}
+            </button>
+          )}
         </div>
       </div>
 
+      {filters.nonPayersOnly && !dataFullyLoaded && (
+        <div className="rounded-xl bg-amber-50 border border-amber-200 px-3.5 py-2.5 text-xs text-amber-700 mb-4">
+          Still loading the full payment history in the background — this list may be missing a few names until it finishes.
+        </div>
+      )}
+
       <div className="card overflow-hidden">
-        {filtered.length === 0 ? (
+        {filters.nonPayersOnly ? (
+          nonPayers.length === 0 ? (
+            <EmptyState icon={Check} title="Everyone's paid" subtitle={selectedFee ? `Every resident has a payment on record for "${selectedFee.name}" in this period.` : 'Pick a fee in the filter panel to check who has and hasn\'t paid.'} />
+          ) : (
+            <div className="table-wrap !border-0">
+              <table className="data-table">
+                <thead><tr><th>Resident</th><th>House number</th><th>Contact</th><th /></tr></thead>
+                <tbody>
+                  {pagedNonPayers.map((r) => (
+                    <tr key={r.id}>
+                      <td className="font-medium text-ink-800">{r.name}</td>
+                      <td>{r.unit}</td>
+                      <td className="text-xs text-ink-500">{r.phone}</td>
+                      <td className="text-right">
+                        <button onClick={() => recordForNonPayer(r)} className="btn-secondary !py-1.5 !px-3 text-xs">
+                          <Plus className="h-3.5 w-3.5" /> Record payment
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <Pager page={npPage} totalPages={npTotalPages} total={npTotal} onChange={setNpPage} pageSize={50} />
+            </div>
+          )
+        ) : filtered.length === 0 ? (
           <EmptyState icon={Wallet} title="No payments found" subtitle="Adjust your filters or record a new payment." />
         ) : (
           <div className="table-wrap !border-0">
             <table className="data-table">
-              <thead><tr><th>Resident</th><th>For</th><th>Amount</th><th>Method</th><th>Reference</th><th>Date</th><th>Status</th><th /></tr></thead>
+              <thead>
+                <tr>
+                  <th className="w-8">
+                    {selectablePaged.length > 0 && (
+                      <input type="checkbox" checked={allPagedSelected} onChange={toggleAllOnPage} title="Select all pending on this page" />
+                    )}
+                  </th>
+                  <th>Resident</th><th>For</th><th>Amount</th><th>Method</th><th>Reference</th><th>Date</th><th>Status</th><th /></tr>
+              </thead>
               <tbody>
                 {pagedPayments.map((p) => (
                   <tr key={p.id}>
+                    <td>
+                      {(p.status === 'pending' || p.status === 'pending_review') && (
+                        <input type="checkbox" checked={selectedIds.has(p.id)} onChange={() => toggleRow(p.id)} />
+                      )}
+                    </td>
                     <td className="font-medium text-ink-800">{residentOf(p.residentId)?.name}</td>
                     <td>
                       {p.feeId ? feeOf(p.feeId)?.name : (
@@ -366,6 +566,16 @@ export default function Payments() {
                           </span>
                         )}
                       </div>
+                      {p.senderName && (
+                        <div className="mt-0.5 text-[11px] text-ink-400">
+                          Bank: <span className={p.reviewFlags?.includes('sender name') ? 'text-orange-600 font-medium' : 'text-ink-500'}>{p.senderName}</span>
+                        </div>
+                      )}
+                      {p.paidToPreviousAccount && (
+                        <div className="mt-0.5 text-[11px] text-blue-600 flex items-center gap-1" title={p.reviewFlags}>
+                          <Landmark className="h-3 w-3" /> Paid to a previous account
+                        </div>
+                      )}
                     </td>
                     <td>
                       {p.status === 'pending' || p.status === 'pending_review' ? (
@@ -415,6 +625,117 @@ export default function Payments() {
           </div>
         )}
       </div>
+
+      {/* Comprehensive filter panel */}
+      <Modal open={filterOpen} onClose={() => setFilterOpen(false)} title="Filter payments" wide>
+        <form onSubmit={applyFilters} className="space-y-5">
+          <div>
+            <label className="label">Resident</label>
+            <input
+              className="input" placeholder="Name, house number, or phone…"
+              value={draft.residentQuery} onChange={(e) => setDraft({ ...draft, residentQuery: e.target.value })}
+            />
+          </div>
+
+          <div>
+            <label className="label">Paying for</label>
+            <select className="input" value={draft.target} onChange={(e) => setDraft({ ...draft, target: e.target.value })}>
+              <option value="all">Any fee or project</option>
+              <optgroup label="Fees">
+                {fees.map((f) => <option key={f.id} value={`fee:${f.id}`}>{f.name}</option>)}
+              </optgroup>
+              <optgroup label="Projects">
+                {projects.map((p) => <option key={p.id} value={`project:${p.id}`}>{p.name}</option>)}
+              </optgroup>
+            </select>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="label">Year</label>
+              <select className="input" value={draft.year} onChange={(e) => setDraft({ ...draft, year: e.target.value })}>
+                <option value="all">All years</option>
+                {yearOptions.map((y) => <option key={y} value={String(y)}>{y}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="label">Month</label>
+              <select className="input" value={draft.month} onChange={(e) => setDraft({ ...draft, month: e.target.value })}>
+                <option value="all">All months</option>
+                {MONTH_NAMES.map((label, idx) => <option key={label} value={String(idx)}>{label}</option>)}
+              </select>
+            </div>
+          </div>
+
+          {!draft.nonPayersOnly && (
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="label">Status</label>
+                  <select className="input" value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value })}>
+                    {STATUS_OPTIONS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="label">Method</label>
+                  <select className="input" value={draft.method} onChange={(e) => setDraft({ ...draft, method: e.target.value })}>
+                    <option value="all">Any method</option>
+                    {METHOD_OPTIONS.map((m) => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="label">Min amount (ETB)</label>
+                  <input type="number" min="0" className="input" value={draft.minAmount} onChange={(e) => setDraft({ ...draft, minAmount: e.target.value })} placeholder="No minimum" />
+                </div>
+                <div>
+                  <label className="label">Max amount (ETB)</label>
+                  <input type="number" min="0" className="input" value={draft.maxAmount} onChange={(e) => setDraft({ ...draft, maxAmount: e.target.value })} placeholder="No maximum" />
+                </div>
+              </div>
+            </>
+          )}
+
+          <div className="rounded-xl border border-ink-100 px-3.5 py-3 space-y-3">
+            <label className="flex items-start gap-2.5 cursor-pointer">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={draft.nonPayersOnly}
+                onChange={(e) => setDraft({ ...draft, nonPayersOnly: e.target.checked })}
+              />
+              <span>
+                <span className="text-sm font-medium text-ink-800 flex items-center gap-1.5"><UserX className="h-3.5 w-3.5" /> Only show residents who haven't paid</span>
+                <span className="block text-xs text-ink-400 mt-0.5">
+                  Instead of listing payments, lists every resident with no payment on record for the fee and period above — e.g. pick a fee and a month to see exactly who's missing that month's dues.
+                </span>
+              </span>
+            </label>
+            {draft.nonPayersOnly && (
+              <>
+                {!draft.target.startsWith('fee:') && (
+                  <p className="text-xs text-amber-600 flex items-center gap-1.5"><AlertTriangle className="h-3.5 w-3.5" /> Pick a specific fee above (not "Any fee") for this to work.</p>
+                )}
+                <label className="flex items-center gap-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={draft.includeInactiveResidents}
+                    onChange={(e) => setDraft({ ...draft, includeInactiveResidents: e.target.checked })}
+                  />
+                  <span className="text-sm text-ink-700">Include inactive residents</span>
+                </label>
+              </>
+            )}
+          </div>
+
+          <div className="flex gap-2 pt-2">
+            <button type="button" onClick={clearFilters} className="btn-secondary flex-1">Clear all</button>
+            <button type="submit" className="btn-primary flex-1">Apply filters</button>
+          </div>
+        </form>
+      </Modal>
 
       <Modal open={modal} onClose={() => setModal(false)} title="Record payment" wide>
         <form onSubmit={submit} className="space-y-5">

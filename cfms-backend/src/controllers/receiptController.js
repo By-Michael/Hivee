@@ -1,6 +1,7 @@
 const prisma = require('../config/prisma');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/AppError');
+const { saveReceiptFile, deleteReceiptFile } = require('../config/storage');
 
 const uploadReceipt = catchAsync(async (req, res) => {
   const { expenseId } = req.body;
@@ -13,11 +14,10 @@ const uploadReceipt = catchAsync(async (req, res) => {
   if (!expense) throw new AppError('Expense not found in this community', 404);
   if (expense.isVoided) throw new AppError('This expense has been reversed and no longer accepts new receipts', 409);
 
+  const { fileUrl, storageKey } = await saveReceiptFile(req.file);
+
   const receipt = await prisma.receipt.create({
-    data: {
-      expenseId,
-      fileUrl: `/uploads/receipts/${req.file.filename}`,
-    },
+    data: { expenseId, fileUrl, storageKey },
   });
 
   res.status(201).json({ success: true, data: receipt });
@@ -43,6 +43,7 @@ const deleteReceipt = catchAsync(async (req, res) => {
   if (!receipt) throw new AppError('Receipt not found', 404);
 
   await prisma.receipt.delete({ where: { id: receipt.id } });
+  await deleteReceiptFile(receipt.storageKey);
   res.json({ success: true, message: 'Receipt deleted' });
 });
 

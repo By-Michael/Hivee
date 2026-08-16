@@ -2,13 +2,58 @@ const prisma = require('../config/prisma');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/AppError');
 const { recordAudit } = require('../utils/audit');
+const { computeFundMoneyForCommunity } = require('./fundController');
 
 const createExpense = catchAsync(async (req, res) => {
+  let project = null;
   if (req.body.projectId) {
-    const project = await prisma.project.findFirst({
+    project = await prisma.project.findFirst({
       where: { id: req.body.projectId, communityId: req.communityId },
+      include: { fundAllocations: true, _count: { select: { expenses: true } } },
     });
     if (!project) throw new AppError('Project not found in this community', 404);
+
+    const amount = Number(req.body.amount);
+
+    // Check 1: the project's own remaining budget. Regardless of how much
+    // real cash sits in the linked fund(s), a project shouldn't be able to
+    // spend past what was actually budgeted for it — that's the whole
+    // point of tracking a per-project budget instead of just spending
+    // straight out of the fund.
+    const spentSoFarAgg = await prisma.expense.aggregate({
+      where: { projectId: project.id },
+      _sum: { amount: true },
+    });
+    const spentSoFar = Number(spentSoFarAgg._sum.amount || 0); // reversals are negative, so this already nets out
+    const remainingBudget = Number(project.budget) - spentSoFar;
+    if (amount > remainingBudget) {
+      throw new AppError(
+        `This expense (${amount.toFixed(2)}) would exceed "${project.name}"'s remaining project budget of ${remainingBudget.toFixed(2)}.`,
+        422,
+      );
+    }
+
+    // Check 2: the real, verified cash actually sitting in the fund(s)
+    // this project draws from — a committee can't spend money the
+    // community hasn't actually collected yet, independent of what the
+    // budget on paper says. A project can now span several funds (see
+    // ProjectFundAllocation), so we sum each linked fund's real balance
+    // rather than checking a single fundId like before.
+    const fundIds = project.fundAllocations.length > 0
+      ? project.fundAllocations.map((a) => a.fundId)
+      : [project.fundId];
+    const byFund = await computeFundMoneyForCommunity(req.communityId, fundIds);
+    const availableAcrossFunds = fundIds.reduce((sum, id) => sum + (byFund.get(id)?.actualBalance || 0), 0);
+
+    if (amount > availableAcrossFunds) {
+      const fundWord = fundIds.length > 1 ? 'funds linked to this project have' : "this project's fund has";
+      throw new AppError(
+        availableAcrossFunds > 0
+          ? `The ${fundWord} only ${availableAcrossFunds.toFixed(2)} available — this expense would put it into deficit.`
+          : `The ${fundWord} a balance of ${availableAcrossFunds < 0 ? availableAcrossFunds.toFixed(2) : '0.00'} — there's no money left to spend from it.`,
+        422,
+      );
+    }
   }
 
   const expense = await prisma.expense.create({

@@ -2,7 +2,7 @@ import { useMemo, useRef, useState } from 'react'
 import { Landmark, Target, Users, TrendingUp, HandCoins, Copy, Check, Camera, Loader2, ShieldCheck, Clock, RotateCw } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import { useData } from '../../context/DataContext'
-import { PageHeader, Modal, currency } from '../../components/ui'
+import { PageHeader, Modal, Badge, currency, usePagedList, Pager, formatDate } from '../../components/ui'
 import { getMeta } from '../../lib/adapters'
 
 const catColors = {
@@ -50,6 +50,15 @@ export default function ResidentFunds() {
   const { funds, fees, projects, payments, residents, community, submitSelfPayment, parsePaymentScreenshot } = useData()
   const total = funds.reduce((s, f) => s + f.actualBalance, 0)
   const me = residents.find((r) => r.id === user?.residentId) || residents[0]
+  const fundOf = (id) => funds.find((f) => f.id === id)
+  // Direct fund contributions this resident made — shown further down so
+  // they can actually see what happened after "Contribute" instead of the
+  // modal just closing with no lasting trace of the status.
+  const myContributions = useMemo(
+    () => payments.filter((p) => p.residentId === me?.id && p.fundId).sort((a, b) => new Date(b.date) - new Date(a.date)),
+    [payments, me]
+  )
+  const { pageItems: pagedContributions, page: contribPage, totalPages: contribTotalPages, total: contribTotal, setPage: setContribPage } = usePagedList(myContributions, 20)
 
   const [contribute, setContribute] = useState(null)
   const [form, setForm] = useState(emptyForm)
@@ -62,6 +71,7 @@ export default function ResidentFunds() {
   const [successReviewFlags, setSuccessReviewFlags] = useState('')
   const [ocrLoading, setOcrLoading] = useState(false)
   const [ocrNote, setOcrNote] = useState('')
+  const [receiptAmount, setReceiptAmount] = useState(null)
   const fileInputRef = useRef(null)
 
   // Contributing directly to a fund (any amount the resident chooses) uses
@@ -91,6 +101,7 @@ export default function ResidentFunds() {
     setError('')
     setCanRetry(false)
     setOcrNote('')
+    setReceiptAmount(null)
   }
 
   function closeModal() {
@@ -117,10 +128,19 @@ export default function ResidentFunds() {
       if (Object.keys(updates).length) {
         setForm((f) => ({ ...f, ...updates }))
         setUseMyName(false)
-        setOcrNote('Filled in from your screenshot — please double-check before submitting.')
+        let note = 'Filled in from your screenshot — please double-check before submitting.'
+        // A fund contribution's amount is whatever the resident chooses to
+        // type in — but if the receipt itself shows a different amount than
+        // what's currently typed into the Amount field, that's worth
+        // flagging before they submit, same as the fee-payment flow does.
+        if (result.amount != null && form.amount && Math.abs(result.amount - Number(form.amount)) > 0.01) {
+          note += ` Heads up: the screenshot shows ${result.amount}, but you entered ${currency(Number(form.amount))} — double-check the amount before submitting.`
+        }
+        setOcrNote(note)
       } else {
         setOcrNote("Couldn't read a name or transaction ID from that image. Please fill them in manually.")
       }
+      setReceiptAmount(result.amount != null ? Number(result.amount) : null)
     } catch (err) {
       setOcrNote(err?.response?.data?.message || err.message || 'Could not read that screenshot.')
     } finally {
@@ -141,6 +161,7 @@ export default function ResidentFunds() {
         txnId: form.txnId.trim(),
         payerName: form.payerName.trim(),
         reason: form.reason.trim() || `Contribution to ${contribute?.name || ''}`,
+        receiptAmount,
       })
       setSuccessStatus(payment?.status || 'paid')
       setSuccessReviewFlags(payment?.reviewFlags || '')
@@ -209,6 +230,39 @@ export default function ResidentFunds() {
         ))}
       </div>
 
+      <div className="card overflow-hidden mt-5">
+        <div className="px-5 py-4 border-b border-ink-50">
+          <h3 className="font-semibold text-ink-800">My contributions</h3>
+          <p className="text-xs text-ink-400 mt-0.5">Every direct fund contribution you've made, and where it stands right now.</p>
+        </div>
+        {myContributions.length === 0 ? (
+          <p className="px-5 py-8 text-center text-sm text-ink-400">No fund contributions yet — use "Contribute" on any fund above.</p>
+        ) : (
+          <div className="table-wrap !border-0">
+            <table className="data-table">
+              <thead><tr><th>Fund</th><th>Amount</th><th>Date</th><th>Reference</th><th>Status</th></tr></thead>
+              <tbody>
+                {pagedContributions.map((p) => (
+                  <tr key={p.id}>
+                    <td className="font-medium text-ink-800">{fundOf(p.fundId)?.name || '—'}</td>
+                    <td className="font-semibold">{currency(p.amount)}</td>
+                    <td>{formatDate(p.date)}</td>
+                    <td className="font-mono text-xs text-ink-400">{p.reference}</td>
+                    <td>
+                      <Badge status={p.status} />
+                      {p.status === 'pending_review' && p.reviewFlags && (
+                        <p className="mt-1 text-[11px] text-amber-600 max-w-xs">{p.reviewFlags}</p>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <Pager page={contribPage} totalPages={contribTotalPages} total={contribTotal} onChange={setContribPage} pageSize={20} />
+          </div>
+        )}
+      </div>
+
       <Modal open={!!contribute} onClose={closeModal} title={`Contribute to ${contribute?.name || ''}`} dismissible={phase !== 'verifying'} wide>
         {phase === 'success' ? (
           successStatus === 'pending_review' ? (
@@ -264,6 +318,11 @@ export default function ResidentFunds() {
                 placeholder="e.g. 500"
                 value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })}
               />
+              {receiptAmount != null && form.amount && Math.abs(receiptAmount - Number(form.amount)) > 0.01 && (
+                <p className="mt-1.5 text-xs text-amber-600">
+                  Your uploaded receipt appears to show {currency(receiptAmount)}, which doesn't match this amount — this will be sent for admin review instead of auto-approved.
+                </p>
+              )}
             </div>
 
             <div className="rounded-xl bg-brand-50/60 ring-1 ring-brand-100 p-4">

@@ -1,47 +1,92 @@
 import { useState } from 'react'
-import { Plus, Pencil, Trash2, FolderKanban, Calendar, Lock } from 'lucide-react'
+import { Plus, Pencil, FolderKanban, Calendar, Ban, X } from 'lucide-react'
 import { useData } from '../../context/DataContext'
-import { PageHeader, Modal, Badge, currency, formatDate, EmptyState, ConfirmDialog, notify } from '../../components/ui'
+import { PageHeader, Modal, Badge, currency, formatDate, EmptyState, notify } from '../../components/ui'
 
-const empty = { name: '', fundId: '', budget: '', status: 'planned', startDate: '', endDate: '' }
+const empty = { name: '', description: '', fundId: '', budget: '', status: 'planned', startDate: '', endDate: '' }
 
 export default function Projects() {
-  const { projects, funds, addProject, updateProject, removeProject } = useData()
+  const { projects, funds, addProject, updateProject, cancelProject } = useData()
   const [modal, setModal] = useState(false)
   const [editing, setEditing] = useState(null)
   const [form, setForm] = useState(empty)
+  // Multi-fund split, editable as its own list separate from `form` so the
+  // "single fund" case (the vast majority) never has to think about it —
+  // it defaults to one row that tracks form.fundId/budget automatically.
+  const [splitFunds, setSplitFunds] = useState(false)
+  const [allocations, setAllocations] = useState([])
   const [saving, setSaving] = useState(false)
-  const [deleteTarget, setDeleteTarget] = useState(null)
-  const [deleting, setDeleting] = useState(false)
+
+  const [cancelTarget, setCancelTarget] = useState(null)
+  const [cancelReason, setCancelReason] = useState('')
+  const [cancelling, setCancelling] = useState(false)
 
   const fundOf = (id) => funds.find((f) => f.id === id)?.name || '—'
 
-  function openAdd() { setEditing(null); setForm(empty); setModal(true) }
-  function openEdit(p) { setEditing(p); setForm(p); setModal(true) }
-
-  function confirmDelete() {
-    if (!deleteTarget) return
-    setDeleting(true)
-    removeProject(deleteTarget.id)
-      .then(() => { setDeleteTarget(null); notify('Project deleted.', 'success') })
-      // Deletion is blocked server-side once a project has expenses logged
-      // — surface that explanation instead of a generic failure.
-      .catch((err) => notify(err?.response?.data?.message || err.message))
-      .finally(() => setDeleting(false))
+  function openAdd() {
+    setEditing(null); setForm(empty); setSplitFunds(false); setAllocations([]); setModal(true)
   }
+  function openEdit(p) {
+    setEditing(p); setForm(p)
+    const multi = (p.fundAllocations || []).length > 1
+    setSplitFunds(multi)
+    setAllocations(multi ? p.fundAllocations : [])
+    setModal(true)
+  }
+
+  function openCancel(p) { setCancelTarget(p); setCancelReason('') }
+
+  function confirmCancel(e) {
+    e.preventDefault()
+    if (!cancelTarget || !cancelReason.trim()) return
+    setCancelling(true)
+    cancelProject(cancelTarget.id, cancelReason.trim())
+      .then((result) => {
+        setCancelTarget(null)
+        notify(result.message, result.pendingChange ? 'info' : 'success')
+      })
+      .catch((err) => notify(err?.response?.data?.message || err.message))
+      .finally(() => setCancelling(false))
+  }
+
+  function addAllocationRow() {
+    const used = new Set([form.fundId, ...allocations.map((a) => a.fundId)])
+    const next = funds.find((f) => !used.has(f.id))
+    setAllocations([...allocations, { fundId: next?.id || '', amount: '' }])
+  }
+  function updateAllocationRow(i, patch) {
+    setAllocations(allocations.map((a, idx) => (idx === i ? { ...a, ...patch } : a)))
+  }
+  function removeAllocationRow(i) {
+    setAllocations(allocations.filter((_, idx) => idx !== i))
+  }
+
+  const primaryAmount = splitFunds
+    ? Math.max(0, Number(form.budget || 0) - allocations.reduce((s, a) => s + Number(a.amount || 0), 0))
+    : Number(form.budget || 0)
+  const allocationTotal = primaryAmount + allocations.reduce((s, a) => s + Number(a.amount || 0), 0)
+  const allocationMismatch = splitFunds && Math.abs(allocationTotal - Number(form.budget || 0)) > 0.01
 
   function submit(e) {
     e.preventDefault()
+    if (allocationMismatch) {
+      notify('Fund allocations must add up to the total budget.')
+      return
+    }
     setSaving(true)
-    const payload = { ...form, budget: Number(form.budget) }
+    const fundAllocations = splitFunds
+      ? [{ fundId: form.fundId, amount: primaryAmount }, ...allocations.filter((a) => a.fundId)]
+      : undefined
+    const payload = { ...form, budget: Number(form.budget), fundAllocations }
     const wasEditing = !!editing
     const action = wasEditing ? updateProject(editing.id, payload) : addProject(payload)
     action
       .then((result) => {
         setModal(false)
-        // Budget changes on a project that already has expenses logged go
-        // through committee approval rather than applying instantly — tell
-        // the admin which happened instead of a blanket "updated".
+        // Budget/fund-split changes on a project that already has expenses
+        // logged go through committee approval rather than applying
+        // instantly — tell the admin which happened instead of a blanket
+        // "updated".
         if (wasEditing && result?.budgetChangeMessage) {
           notify(result.budgetChangeMessage, result.pendingChange ? 'info' : 'success')
         } else {
@@ -66,25 +111,29 @@ export default function Projects() {
         <div className="grid sm:grid-cols-2 gap-4">
           {projects.map((p) => {
             const pct = p.budget ? Math.min(100, Math.round((p.spent / p.budget) * 100)) : 0
+            const cancelled = p.status === 'cancelled'
             return (
               <div key={p.id} className="card p-5 hover:shadow-glow transition-shadow group">
                 <div className="flex items-start justify-between">
                   <div>
                     <p className="font-semibold text-ink-800">{p.name}</p>
-                    <p className="text-xs text-ink-400 mt-0.5">{fundOf(p.fundId)}</p>
+                    <p className="text-xs text-ink-400 mt-0.5">
+                      {p.fundAllocations.length > 1
+                        ? `${p.fundAllocations.length} funds: ${p.fundAllocations.map((a) => a.fundName).join(', ')}`
+                        : fundOf(p.fundId)}
+                    </p>
                   </div>
-                  <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button onClick={() => openEdit(p)} className="p-1.5 rounded-lg text-ink-400 hover:bg-brand-50 hover:text-brand-600"><Pencil className="h-3.5 w-3.5" /></button>
-                    {p.expenseCount > 0 ? (
-                      <span title="Can't be deleted — expenses are logged against this project. Mark it Cancelled or Completed instead." className="p-1.5 rounded-lg text-ink-300 cursor-not-allowed">
-                        <Lock className="h-3.5 w-3.5" />
-                      </span>
-                    ) : (
-                      <button onClick={() => setDeleteTarget(p)} className="p-1.5 rounded-lg text-ink-400 hover:bg-rose-50 hover:text-rose-500"><Trash2 className="h-3.5 w-3.5" /></button>
-                    )}
-                  </div>
+                  {!cancelled && (
+                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button onClick={() => openEdit(p)} className="p-1.5 rounded-lg text-ink-400 hover:bg-brand-50 hover:text-brand-600"><Pencil className="h-3.5 w-3.5" /></button>
+                      <button onClick={() => openCancel(p)} title="Cancel project" className="p-1.5 rounded-lg text-ink-400 hover:bg-rose-50 hover:text-rose-500"><Ban className="h-3.5 w-3.5" /></button>
+                    </div>
+                  )}
                 </div>
                 <div className="mt-3"><Badge status={p.status} /></div>
+                {cancelled && p.cancelReason && (
+                  <p className="mt-2 text-xs text-rose-500">Cancelled: {p.cancelReason}</p>
+                )}
                 <div className="mt-4">
                   <div className="flex justify-between text-xs text-ink-500 mb-1.5">
                     <span>{currency(p.spent)} spent</span>
@@ -113,7 +162,7 @@ export default function Projects() {
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="label">Linked fund</label>
+              <label className="label">Primary fund</label>
               <select required className="input" value={form.fundId} onChange={(e) => setForm({ ...form, fundId: e.target.value })}>
                 <option value="">Select fund</option>
                 {funds.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
@@ -125,6 +174,9 @@ export default function Projects() {
                 <option value="planned">Planned</option>
                 <option value="in-progress">In progress</option>
                 <option value="completed">Completed</option>
+                {/* Cancelled isn't offered here on purpose — cancellation
+                    always goes through the dedicated flow (reason +
+                    committee approval), never a plain status dropdown. */}
               </select>
             </div>
           </div>
@@ -140,6 +192,52 @@ export default function Projects() {
               This project already has expenses logged against it, so changing the budget will need every other committee member to approve before it takes effect.
             </p>
           )}
+
+          <div className="rounded-xl border border-ink-100 p-3">
+            <label className="flex items-center gap-2 text-sm font-medium text-ink-700">
+              <input
+                type="checkbox"
+                checked={splitFunds}
+                disabled={!!(editing && editing.expenseCount > 0)}
+                onChange={(e) => { setSplitFunds(e.target.checked); if (!e.target.checked) setAllocations([]) }}
+              />
+              Fund this project from multiple fund accounts
+            </label>
+            {editing && editing.expenseCount > 0 && (
+              <p className="text-xs text-ink-400 mt-1">Fund split can't be changed once expenses are logged against this project.</p>
+            )}
+            {splitFunds && (
+              <div className="mt-3 space-y-2">
+                <div className="flex items-center justify-between text-xs text-ink-500">
+                  <span>{fundOf(form.fundId) || 'Primary fund'}</span>
+                  <span>{currency(primaryAmount)}</span>
+                </div>
+                {allocations.map((a, i) => (
+                  <div key={i} className="flex gap-2 items-center">
+                    <select
+                      className="input flex-1"
+                      value={a.fundId}
+                      onChange={(e) => updateAllocationRow(i, { fundId: e.target.value })}
+                    >
+                      <option value="">Select fund</option>
+                      {funds.filter((f) => f.id !== form.fundId).map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+                    </select>
+                    <input
+                      type="number" min="0" className="input w-32" placeholder="Amount"
+                      value={a.amount}
+                      onChange={(e) => updateAllocationRow(i, { amount: e.target.value })}
+                    />
+                    <button type="button" onClick={() => removeAllocationRow(i)} className="p-1.5 text-ink-400 hover:text-rose-500"><X className="h-4 w-4" /></button>
+                  </div>
+                ))}
+                <button type="button" onClick={addAllocationRow} className="text-xs font-medium text-brand-600 hover:text-brand-700">+ Add another fund</button>
+                <p className={`text-xs ${allocationMismatch ? 'text-rose-500' : 'text-ink-400'}`}>
+                  Total allocated: {currency(allocationTotal)} of {currency(Number(form.budget || 0))} budget
+                </p>
+              </div>
+            )}
+          </div>
+
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="label">Start date</label>
@@ -152,19 +250,36 @@ export default function Projects() {
           </div>
           <div className="flex gap-2 pt-2">
             <button type="button" onClick={() => setModal(false)} disabled={saving} className="btn-secondary flex-1">Cancel</button>
-            <button type="submit" disabled={saving} className="btn-primary flex-1">{saving ? 'Saving…' : (editing ? 'Save changes' : 'Create project')}</button>
+            <button type="submit" disabled={saving || allocationMismatch} className="btn-primary flex-1">{saving ? 'Saving…' : (editing ? 'Save changes' : 'Create project')}</button>
           </div>
         </form>
       </Modal>
 
-      <ConfirmDialog
-        open={!!deleteTarget}
-        title="Delete project?"
-        message={deleteTarget ? `This will permanently delete "${deleteTarget.name}". This action cannot be undone.` : ''}
-        loading={deleting}
-        onConfirm={confirmDelete}
-        onCancel={() => setDeleteTarget(null)}
-      />
+      <Modal open={!!cancelTarget} onClose={() => setCancelTarget(null)} title="Cancel project">
+        <form onSubmit={confirmCancel} className="space-y-4">
+          <p className="text-sm text-ink-500">
+            {cancelTarget ? `Cancelling "${cancelTarget.name}" requires a reason and needs every other committee member to approve before it takes effect. This can't be undone.` : ''}
+          </p>
+          <div>
+            <label className="label">Reason for cancellation</label>
+            <textarea
+              required
+              minLength={3}
+              rows={3}
+              className="input"
+              value={cancelReason}
+              onChange={(e) => setCancelReason(e.target.value)}
+              placeholder="Why is this project being cancelled?"
+            />
+          </div>
+          <div className="flex gap-2 pt-2">
+            <button type="button" onClick={() => setCancelTarget(null)} disabled={cancelling} className="btn-secondary flex-1">Back</button>
+            <button type="submit" disabled={cancelling || !cancelReason.trim()} className="btn-primary flex-1 bg-rose-500 hover:bg-rose-600">
+              {cancelling ? 'Submitting…' : 'Submit for committee approval'}
+            </button>
+          </div>
+        </form>
+      </Modal>
     </div>
   )
 }

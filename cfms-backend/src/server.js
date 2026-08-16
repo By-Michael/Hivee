@@ -2,6 +2,7 @@ require('dotenv').config();
 const app = require('./app');
 const prisma = require('./config/prisma');
 const { isStubActive } = require('./utils/bankVerification');
+const { isSupabaseConfigured } = require('./config/storage');
 
 const PORT = process.env.PORT || 4000;
 
@@ -13,6 +14,26 @@ if (isStubActive()) {
     '#  Bank transaction verification is running in STUB MODE —  #',
     '#  self-verified resident payments are NOT being checked    #',
     '#  against a real bank. Do not run this way in production.  #',
+    '#############################################################',
+    '',
+  ].join('\n');
+  if (process.env.NODE_ENV === 'production') {
+    console.error(banner);
+  } else {
+    console.warn(banner);
+  }
+}
+
+if (!isSupabaseConfigured) {
+  const banner = [
+    '',
+    '#############################################################',
+    '#  WARNING: SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not set.#',
+    '#  Receipt uploads are being written to local disk, which   #',
+    '#  is WIPED on every deploy/restart on Render. Every         #',
+    '#  receipt uploaded this way will 404 after the next deploy.#',
+    '#  Set SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY before       #',
+    '#  relying on receipt uploads in production.                 #',
     '#############################################################',
     '',
   ].join('\n');

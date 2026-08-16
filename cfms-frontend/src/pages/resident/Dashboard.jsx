@@ -2,7 +2,7 @@ import { Wallet, Landmark, FolderKanban, CheckCircle2, Clock } from 'lucide-reac
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts'
 import { useAuth } from '../../context/AuthContext'
 import { useData } from '../../context/DataContext'
-import { StatCard, Badge, PageHeader, currency, formatDate } from '../../components/ui'
+import { StatCard, Badge, PageHeader, currency, formatDate, usePagedList, Pager } from '../../components/ui'
 
 export default function ResidentDashboard() {
   const { user } = useAuth()
@@ -19,6 +19,7 @@ export default function ResidentDashboard() {
   const feeOf = (id) => fees.find((f) => f.id === id)
 
   const dueFees = fees.filter((f) => !myPayments.some((p) => p.feeId === f.id && p.status === 'paid'))
+  const { pageItems: pagedMyPayments, page: histPage, totalPages: histTotalPages, total: histTotal, setPage: setHistPage } = usePagedList(myPayments, 10)
 
   return (
     <div>
@@ -38,7 +39,7 @@ export default function ResidentDashboard() {
             <table className="data-table">
               <thead><tr><th>Fee</th><th>Amount</th><th>Date</th><th>Status</th></tr></thead>
               <tbody>
-                {myPayments.map((p) => (
+                {pagedMyPayments.map((p) => (
                   <tr key={p.id}>
                     <td className="font-medium text-ink-800">{feeOf(p.feeId)?.name}</td>
                     <td className="font-semibold">{currency(p.amount)}</td>
@@ -48,6 +49,7 @@ export default function ResidentDashboard() {
                 ))}
               </tbody>
             </table>
+            <Pager page={histPage} totalPages={histTotalPages} total={histTotal} onChange={setHistPage} pageSize={10} />
           </div>
         </div>
 

@@ -3,6 +3,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const cookieParser = require('cookie-parser');
+const compression = require('compression');
 const path = require('path');
 const rateLimit = require('express-rate-limit');
 
@@ -23,6 +24,7 @@ const reportRoutes = require('./routes/reportRoutes');
 const committeeTransferRoutes = require('./routes/committeeTransferRoutes');
 const pendingChangeRoutes = require('./routes/pendingChangeRoutes');
 const auditRoutes = require('./routes/auditRoutes');
+const committeeAutoApprovalRoutes = require('./routes/committeeAutoApprovalRoutes');
 
 const app = express();
 
@@ -38,6 +40,15 @@ if (process.env.NODE_ENV === 'production') {
 
 app.disable('x-powered-by');
 app.use(helmet());
+// Login triggers ~9 parallel list requests (fees/funds/projects/expenses/
+// payments/residents/community/fund-summaries/pending-changes), several of
+// which can be a few hundred KB of JSON for a mid-size community. gzip
+// compression was missing entirely, so every one of those responses went
+// over the wire uncompressed — this alone typically cuts JSON payload size
+// by 70-85%, which is most of what "long data crunching after login" was:
+// not server compute, but transfer + JSON.parse time on plain-text bodies
+// several times larger than they needed to be.
+app.use(compression());
 const corsOrigin = process.env.CORS_ORIGIN || '*';
 // Printed on every boot so a misconfigured/missing CORS_ORIGIN is visible
 // in the Render logs immediately, instead of only showing up as a vague
@@ -93,6 +104,7 @@ app.use(`${API_PREFIX}/reports`, reportRoutes);
 app.use(`${API_PREFIX}/committee-transfers`, committeeTransferRoutes);
 app.use(`${API_PREFIX}/pending-changes`, pendingChangeRoutes);
 app.use(`${API_PREFIX}/audit-logs`, auditRoutes);
+app.use(`${API_PREFIX}/committee-auto-approvals`, committeeAutoApprovalRoutes);
 
 // Unmatched routes.
 app.use((req, res, next) => {

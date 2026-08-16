@@ -34,6 +34,24 @@ const CHANGE_TYPES = {
       return diff;
     },
     async apply(tx, entityId, diff) {
+      // Only the account NUMBER identifies a distinct bank account for
+      // verification purposes (bank/holder name changes alone, e.g. a
+      // typo fix, don't create a new account to reconcile against) — so
+      // only snapshot history when the number is actually changing away
+      // from a real previous value.
+      if (diff.paymentAccountNumber && diff.paymentAccountNumber.from) {
+        const before = await tx.community.findUnique({ where: { id: entityId } });
+        if (before) {
+          await tx.communityBankAccountHistory.create({
+            data: {
+              communityId: entityId,
+              bankName: before.paymentBankName,
+              accountName: before.paymentAccountName,
+              accountNumber: before.paymentAccountNumber,
+            },
+          });
+        }
+      }
       const data = {};
       for (const [field, { to }] of Object.entries(diff)) data[field] = to;
       return tx.community.update({ where: { id: entityId }, data });
@@ -59,6 +77,35 @@ const CHANGE_TYPES = {
     },
     async apply(tx, entityId, diff) {
       return tx.project.update({ where: { id: entityId }, data: { budget: diff.budget.to } });
+    },
+  },
+  // Projects can never be deleted (see projectController — the DELETE
+  // route was removed entirely). Cancelling is the only way to close out a
+  // project that shouldn't continue, and since it's effectively
+  // irreversible in practice (nothing un-cancels a project), it always
+  // requires full committee approval and a stated reason — regardless of
+  // whether the project has expenses logged yet, unlike PROJECT_BUDGET
+  // above which only escalates once there's a financial trail to protect.
+  PROJECT_CANCELLATION: {
+    label: 'Project cancellation',
+    entityType: 'Project',
+    fields: ['status', 'cancelReason'],
+    buildDiff(current, proposed) {
+      if (current.status === 'CANCELLED') {
+        throw new AppError('This project is already cancelled', 422);
+      }
+      const reason = (proposed.cancelReason || '').trim();
+      if (!reason) throw new AppError('A cancellation reason is required', 400);
+      return {
+        status: { from: current.status, to: 'CANCELLED' },
+        cancelReason: { from: current.cancelReason ?? null, to: reason },
+      };
+    },
+    async apply(tx, entityId, diff) {
+      return tx.project.update({
+        where: { id: entityId },
+        data: { status: 'CANCELLED', cancelReason: diff.cancelReason.to },
+      });
     },
   },
 };

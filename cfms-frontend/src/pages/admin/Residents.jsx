@@ -1,10 +1,24 @@
 import { useMemo, useState } from 'react'
-import { Plus, Search, Pencil, Trash2, Users, Phone, Mail, Copy, Check, AlertTriangle, Eye, MapPin, IdCard, ReceiptText, ShieldCheck } from 'lucide-react'
+import { Plus, Search, Pencil, Trash2, Users, Phone, Mail, Copy, Check, AlertTriangle, Eye, MapPin, IdCard, ReceiptText, ShieldCheck, Download, Ban, RotateCcw } from 'lucide-react'
 import { useData } from '../../context/DataContext'
 import { useAuth } from '../../context/AuthContext'
 import { PageHeader, Badge, Modal, EmptyState, formatDate, currency, ConfirmDialog, notify, usePagedList, Pager } from '../../components/ui'
 
-const empty = { name: '', unit: '', phone: '', email: '', status: 'active', idNumber: '', ownerType: 'owner', address: '' }
+const empty = { name: '', unit: '', phone: '', email: '', idNumber: '', ownerType: 'owner', address: '' }
+
+// Clickable one-click chips for the deactivation reason modal — the
+// committee can tap one of these instead of typing, or pick "Other" to
+// type a custom reason. Kept in sync with the backend's
+// COMMON_INACTIVE_REASONS (residentController.js) but not strictly
+// required to match — the backend accepts any free-text reason.
+const COMMON_INACTIVE_REASONS = [
+  'Non-payment of fees',
+  'Moved out / no longer a resident',
+  'Property sold',
+  'Requested by resident',
+  'Violation of community rules',
+  'Duplicate or incorrect account',
+]
 
 function generateTempPassword() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789'
@@ -14,7 +28,7 @@ function generateTempPassword() {
 }
 
 export default function Residents() {
-  const { residents, addResident, updateResident, removeResident, fetchResidentSummary, residentsMeta } = useData()
+  const { residents, addResident, updateResident, removeResident, fetchResidentSummary, residentsMeta, deactivateResident, reactivateResident, exportResidentPayments } = useData()
   const { user } = useAuth()
   const [query, setQuery] = useState('')
   const [modal, setModal] = useState(false)
@@ -37,6 +51,15 @@ export default function Residents() {
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState('')
+  const [exporting, setExporting] = useState(false)
+
+  // ---- Deactivate resident: reason popup ----
+  const [deactivateTarget, setDeactivateTarget] = useState(null) // resident being deactivated
+  const [deactivateReason, setDeactivateReason] = useState('')
+  const [deactivateCustom, setDeactivateCustom] = useState('')
+  const [deactivating, setDeactivating] = useState(false)
+  const [deactivateError, setDeactivateError] = useState('')
+  const [reactivating, setReactivating] = useState(false)
 
   const filtered = useMemo(() => {
     const q = query.toLowerCase()
@@ -158,6 +181,54 @@ export default function Residents() {
     setTimeout(() => setCopied(false), 1500)
   }
 
+  // ---- Deactivate flow ----
+  function openDeactivate(r) {
+    setDeactivateTarget(r)
+    setDeactivateReason('')
+    setDeactivateCustom('')
+    setDeactivateError('')
+  }
+
+  function confirmDeactivate() {
+    if (!deactivateTarget) return
+    const reason = deactivateReason === 'Other' ? deactivateCustom.trim() : deactivateReason
+    if (!reason) { setDeactivateError('Pick a reason, or type your own.'); return }
+    setDeactivating(true)
+    setDeactivateError('')
+    deactivateResident(deactivateTarget.id, reason)
+      .then((updated) => {
+        setDeactivateTarget(null)
+        notify(`${deactivateTarget.name} has been deactivated. They've been emailed the reason.`, 'success')
+        if (infoResident?.id === updated.id) {
+          setInfoResident(updated)
+          setInfoForm({ ...empty, ...updated })
+        }
+      })
+      .catch((err) => setDeactivateError(err?.response?.data?.message || err.message || 'Could not deactivate this resident.'))
+      .finally(() => setDeactivating(false))
+  }
+
+  function doReactivate(r) {
+    setReactivating(true)
+    reactivateResident(r.id)
+      .then((updated) => {
+        notify(`${r.name} has been reactivated.`, 'success')
+        if (infoResident?.id === updated.id) {
+          setInfoResident(updated)
+          setInfoForm({ ...empty, ...updated })
+        }
+      })
+      .catch((err) => notify(err?.response?.data?.message || err.message || 'Could not reactivate this resident.'))
+      .finally(() => setReactivating(false))
+  }
+
+  function doExport(r) {
+    setExporting(true)
+    exportResidentPayments(r.id, r.name?.replace(/[^a-z0-9]+/gi, '_') || 'resident')
+      .catch((err) => notify(err?.response?.data?.message || err.message || 'Could not export this resident.'))
+      .finally(() => setExporting(false))
+  }
+
   return (
     <div>
       <PageHeader
@@ -213,6 +284,13 @@ export default function Residents() {
                       <div className="flex justify-end gap-1.5">
                         <button onClick={() => openInfo(r)} className="p-2 rounded-lg text-ink-400 hover:bg-brand-50 hover:text-brand-600" title="View details & missing payments"><Eye className="h-4 w-4" /></button>
                         <button onClick={() => openEdit(r)} className="p-2 rounded-lg text-ink-400 hover:bg-brand-50 hover:text-brand-600" title="Quick edit"><Pencil className="h-4 w-4" /></button>
+                        {!r.isCommittee && (
+                          r.status === 'active' ? (
+                            <button onClick={() => openDeactivate(r)} className="p-2 rounded-lg text-ink-400 hover:bg-amber-50 hover:text-amber-600" title="Deactivate resident"><Ban className="h-4 w-4" /></button>
+                          ) : (
+                            <button onClick={() => doReactivate(r)} disabled={reactivating} className="p-2 rounded-lg text-ink-400 hover:bg-emerald-50 hover:text-emerald-600" title="Reactivate resident"><RotateCcw className="h-4 w-4" /></button>
+                          )
+                        )}
                         <button
                           onClick={() => tryDelete(r)}
                           className={`p-2 rounded-lg ${r.isCommittee ? 'text-ink-200 cursor-not-allowed' : 'text-ink-400 hover:bg-rose-50 hover:text-rose-500'}`}
@@ -248,21 +326,12 @@ export default function Residents() {
               <input required className="input" value={form.idNumber} onChange={(e) => setForm({ ...form, idNumber: e.target.value })} placeholder="e.g. national/resident ID" />
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="label">Owner or renter</label>
-              <select className="input" value={form.ownerType} onChange={(e) => setForm({ ...form, ownerType: e.target.value })}>
-                <option value="owner">Owner</option>
-                <option value="renter">Renter</option>
-              </select>
-            </div>
-            <div>
-              <label className="label">Status</label>
-              <select className="input" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
-                <option value="active">Active</option>
-                <option value="inactive">Inactive</option>
-              </select>
-            </div>
+          <div>
+            <label className="label">Owner or renter</label>
+            <select className="input" value={form.ownerType} onChange={(e) => setForm({ ...form, ownerType: e.target.value })}>
+              <option value="owner">Owner</option>
+              <option value="renter">Renter</option>
+            </select>
           </div>
           <div>
             <label className="label">Phone</label>
@@ -318,11 +387,48 @@ export default function Residents() {
                 <p className="font-semibold text-ink-900">{infoResident.name}</p>
                 <p className="text-xs text-ink-400">House {infoResident.unit} · Joined {formatDate(infoResident.joined)}</p>
               </div>
-              <div className="ml-auto"><Badge status={infoForm.status} /></div>
+              <div className="ml-auto flex items-center gap-2">
+                <Badge status={infoResident.status} />
+                <button
+                  type="button"
+                  onClick={() => doExport(infoResident)}
+                  disabled={exporting}
+                  className="btn-secondary !py-1.5 !px-3 text-xs"
+                  title="Export resident info & payment history to Excel"
+                >
+                  <Download className="h-3.5 w-3.5" /> {exporting ? 'Exporting…' : 'Export'}
+                </button>
+              </div>
             </div>
 
             {infoError && (
               <div className="rounded-xl bg-rose-50 border border-rose-200 px-3.5 py-2.5 text-xs text-rose-700">{infoError}</div>
+            )}
+
+            {/* Deactivate / reactivate, with the reason shown once inactive */}
+            {!infoResident.isCommittee && (
+              <div className="rounded-xl border border-ink-100 px-3.5 py-3 flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium text-ink-800">Account access</p>
+                  {infoResident.status === 'active' ? (
+                    <p className="text-xs text-ink-400">This resident can currently log in.</p>
+                  ) : (
+                    <p className="text-xs text-ink-400">
+                      Deactivated{infoResident.inactivatedAt ? ` on ${formatDate(infoResident.inactivatedAt)}` : ''}
+                      {infoResident.inactiveReason ? ` — ${infoResident.inactiveReason}` : ''}. They can't log in.
+                    </p>
+                  )}
+                </div>
+                {infoResident.status === 'active' ? (
+                  <button type="button" onClick={() => openDeactivate(infoResident)} className="btn-secondary !py-1.5 !px-3 text-xs shrink-0">
+                    <Ban className="h-3.5 w-3.5" /> Deactivate
+                  </button>
+                ) : (
+                  <button type="button" onClick={() => doReactivate(infoResident)} disabled={reactivating} className="btn-secondary !py-1.5 !px-3 text-xs shrink-0">
+                    <RotateCcw className="h-3.5 w-3.5" /> Reactivate
+                  </button>
+                )}
+              </div>
             )}
 
             <form onSubmit={submitInfo} className="space-y-5">
@@ -360,18 +466,9 @@ export default function Residents() {
                   </select>
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="label flex items-center gap-1.5"><MapPin className="h-3.5 w-3.5" /> Address</label>
-                  <input className="input" value={infoForm.address} onChange={(e) => setInfoForm({ ...infoForm, address: e.target.value })} />
-                </div>
-                <div>
-                  <label className="label">Status</label>
-                  <select className="input" value={infoForm.status} onChange={(e) => setInfoForm({ ...infoForm, status: e.target.value })}>
-                    <option value="active">Active</option>
-                    <option value="inactive">Inactive</option>
-                  </select>
-                </div>
+              <div>
+                <label className="label flex items-center gap-1.5"><MapPin className="h-3.5 w-3.5" /> Address</label>
+                <input className="input" value={infoForm.address} onChange={(e) => setInfoForm({ ...infoForm, address: e.target.value })} />
               </div>
               <p className="text-xs text-ink-400">Password isn't shown or editable here — use "Reset password" workflows if you need to issue a new one.</p>
               <div className="flex items-center gap-3">
@@ -409,6 +506,59 @@ export default function Residents() {
             </div>
           </div>
         ) : null}
+      </Modal>
+
+      {/* Deactivate resident: reason picker */}
+      <Modal open={!!deactivateTarget} onClose={() => setDeactivateTarget(null)} title="Deactivate resident">
+        {deactivateTarget && (
+          <div className="space-y-5">
+            <p className="text-sm text-ink-600">
+              {deactivateTarget.name} won't be able to log in once deactivated. They'll be emailed the reason and told to contact the committee office for more info.
+            </p>
+            {deactivateError && (
+              <div className="rounded-xl bg-rose-50 border border-rose-200 px-3.5 py-2.5 text-xs text-rose-700">{deactivateError}</div>
+            )}
+            <div>
+              <label className="label">Reason</label>
+              <div className="flex flex-wrap gap-2">
+                {COMMON_INACTIVE_REASONS.map((reason) => (
+                  <button
+                    type="button"
+                    key={reason}
+                    onClick={() => setDeactivateReason(reason)}
+                    className={`badge cursor-pointer transition ${deactivateReason === reason ? 'bg-brand-600 text-white' : 'bg-ink-100 text-ink-600 hover:bg-ink-200'}`}
+                  >
+                    {reason}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setDeactivateReason('Other')}
+                  className={`badge cursor-pointer transition ${deactivateReason === 'Other' ? 'bg-brand-600 text-white' : 'bg-ink-100 text-ink-600 hover:bg-ink-200'}`}
+                >
+                  Other
+                </button>
+              </div>
+            </div>
+            {deactivateReason === 'Other' && (
+              <div>
+                <label className="label">Describe the reason</label>
+                <textarea
+                  autoFocus
+                  rows={3}
+                  className="input"
+                  value={deactivateCustom}
+                  onChange={(e) => setDeactivateCustom(e.target.value)}
+                  placeholder="e.g. Vacated unit as of March 2026"
+                />
+              </div>
+            )}
+            <div className="flex gap-2 pt-2">
+              <button type="button" onClick={() => setDeactivateTarget(null)} disabled={deactivating} className="btn-secondary flex-1">Cancel</button>
+              <button type="button" onClick={confirmDeactivate} disabled={deactivating} className="btn-primary flex-1">{deactivating ? 'Deactivating…' : 'Confirm deactivation'}</button>
+            </div>
+          </div>
+        )}
       </Modal>
 
       <ConfirmDialog

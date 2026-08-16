@@ -63,7 +63,14 @@ const PAYMENT_STATUS_TO_UI = { PENDING: 'pending', PENDING_REVIEW: 'pending_revi
 const PROJECT_STATUS_TO_UI = { PLANNED: 'planned', ONGOING: 'in-progress', COMPLETED: 'completed', CANCELLED: 'cancelled' }
 const PROJECT_STATUS_TO_API = { planned: 'PLANNED', 'in-progress': 'ONGOING', completed: 'COMPLETED', cancelled: 'CANCELLED' }
 
-const FUND_CATEGORIES = ['Security', 'Utilities', 'Maintenance', 'Development']
+// Broadened from the original 4 to cover more of what communities actually
+// collect for — still a suggested list (see Funds.jsx: the select allows
+// picking "Other" and typing a custom value), not a hard enum, since
+// category is a plain string column, not a DB enum.
+export const FUND_CATEGORIES = [
+  'Security', 'Utilities', 'Maintenance', 'Development',
+  'Landscaping', 'Sanitation', 'Emergency', 'Events', 'Administration', 'Insurance',
+]
 
 // ------------------------------ residents -------------------------------
 // phone, idNumber, address, and ownerType are real columns on Resident.
@@ -81,6 +88,10 @@ export function residentToUI(r) {
     address: r.address ?? '',
     ownerType: OWNER_TYPE_TO_UI[r.ownerType] || 'owner',
     status: RESIDENT_STATUS_TO_UI[r.status] || 'active',
+    // Why/when the account was last deactivated — null while active. See
+    // "Deactivate resident" flow in Residents.jsx.
+    inactiveReason: r.inactiveReason ?? '',
+    inactivatedAt: r.inactivatedAt ?? null,
     joined: r.joinedAt,
     userId: r.userId ?? r.user?.id,
     // True when this resident record belongs to a committee member (a
@@ -97,7 +108,9 @@ export function residentToCreateAPI(form) {
     email: form.email,
     password: form.password,
     unitNumber: form.unit,
-    status: RESIDENT_STATUS_TO_API[form.status] || 'ACTIVE',
+    // No status here — every resident is created ACTIVE by the backend.
+    // Deactivation is a separate, reason-required action (see
+    // deactivateResident/reactivateResident in DataContext.jsx).
     phone: form.phone || undefined,
     idNumber: form.idNumber || undefined,
     address: form.address || undefined,
@@ -110,7 +123,7 @@ export function residentToUpdateAPI(form) {
     fullName: form.name,
     email: form.email || undefined,
     unitNumber: form.unit,
-    status: RESIDENT_STATUS_TO_API[form.status] || 'ACTIVE',
+    // Status is intentionally omitted — see residentToCreateAPI above.
     phone: form.phone || undefined,
     idNumber: form.idNumber || undefined,
     address: form.address || undefined,
@@ -135,6 +148,9 @@ export function feeToUI(f) {
     name: f.name,
     amount: Number(f.amount),
     frequency: FEE_FREQ_TO_UI[f.frequency] || 'monthly',
+    // Day of the month this fee recurs on — required for every frequency
+    // except one-time (see AddFee form in Fees.jsx).
+    dueDay: f.dueDay ?? '',
     category: f.description || 'Security',
   }
 }
@@ -144,6 +160,7 @@ export function feeToAPI(form) {
     name: form.name,
     amount: Number(form.amount),
     frequency: FEE_FREQ_TO_API[form.frequency] || 'MONTHLY',
+    dueDay: form.frequency === 'one-time' ? undefined : (form.dueDay ? Number(form.dueDay) : undefined),
     description: form.category,
   }
 }
@@ -166,6 +183,17 @@ export function paymentToUI(p) {
     payerName: p.payerName || '',
     reason: p.reason || '',
     reviewFlags: p.reviewFlags || '',
+    // Who the bank says actually sent the money (from the Veritas lookup),
+    // as opposed to `payerName` which is just what the resident typed in.
+    // Lets the committee eyeball a mismatch without opening raw JSON.
+    senderName: p.senderName || '',
+    // Whether this payment's reviewFlags mention it landing in a bank
+    // account the community has since replaced (see
+    // CommunityBankAccountHistory) — shown as an informational badge
+    // rather than the same red "mismatch" styling as a genuine
+    // wrong-account flag, since this is expected when the community
+    // recently changed accounts.
+    paidToPreviousAccount: /PREVIOUS community account/i.test(p.reviewFlags || ''),
     receiptUrl: p.receiptUrl || '',
     // Manually typed in by a committee member (vs. a resident's own
     // bank-verified self-payment) — this is what the UI uses to decide
@@ -204,8 +232,9 @@ export function paymentToUpdateAPI(form) {
 // -------------------------------- funds -----------------------------------
 // Fund has no numeric balance column — both numbers below are derived
 // server-side (fundController.js:computeFundMoney) each time a fund is
-// fetched. "category" is stored in Fund.description, which really is a
-// free-text column.
+// fetched. `category` and `description` (optional reason/note) are now
+// their own real columns (see schema.prisma) — no longer overloading one
+// field for the other.
 //
 // Two distinct numbers, both real, meaning different things:
 //   - `budgetRemaining` (allocated - spent): planning view, budget vs actual.
@@ -217,7 +246,8 @@ export function fundToUI(f, summary) {
   return {
     id: f.id,
     name: f.name,
-    category: FUND_CATEGORIES.includes(f.description) ? f.description : 'Security',
+    category: f.category || 'Security',
+    reason: f.description || '',
     balance: summary ? summary.actualBalance : 0, // alias, prefer actualBalance below
     actualBalance: summary ? summary.actualBalance : 0,
     verifiedCollected: summary ? summary.verifiedCollected : 0,
@@ -231,7 +261,8 @@ export function fundToUI(f, summary) {
 export function fundToAPI(form) {
   return {
     name: form.name,
-    description: form.category,
+    category: form.category,
+    description: form.reason || undefined,
   }
 }
 
@@ -240,29 +271,59 @@ export function projectToUI(p) {
   return {
     id: p.id,
     name: p.name,
+    description: p.description || '',
     fundId: p.fundId,
+    // Multi-fund split, e.g. [{ fundId, fundName, amount }]. Falls back to
+    // a single-entry split off fundId/budget for any project fetched
+    // before fundAllocations existed / was included.
+    fundAllocations: (p.fundAllocations || []).map((a) => ({
+      fundId: a.fundId,
+      fundName: a.fund?.name || '',
+      amount: Number(a.amount),
+    })),
     budget: Number(p.budget),
     // Reversal entries carry negative amounts, so this sum nets out
     // automatically without any special-casing for voided/reversed rows.
     spent: (p.expenses || []).reduce((s, e) => s + Number(e.amount), 0),
     status: PROJECT_STATUS_TO_UI[p.status] || 'planned',
+    cancelReason: p.cancelReason || '',
     startDate: p.startDate,
     endDate: p.endDate,
-    // Once >0, budget edits need committee approval and deletion is
-    // blocked entirely (see projectController.js).
+    // Once >0, budget edits need committee approval and there is no
+    // delete endpoint at all — only cancelProject (see projectController.js).
     expenseCount: p._count?.expenses ?? (p.expenses ? p.expenses.length : 0),
   }
 }
 
 export function projectToAPI(form) {
-  return {
+  const body = {
     fundId: form.fundId,
     name: form.name,
+    description: form.description || undefined,
     budget: Number(form.budget),
-    status: PROJECT_STATUS_TO_API[form.status] || 'PLANNED',
+    // CANCELLED is never sent from here — the backend rejects it anyway
+    // (create schema doesn't even accept it; update routes it to a 400
+    // pointing at /cancel). Cancellation always goes through
+    // projectCancelToAPI below instead.
+    status: PROJECT_STATUS_TO_API[form.status] === 'CANCELLED'
+      ? 'PLANNED'
+      : (PROJECT_STATUS_TO_API[form.status] || 'PLANNED'),
     startDate: form.startDate,
     endDate: form.endDate || undefined,
   }
+  // Only send fundAllocations when the user actually split across more
+  // than one fund — omitting it lets the backend default to "100% into
+  // fundId", which keeps single-fund projects exactly as simple as before.
+  if (form.fundAllocations && form.fundAllocations.length > 1) {
+    body.fundAllocations = form.fundAllocations.map((a) => ({ fundId: a.fundId, amount: Number(a.amount) }))
+  }
+  return body
+}
+
+// Cancellation is its own endpoint/body — never folded into a generic
+// PATCH — so the mandatory reason can't accidentally be omitted.
+export function projectCancelToAPI(reason) {
+  return { cancelReason: reason }
 }
 
 // ------------------------------- expenses -----------------------------------

@@ -2,6 +2,7 @@ const prisma = require('../config/prisma');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/AppError');
 const { isStubActive } = require('../utils/bankVerification');
+const { isSupabaseConfigured } = require('../config/storage');
 const { createPendingChange } = require('./pendingChangeController');
 
 const getMyCommunity = catchAsync(async (req, res) => {
@@ -9,8 +10,12 @@ const getMyCommunity = catchAsync(async (req, res) => {
   if (!community) throw new AppError('Community not found', 404);
   // Surfaced so the admin Settings page can show a loud banner if bank
   // verification is still running as a stub (no VERITAS_API_KEY) — see
-  // src/utils/bankVerification.js.
-  res.json({ success: true, data: { ...community, bankVerificationStubActive: isStubActive() } });
+  // src/utils/bankVerification.js — or if receipt uploads are still going
+  // to local disk instead of Supabase Storage (see src/config/storage.js).
+  res.json({
+    success: true,
+    data: { ...community, bankVerificationStubActive: isStubActive(), receiptStorageStubActive: !isSupabaseConfigured },
+  });
 });
 
 // Bank payment-account fields control where every resident's money gets

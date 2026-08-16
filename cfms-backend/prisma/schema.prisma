@@ -113,8 +113,33 @@ model Community {
   transferRequests CommitteeTransferRequest[]
   pendingChanges   PendingChange[]
   auditLogs AuditLog[]
+  bankAccountHistory CommunityBankAccountHistory[]
+  autoApprovals      CommitteeAutoApproval[]
 
   @@map("communities")
+}
+
+// Snapshot of a community's bank payment account every time it's changed
+// (via the COMMUNITY_PAYMENT_DETAILS pending-change flow — see
+// pendingChanges.js apply()). Exists so a payment sent to an account that
+// was correct *at the time* but has since been replaced isn't treated as
+// a fraud-flavored mismatch during verification — see
+// paymentController.js's receiverAccount cross-check, which checks this
+// table before flagging. `replacedAt` is when this account STOPPED being
+// current (i.e. when the next change took effect), not when it started.
+model CommunityBankAccountHistory {
+  id            String   @id @default(uuid())
+  communityId   String
+  bankName      String?
+  accountName   String?
+  accountNumber String?
+  replacedAt    DateTime @default(now())
+
+  community Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+
+  @@index([communityId])
+  @@index([accountNumber])
+  @@map("community_bank_account_history")
 }
 
 // ---------------------------------------------------------------------------
@@ -142,6 +167,7 @@ model User {
   transferApprovals         CommitteeTransferApproval[]
   pendingChangesProposed    PendingChange[]               @relation("PendingChangeProposedBy")
   pendingChangeApprovals    PendingChangeApproval[]
+  autoApprovals             CommitteeAutoApproval[]
   auditLogs                 AuditLog[]
 
   @@index([communityId])
@@ -207,6 +233,15 @@ model Resident {
   address    String?
   ownerType  String?        @default("OWNER") // OWNER | RENTER
   status     ResidentStatus @default(ACTIVE)
+  // Why this resident was set to INACTIVE/MOVED_OUT — picked from a preset
+  // list of common reasons (e.g. "Non-payment of fees") or free-typed by
+  // the committee member, captured at the moment of deactivation (see
+  // deactivateResident in residentController.js). Null while ACTIVE.
+  inactiveReason   String?
+  // When the resident was last deactivated. Cleared on reactivation. Kept
+  // separate from `updatedAt` (which changes on any profile edit) so the
+  // UI/audit trail can show exactly when the account was shut off.
+  inactivatedAt    DateTime?
   joinedAt   DateTime       @default(now())
 
   user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -298,8 +333,15 @@ model Payment {
   community Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
   resident Resident @relation(fields: [residentId], references: [id], onDelete: Cascade)
   fee      Fee?     @relation(fields: [feeId], references: [id], onDelete: Cascade)
-  project  Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  fund     Fund?    @relation(fields: [fundId], references: [id], onDelete: Cascade)
+  // SetNull (not Cascade) — a payment is an append-only financial record
+  // (see recordedBy/verifiedBy comments above) and must survive its
+  // project or fund being deleted, the same way Expense.project already
+  // does. Deleting a Project/Fund now just detaches the payment from it
+  // rather than erasing what a resident actually paid; see deleteFund in
+  // fundController.js for the balance/pending-payment checks that gate
+  // fund deletion in the first place.
+  project  Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  fund     Fund?    @relation(fields: [fundId], references: [id], onDelete: SetNull)
   verifier User?    @relation("PaymentVerifiedBy", fields: [verifiedBy], references: [id], onDelete: SetNull)
   recorder User?    @relation("PaymentRecordedBy", fields: [recordedBy], references: [id], onDelete: SetNull)
 
@@ -321,6 +363,15 @@ model Fund {
   id          String   @id @default(uuid())
   communityId String
   name        String
+  // Broad grouping shown as a badge/color in the UI (Security, Utilities,
+  // Maintenance, Development, ...). Free-text on purpose — was previously
+  // smuggled into `description` below (see git history / adapters.js),
+  // which meant a fund could never actually have its own notes. Split out
+  // into its own column so the two don't collide.
+  category    String?
+  // Optional free-text note on why this fund exists / what it's earmarked
+  // for beyond what the name says (e.g. "Set up after the March 2026
+  // flooding to cover future drainage work"). Purely informational.
   description String?
   createdAt   DateTime @default(now())
 
@@ -331,6 +382,7 @@ model Fund {
   // they're reached via project.fundId instead. Fund balance calculations
   // must combine both; see getFundSummary in fundController.js.
   payments  Payment[]
+  projectAllocations ProjectFundAllocation[]
 
   @@index([communityId])
   @@map("funds")
@@ -344,6 +396,11 @@ model Project {
   description String?
   budget      Decimal       @db.Decimal(12, 2)
   status      ProjectStatus @default(PLANNED)
+  // Mandatory once status = CANCELLED, enforced in pendingChanges.js
+  // (PROJECT_CANCELLATION change type) rather than at the DB layer, since
+  // cancellation always goes through committee approval and never a
+  // direct update.
+  cancelReason String?
   startDate   DateTime
   endDate     DateTime?
 
@@ -351,10 +408,32 @@ model Project {
   fund      Fund      @relation(fields: [fundId], references: [id], onDelete: Cascade)
   expenses  Expense[]
   payments  Payment[]
+  fundAllocations ProjectFundAllocation[]
 
   @@index([communityId])
   @@index([fundId])
   @@map("projects")
+}
+
+// A project's budget can be funded from more than one fund account. `Fund`
+// remains a required single field on Project for backward compatibility
+// and as the "primary" fund (used for default filtering/reporting), but the
+// real money breakdown lives here. Sum of ProjectFundAllocation.amount for
+// a project must equal Project.budget — enforced in projectValidators.js /
+// projectController.js, not the DB, since Decimal cross-row sums aren't a
+// Postgres CHECK constraint Prisma can express cleanly.
+model ProjectFundAllocation {
+  id        String  @id @default(uuid())
+  projectId String
+  fundId    String
+  amount    Decimal @db.Decimal(12, 2)
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  fund    Fund    @relation(fields: [fundId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, fundId])
+  @@index([fundId])
+  @@map("project_fund_allocations")
 }
 
 model Expense {
@@ -410,6 +489,11 @@ model Receipt {
   id         String   @id @default(uuid())
   expenseId  String
   fileUrl    String
+  // Object key/filename used to delete the underlying file from storage
+  // (Supabase Storage key, or local filename — see src/config/storage.js).
+  // Nullable because receipts uploaded before this field existed only
+  // have fileUrl; deleteReceiptFile() no-ops gracefully when it's null.
+  storageKey String?
   uploadedAt DateTime @default(now())
 
   expense Expense @relation(fields: [expenseId], references: [id], onDelete: Cascade)
@@ -517,10 +601,54 @@ model PendingChangeApproval {
   committeeUserId String
   decision        ApprovalDecision @default(PENDING)
   respondedAt     DateTime?
+  // True when this approval was filled in automatically because the member
+  // had a matching CommitteeAutoApproval enabled at creation time, rather
+  // than an explicit click. Kept even if the standing setting is later
+  // disabled, so historical requests still show accurately how they were
+  // approved.
+  autoApproved    Boolean          @default(false)
 
   pendingChange PendingChange @relation(fields: [pendingChangeId], references: [id], onDelete: Cascade)
   member        User          @relation(fields: [committeeUserId], references: [id], onDelete: Cascade)
 
   @@unique([pendingChangeId, committeeUserId])
   @@map("pending_change_approvals")
+}
+
+// Lets a committee member pre-authorize their own vote on future
+// PendingChanges of a given changeType, so they don't have to manually
+// approve every single low-stakes request. Scoped per (user, changeType) —
+// enabling it for PROJECT_BUDGET says nothing about PROJECT_CANCELLATION.
+// Always has an expiry; there is no indefinite/forever option by design.
+// When a PendingChange is created, createPendingChange() checks this table
+// per approver and, if an enabled/non-expired row exists, immediately
+// marks that member's PendingChangeApproval as APPROVED with a note that
+// it was auto-approved — same audit trail as a manual approval, just
+// attributed differently, so the member is still accountable if the
+// standing approval is later found to have waved through something bad.
+model CommitteeAutoApproval {
+  id          String   @id @default(uuid())
+  userId      String
+  communityId String
+  changeType  String
+  enabled     Boolean  @default(false)
+  // Required — user picks "for how many days", we store the resulting
+  // cutoff. Once past this, auto-approval silently stops applying (the
+  // row is left in place, not deleted, so the settings page can show it
+  // as "expired" rather than just vanishing).
+  expiresAt   DateTime
+  // Timestamp of when the user clicked through the accountability warning
+  // for this specific (re-)enable action. Required server-side whenever
+  // enabled is set to true, so the warning can't be silently bypassed by
+  // a direct API call that skips the confirmation dialog.
+  acknowledgedAt DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  community Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, changeType])
+  @@index([communityId])
+  @@map("committee_auto_approvals")
 }

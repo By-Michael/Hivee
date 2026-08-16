@@ -1,16 +1,17 @@
 import { FileCheck2, CheckCircle2, CircleDashed } from 'lucide-react'
 import { useData } from '../../context/DataContext'
-import { PageHeader, formatDate } from '../../components/ui'
+import { PageHeader, formatDate, usePagedList, Pager } from '../../components/ui'
 
 export default function ResidentReceipts() {
   const { receipts, expenses } = useData()
   const expenseOf = (id) => expenses.find((e) => e.id === id)
+  const { pageItems: pagedReceipts, page, totalPages, total, setPage } = usePagedList(receipts, 24)
 
   return (
     <div>
       <PageHeader title="Receipts" subtitle="Verifiable proof behind every logged expense." />
       <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-4">
-        {receipts.map((r) => {
+        {pagedReceipts.map((r) => {
           const exp = expenseOf(r.expenseId)
           return (
             <div key={r.id} className="card p-5">
@@ -28,6 +29,11 @@ export default function ResidentReceipts() {
           )
         })}
       </div>
+      {totalPages > 1 && (
+        <div className="card mt-4 !p-0">
+          <Pager page={page} totalPages={totalPages} total={total} onChange={setPage} pageSize={24} />
+        </div>
+      )}
     </div>
   )
 }

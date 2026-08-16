@@ -1,9 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
-import { Camera, KeyRound, Mail, Phone, ShieldCheck, Loader2, Users2, Clock, XCircle, Search, Check } from 'lucide-react'
+import { useLocation, useSearchParams } from 'react-router-dom'
+import {
+  Camera, KeyRound, Mail, Phone, ShieldCheck, Loader2, Users2, Clock, XCircle, Search, Check,
+  User, Bell, Palette, Landmark, AlertTriangle, ShieldAlert, Save, CheckCircle2, Sun, Moon, Monitor,
+} from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import { useData } from '../../context/DataContext'
+import { useTheme } from '../../context/ThemeContext'
 import { PageHeader, Modal, notify } from '../../components/ui'
 import api, { endpoints } from '../../lib/api'
+import { NOTIFICATION_CATEGORIES, getNotificationPrefs, setNotificationPref } from '../../lib/notificationPrefs'
 
 // Every sensitive profile change (password, phone, picture) goes through a
 // one-time code sent to the account's email — the one field nobody, not
@@ -15,9 +21,89 @@ function generateOtp() {
   return String(Math.floor(100000 + Math.random() * 900000))
 }
 
+// ---------------------------------------------------------------------------
+// Tab classification:
+//  - profile / security / notifications / preferences — things that only
+//    ever affect the signed-in person, resident or committee member alike.
+//  - community / approvals / membership — committee-only, because they
+//    change something shared by the whole estate or the committee's own
+//    governance (who's on it, how it approves things).
+// ---------------------------------------------------------------------------
+const TABS = [
+  { id: 'profile', label: 'Profile', icon: User, roles: ['admin', 'resident'] },
+  { id: 'security', label: 'Security', icon: KeyRound, roles: ['admin', 'resident'] },
+  { id: 'notifications', label: 'Notifications', icon: Bell, roles: ['admin', 'resident'] },
+  { id: 'preferences', label: 'Preferences', icon: Palette, roles: ['admin', 'resident'] },
+  { id: 'community', label: 'Community', icon: Landmark, roles: ['admin'] },
+  { id: 'approvals', label: 'Approvals', icon: ShieldCheck, roles: ['admin'] },
+  { id: 'membership', label: 'Membership', icon: Users2, roles: ['admin'] },
+]
+
 export default function Profile() {
   const { user } = useAuth()
-  const { residents, requestCommitteeTransfer, fetchMyTransferItems, cancelCommitteeTransfer, refresh } = useData()
+  const isCommittee = user?.role === 'admin'
+  const roleKey = isCommittee ? 'admin' : 'resident'
+  const visibleTabs = TABS.filter((t) => t.roles.includes(roleKey))
+
+  const location = useLocation()
+  const [searchParams, setSearchParams] = useSearchParams()
+  // /admin/settings is still the sidebar's "Settings" link — land on the
+  // Community tab when arriving that way, otherwise honour ?tab=, otherwise
+  // start on Profile.
+  const initialTab = (() => {
+    const fromQuery = searchParams.get('tab')
+    if (fromQuery && visibleTabs.some((t) => t.id === fromQuery)) return fromQuery
+    if (location.pathname.endsWith('/settings') && isCommittee) return 'community'
+    return 'profile'
+  })()
+  const [activeTab, setActiveTab] = useState(initialTab)
+
+  function selectTab(id) {
+    setActiveTab(id)
+    setSearchParams({ tab: id }, { replace: true })
+  }
+
+  return (
+    <div>
+      <PageHeader
+        title="Profile & Settings"
+        subtitle={isCommittee
+          ? 'Your account, plus the community-wide settings your committee seat controls.'
+          : 'Manage your account — password, phone, and how the app notifies you.'}
+      />
+
+      <div className="card p-1.5 mb-6 inline-flex flex-wrap gap-1">
+        {visibleTabs.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => selectTab(t.id)}
+            className={`flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-sm font-medium transition ${
+              activeTab === t.id ? 'bg-brand-gradient text-white shadow-glow' : 'text-ink-500 hover:bg-ink-50 hover:text-ink-800'
+            }`}
+          >
+            <t.icon className="h-4 w-4" /> {t.label}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === 'profile' && <ProfileTab user={user} isCommittee={isCommittee} />}
+      {activeTab === 'security' && <SecurityTab />}
+      {activeTab === 'notifications' && <NotificationsTab user={user} roleKey={roleKey} />}
+      {activeTab === 'preferences' && <PreferencesTab />}
+      {isCommittee && activeTab === 'community' && <CommunityTab />}
+      {isCommittee && activeTab === 'approvals' && <ApprovalsTab user={user} />}
+      {isCommittee && activeTab === 'membership' && <MembershipTab user={user} />}
+    </div>
+  )
+}
+
+// ===========================================================================
+// Profile — identity, avatar, phone. Only things about "him", never
+// anything shared with the rest of the community.
+// ===========================================================================
+function ProfileTab({ user, isCommittee }) {
+  const { residents, refresh } = useData()
   const me = residents.find((r) => r.userId === user?.id || r.id === user?.residentId)
 
   const [pendingAction, setPendingAction] = useState(null) // { type, payload, otp }
@@ -29,69 +115,6 @@ export default function Profile() {
 
   const [phone, setPhone] = useState(me?.phone || '')
   const [avatar, setAvatar] = useState(() => (user?.id ? localStorage.getItem(`cfms_avatar_${user.id}`) : null))
-
-  const [pwForm, setPwForm] = useState({ current: '', next: '', confirm: '' })
-  const [pwError, setPwError] = useState('')
-  const [pwLoading, setPwLoading] = useState(false)
-
-  // ---- committee seat transfer (committee members only) ----
-  const isCommittee = user?.role === 'admin'
-  const [transferOpen, setTransferOpen] = useState(false)
-  const [transferTarget, setTransferTarget] = useState('')
-  const [transferQuery, setTransferQuery] = useState('')
-  const [transferSubmitting, setTransferSubmitting] = useState(false)
-  const [transferError, setTransferError] = useState('')
-  const [transferConfirm, setTransferConfirm] = useState(false)
-  const [myOutgoingRequest, setMyOutgoingRequest] = useState(null)
-  const [cancelling, setCancelling] = useState(false)
-
-  useEffect(() => {
-    if (!isCommittee) return
-    let cancelled = false
-    fetchMyTransferItems().then((r) => {
-      if (!cancelled) setMyOutgoingRequest(r.asRequester?.[0] || null)
-    }).catch(() => {})
-    return () => { cancelled = true }
-  }, [isCommittee, fetchMyTransferItems])
-
-  const eligibleResidents = residents.filter((r) => r.userId !== user?.id && r.status === 'active')
-  const filteredResidents = (() => {
-    const q = transferQuery.trim().toLowerCase()
-    if (!q) return eligibleResidents
-    return eligibleResidents.filter((r) => [r.name, r.unit, r.email].join(' ').toLowerCase().includes(q))
-  })()
-  const selectedResident = eligibleResidents.find((r) => r.id === transferTarget)
-
-  async function confirmTransfer() {
-    setTransferSubmitting(true)
-    setTransferError('')
-    try {
-      const created = await requestCommitteeTransfer(transferTarget)
-      setMyOutgoingRequest(created)
-      setTransferConfirm(false)
-      setTransferOpen(false)
-      setBanner('Transfer request sent. It needs every other committee member to approve, then the resident\u2019s acceptance.')
-      setTimeout(() => setBanner(''), 5000)
-    } catch (err) {
-      setTransferError(err?.response?.data?.message || err.message || 'Could not start the transfer.')
-      setTransferConfirm(false)
-    } finally {
-      setTransferSubmitting(false)
-    }
-  }
-
-  async function cancelOutgoing() {
-    if (!myOutgoingRequest) return
-    setCancelling(true)
-    try {
-      await cancelCommitteeTransfer(myOutgoingRequest.id)
-      setMyOutgoingRequest(null)
-    } catch (err) {
-      notify(err?.response?.data?.message || err.message || 'Could not cancel the request.')
-    } finally {
-      setCancelling(false)
-    }
-  }
 
   function beginVerifiedChange(type, payload) {
     const otp = generateOtp()
@@ -152,28 +175,8 @@ export default function Profile() {
     beginVerifiedChange('phone', { phone: phone.trim() })
   }
 
-  async function submitPassword(e) {
-    e.preventDefault()
-    setPwError('')
-    if (pwForm.next.length < 8) return setPwError('New password must be at least 8 characters.')
-    if (pwForm.next !== pwForm.confirm) return setPwError('New password and confirmation don\u2019t match.')
-    setPwLoading(true)
-    try {
-      await api.patch(endpoints.changePassword(), { currentPassword: pwForm.current, newPassword: pwForm.next })
-      setPwForm({ current: '', next: '', confirm: '' })
-      setBanner('Password changed. You\u2019ll need it next time you sign in.')
-      setTimeout(() => setBanner(''), 4000)
-    } catch (err) {
-      setPwError(err?.response?.data?.message || err.message || 'Could not change password.')
-    } finally {
-      setPwLoading(false)
-    }
-  }
-
   return (
     <div className="max-w-2xl">
-      <PageHeader title="Profile settings" subtitle="Manage your password, photo, and phone number. Your email is fixed by the committee." />
-
       {banner && <div className="mb-5 rounded-xl bg-emerald-50 border border-emerald-100 px-4 py-3 text-sm text-emerald-700">{banner}</div>}
 
       {/* Identity */}
@@ -206,7 +209,7 @@ export default function Profile() {
           <Mail className="h-4 w-4 text-ink-400 shrink-0" />
           <div className="min-w-0">
             <p className="text-sm text-ink-700 truncate">{user?.email}</p>
-            <p className="text-xs text-ink-400">Registered by the committee &middot; can\u2019t be changed here.</p>
+            <p className="text-xs text-ink-400">Registered by the committee &middot; can’t be changed here.</p>
           </div>
         </div>
       </div>
@@ -218,7 +221,76 @@ export default function Profile() {
         <button type="submit" className="btn-secondary">Update phone (verify by email)</button>
       </form>
 
-      {/* Password */}
+      {/* OTP modal */}
+      {pendingAction && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-ink-900/40 backdrop-blur-sm" />
+          <div className="relative w-full max-w-sm card p-6 animate-fade-up">
+            <h3 className="text-lg font-bold text-ink-900 mb-1">Verify it’s you</h3>
+            <p className="text-sm text-ink-500 mb-4">{sentNotice}</p>
+            <label className="label">6-digit code</label>
+            <input
+              autoFocus
+              inputMode="numeric"
+              maxLength={6}
+              className="input tracking-[0.5em] text-center text-lg font-semibold"
+              value={otpInput}
+              onChange={(e) => setOtpInput(e.target.value.replace(/\D/g, ''))}
+            />
+            {otpError && <p className="text-sm text-rose-600 mt-2">{otpError}</p>}
+            <div className="flex gap-2 pt-4">
+              <button onClick={() => setPendingAction(null)} className="btn-secondary flex-1">Cancel</button>
+              <button onClick={confirmOtp} className="btn-primary flex-1">Confirm</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ===========================================================================
+// Security — password only. Kept separate from Profile so the one thing
+// people search for most ("change my password") has its own clearly-labelled
+// home instead of being buried under photo/phone controls.
+// ===========================================================================
+function SecurityTab() {
+  const [pwForm, setPwForm] = useState({ current: '', next: '', confirm: '' })
+  const [pwError, setPwError] = useState('')
+  const [pwLoading, setPwLoading] = useState(false)
+  const [successOpen, setSuccessOpen] = useState(false)
+
+  async function submitPassword(e) {
+    e.preventDefault()
+    setPwError('')
+    if (pwForm.next.length < 8) return setPwError('New password must be at least 8 characters.')
+    if (pwForm.next !== pwForm.confirm) return setPwError('New password and confirmation don\u2019t match.')
+    setPwLoading(true)
+    try {
+      await api.patch(endpoints.changePassword(), { currentPassword: pwForm.current, newPassword: pwForm.next })
+      setPwForm({ current: '', next: '', confirm: '' })
+      setSuccessOpen(true)
+    } catch (err) {
+      setPwError(err?.response?.data?.message || err.message || 'Could not change password.')
+    } finally {
+      setPwLoading(false)
+    }
+  }
+
+  return (
+    <div className="max-w-2xl">
+      <Modal open={successOpen} onClose={() => setSuccessOpen(false)} title="Password changed">
+        <div className="flex flex-col items-center text-center gap-3 py-2">
+          <div className="h-12 w-12 rounded-full bg-emerald-50 flex items-center justify-center">
+            <CheckCircle2 className="h-6 w-6 text-emerald-600" />
+          </div>
+          <p className="text-sm text-ink-500">
+            Your password was changed successfully. You\u2019ll need to use it the next time you sign in.
+          </p>
+          <button type="button" onClick={() => setSuccessOpen(false)} className="btn-primary w-full mt-2">Done</button>
+        </div>
+      </Modal>
+
       <form onSubmit={submitPassword} className="card p-5 mb-5 space-y-3">
         <h3 className="font-semibold text-ink-800 flex items-center gap-2"><KeyRound className="h-4 w-4 text-brand-600" /> Change password</h3>
         <div>
@@ -242,35 +314,621 @@ export default function Profile() {
         </button>
       </form>
 
-      {/* Committee seat transfer */}
-      {isCommittee && (
-        <div className="card p-5 mb-5 space-y-3">
-          <h3 className="font-semibold text-ink-800 flex items-center gap-2"><Users2 className="h-4 w-4 text-brand-600" /> Transfer committee status</h3>
-          <p className="text-sm text-ink-500">
-            Hand your committee seat to another resident. The transfer only goes through once every other
-            committee member approves, and the resident you choose accepts it too.
-          </p>
+      <div className="card p-5 text-sm text-ink-500 flex gap-3 items-start">
+        <ShieldAlert className="h-4 w-4 text-brand-600 shrink-0 mt-0.5" />
+        <p>
+          Password and phone-number changes always require a one-time code sent to your registered email first — even
+          if someone gets hold of your session, they can’t change either without also having access to your inbox.
+        </p>
+      </div>
+    </div>
+  )
+}
 
-          {myOutgoingRequest ? (
-            <div className="rounded-xl bg-amber-50 border border-amber-100 px-4 py-3 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2 text-sm text-amber-700">
-                <Clock className="h-4 w-4 shrink-0" />
-                <span>
-                  Pending &mdash; {myOutgoingRequest.status === 'PENDING_COMMITTEE' ? 'awaiting committee approval' : 'awaiting the resident\u2019s acceptance'} for{' '}
-                  <strong>{myOutgoingRequest.toResident?.user?.fullName}</strong>.
-                </span>
+// ===========================================================================
+// Notifications — mute individual categories in the bell. Backed by
+// localStorage today (there's no NotificationPreference table yet), but the
+// toggle genuinely filters what shows up — see lib/notificationPrefs.js and
+// AppLayout's notification bell.
+// ===========================================================================
+function NotificationsTab({ user, roleKey }) {
+  const [prefs, setPrefs] = useState(() => getNotificationPrefs(user?.id))
+  const categories = NOTIFICATION_CATEGORIES.filter((c) => c.roles.includes(roleKey))
+
+  function toggle(id) {
+    const next = setNotificationPref(user?.id, id, !prefs[id])
+    setPrefs(next)
+  }
+
+  return (
+    <div className="max-w-2xl">
+      <div className="card p-5">
+        <h3 className="font-semibold text-ink-800 flex items-center gap-2 mb-1"><Bell className="h-4 w-4 text-brand-600" /> What shows up in your notification bell</h3>
+        <p className="text-xs text-ink-400 mb-4">
+          Turn off any category you don’t want to see. Stored on this device — if you sign in elsewhere, defaults are on again there.
+        </p>
+        <div className="divide-y divide-ink-100">
+          {categories.map((c) => (
+            <div key={c.id} className="py-3.5 flex items-start justify-between gap-4">
+              <div>
+                <p className="text-sm font-medium text-ink-700">{c.label}</p>
+                <p className="text-xs text-ink-400 mt-0.5">{c.description}</p>
               </div>
-              <button onClick={cancelOutgoing} disabled={cancelling} className="btn-secondary !py-1.5 !px-3 text-xs shrink-0">
-                <XCircle className="h-3.5 w-3.5" /> {cancelling ? 'Cancelling…' : 'Cancel'}
-              </button>
+              <label className="relative inline-flex items-center cursor-pointer shrink-0 mt-0.5">
+                <input type="checkbox" className="sr-only peer" checked={prefs[c.id] !== false} onChange={() => toggle(c.id)} />
+                <div className="w-10 h-6 bg-ink-200 peer-checked:bg-brand-600 rounded-full transition-colors relative">
+                  <div className={`absolute top-0.5 left-0.5 h-5 w-5 bg-white rounded-full shadow transition-transform ${prefs[c.id] !== false ? 'translate-x-4' : ''}`} />
+                </div>
+              </label>
             </div>
-          ) : (
-            <button onClick={() => { setTransferOpen(true); setTransferTarget(''); setTransferQuery(''); setTransferError('') }} className="btn-secondary">
-              <Users2 className="h-4 w-4" /> Start a transfer
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ===========================================================================
+// Preferences — cosmetic/behavioural defaults that only affect how the app
+// looks and behaves for this person on this device.
+// ===========================================================================
+const THEME_OPTIONS = [
+  { id: 'light', label: 'Light', icon: Sun },
+  { id: 'dark', label: 'Dark', icon: Moon },
+]
+
+function PreferencesTab() {
+  const { theme, setTheme } = useTheme()
+  const [defaultExportFormat, setDefaultExportFormat] = useState(() => localStorage.getItem('cfms_default_export_format') || 'excel')
+
+  function chooseExportFormat(v) {
+    setDefaultExportFormat(v)
+    localStorage.setItem('cfms_default_export_format', v)
+  }
+
+  return (
+    <div className="max-w-2xl space-y-5">
+      <div className="card p-5">
+        <h3 className="font-semibold text-ink-800 flex items-center gap-2 mb-1"><Palette className="h-4 w-4 text-brand-600" /> Appearance</h3>
+        <p className="text-xs text-ink-400 mb-4">Switch between light and dark. This is saved on this device — same as the sun/moon icon in the header.</p>
+        <div className="flex gap-2">
+          {THEME_OPTIONS.map((o) => (
+            <button
+              key={o.id}
+              type="button"
+              onClick={() => setTheme(o.id)}
+              className={`flex-1 flex items-center justify-center gap-2 rounded-xl border px-4 py-3 text-sm font-medium transition ${
+                theme === o.id ? 'border-brand-400 bg-brand-50 text-brand-700' : 'border-ink-200 text-ink-500 hover:bg-ink-50'
+              }`}
+            >
+              <o.icon className="h-4 w-4" /> {o.label}
             </button>
-          )}
+          ))}
+        </div>
+      </div>
+
+      <div className="card p-5">
+        <h3 className="font-semibold text-ink-800 flex items-center gap-2 mb-1"><Monitor className="h-4 w-4 text-brand-600" /> Default export format</h3>
+        <p className="text-xs text-ink-400 mb-4">
+          Which format the Reports and Audit Log export buttons put first / pre-select — doesn’t stop you choosing the other one whenever you like.
+        </p>
+        <div className="flex gap-2">
+          {[['excel', 'Excel'], ['pdf', 'PDF']].map(([v, label]) => (
+            <button
+              key={v}
+              type="button"
+              onClick={() => chooseExportFormat(v)}
+              className={`flex-1 rounded-xl border px-4 py-3 text-sm font-medium transition ${
+                defaultExportFormat === v ? 'border-brand-400 bg-brand-50 text-brand-700' : 'border-ink-200 text-ink-500 hover:bg-ink-50'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ===========================================================================
+// Community — community details + the shared payment account. Committee-
+// only: this affects every resident, not just the person editing it, so
+// bank-detail changes still route through the existing multi-committee
+// approval flow on save.
+// ===========================================================================
+// Common banks offered in the "Bank name" dropdown so admins pick from a
+// known-good list instead of free-typing (and risking typos residents would
+// then transfer money against). "Other" reveals a text input as a fallback
+// for anything not on the list.
+const BANK_OPTIONS = [
+  'Commercial Bank of Ethiopia', 'Awash Bank', 'Dashen Bank', 'Bank of Abyssinia',
+  'Wegagen Bank', 'United Bank', 'Nib International Bank', 'Cooperative Bank of Oromia',
+  'Zemen Bank', 'Abay Bank', 'Berhan Bank', 'Bunna Bank', 'Hibret Bank', 'Enat Bank',
+  'Telebirr', 'Other',
+]
+
+function CommunityTab() {
+  const { community, updateCommunity } = useData()
+  const emptyForm = {
+    name: '', address: '', contactInfo: '',
+    paymentBankName: '', paymentAccountName: '', paymentAccountNumber: '',
+    autoVerifyMaxAmount: '',
+  }
+  const [form, setForm] = useState(emptyForm)
+  const [bankIsOther, setBankIsOther] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [saved, setSaved] = useState(false)
+  const [pendingNotice, setPendingNotice] = useState('')
+  // Tracks whether the admin has touched anything since the form was last
+  // synced from the server, so the background 60s silent refresh (see
+  // DataContext) can't clobber in-progress edits by re-running the sync
+  // effect underneath them, and so we know when to warn about unsaved work.
+  const dirtyRef = useRef(false)
+  const loadedOnceRef = useRef(false)
+
+  useEffect(() => {
+    if (community && !dirtyRef.current) {
+      setForm({
+        name: community.name || '',
+        address: community.address || '',
+        contactInfo: community.contactInfo || '',
+        paymentBankName: community.paymentBankName || '',
+        paymentAccountName: community.paymentAccountName || '',
+        paymentAccountNumber: community.paymentAccountNumber || '',
+        autoVerifyMaxAmount: community.autoVerifyMaxAmount ?? '',
+      })
+      setBankIsOther(!!community.paymentBankName && !BANK_OPTIONS.slice(0, -1).includes(community.paymentBankName))
+      loadedOnceRef.current = true
+    }
+  }, [community])
+
+  function updateField(patch) {
+    dirtyRef.current = true
+    setForm((f) => ({ ...f, ...patch }))
+  }
+
+  // Warn before leaving the tab/closing/refreshing while there are unsaved
+  // edits, instead of silently discarding them.
+  useEffect(() => {
+    function onBeforeUnload(e) {
+      if (!dirtyRef.current) return
+      e.preventDefault()
+      e.returnValue = ''
+      return ''
+    }
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+  }, [])
+
+  async function submit(e) {
+    e.preventDefault()
+    setSaving(true)
+    setError('')
+    setSaved(false)
+    setPendingNotice('')
+    try {
+      const result = await updateCommunity({
+        ...form,
+        autoVerifyMaxAmount: form.autoVerifyMaxAmount === '' ? null : Number(form.autoVerifyMaxAmount),
+      })
+      // Bank-detail fields don't apply instantly — they went through
+      // committee approval on the backend. Tell the admin which happened
+      // rather than showing a plain "Saved" that would imply it's live now.
+      if (result?.bankDetailsMessage) {
+        setPendingNotice(result.bankDetailsMessage)
+        setTimeout(() => setPendingNotice(''), 8000)
+      }
+      dirtyRef.current = false
+      setSaved(true)
+      setTimeout(() => setSaved(false), 3000)
+    } catch (err) {
+      setError(err?.response?.data?.message || err.message || 'Could not save settings.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div>
+      {community?.bankVerificationStubActive && (
+        <div className="max-w-2xl mb-6 rounded-xl bg-rose-50 border border-rose-200 px-4 py-3.5 text-sm text-rose-700 flex gap-3 items-start">
+          <ShieldAlert className="h-5 w-5 shrink-0 mt-0.5" />
+          <div>
+            <p className="font-semibold">Bank verification is not live.</p>
+            <p className="mt-1">
+              No <code className="font-mono">VERITAS_API_KEY</code> is configured on the server, so resident
+              self-verified payments are not actually being checked against a real bank. Any transaction ID
+              a resident types in will currently be accepted. Set <code className="font-mono">VERITAS_API_KEY</code> in
+              the backend environment before relying on self-verification in production.
+            </p>
+          </div>
         </div>
       )}
+
+      {community?.receiptStorageStubActive && (
+        <div className="max-w-2xl mb-6 rounded-xl bg-rose-50 border border-rose-200 px-4 py-3.5 text-sm text-rose-700 flex gap-3 items-start">
+          <ShieldAlert className="h-5 w-5 shrink-0 mt-0.5" />
+          <div>
+            <p className="font-semibold">Receipt uploads are not going to permanent storage.</p>
+            <p className="mt-1">
+              No <code className="font-mono">SUPABASE_URL</code> / <code className="font-mono">SUPABASE_SERVICE_ROLE_KEY</code> is
+              configured on the server, so receipt files are being saved to local disk. On Render (and most hosts) that
+              disk is wiped on every deploy or restart — every receipt uploaded this way will stop loading the next
+              time the server restarts. Set those two variables to a Supabase Storage bucket before relying on receipt
+              uploads in production.
+            </p>
+          </div>
+        </div>
+      )}
+
+      <form onSubmit={submit} className="card p-6 max-w-2xl space-y-6">
+        <div>
+          <h3 className="text-sm font-semibold text-ink-800 mb-3">Community</h3>
+          <div className="space-y-4">
+            <div>
+              <label className="label">Community name</label>
+              <input required className="input" value={form.name} onChange={(e) => updateField({ name: e.target.value })} />
+            </div>
+            <div>
+              <label className="label">Address</label>
+              <input className="input" value={form.address} onChange={(e) => updateField({ address: e.target.value })} />
+            </div>
+            <div>
+              <label className="label">Contact info</label>
+              <input className="input" value={form.contactInfo} onChange={(e) => updateField({ contactInfo: e.target.value })} />
+            </div>
+          </div>
+        </div>
+
+        <div className="pt-2 border-t border-ink-100">
+          <h3 className="text-sm font-semibold text-ink-800 mb-1 flex items-center gap-2">
+            <Landmark className="h-4 w-4 text-brand-600" /> Payment account
+          </h3>
+          <p className="text-xs text-ink-400 mb-3">
+            Shown to every resident in "Make a payment" as the account to transfer into — one account for the whole community.
+            Changes here need every other committee member to approve before they take effect (see the notification
+            bell / dashboard once you save).
+          </p>
+          <div className="grid sm:grid-cols-2 gap-4">
+            <div className="sm:col-span-2">
+              <label className="label">Bank name</label>
+              <select
+                required
+                className="input"
+                value={bankIsOther ? 'Other' : (form.paymentBankName || '')}
+                onChange={(e) => {
+                  if (e.target.value === 'Other') {
+                    setBankIsOther(true)
+                    updateField({ paymentBankName: '' })
+                  } else {
+                    setBankIsOther(false)
+                    updateField({ paymentBankName: e.target.value })
+                  }
+                }}
+              >
+                <option value="" disabled>Select a bank…</option>
+                {BANK_OPTIONS.map((b) => <option key={b} value={b}>{b}</option>)}
+              </select>
+              {bankIsOther && (
+                <input
+                  required
+                  autoFocus
+                  className="input mt-2"
+                  placeholder="Enter bank name"
+                  value={form.paymentBankName}
+                  onChange={(e) => updateField({ paymentBankName: e.target.value })}
+                />
+              )}
+            </div>
+            <div>
+              <label className="label">Account name</label>
+              <input required className="input" placeholder="e.g. Greenwood Estate Committee" value={form.paymentAccountName} onChange={(e) => updateField({ paymentAccountName: e.target.value })} />
+            </div>
+            <div>
+              <label className="label">Account number</label>
+              <input required className="input font-mono" value={form.paymentAccountNumber} onChange={(e) => updateField({ paymentAccountNumber: e.target.value })} />
+            </div>
+          </div>
+        </div>
+
+        <div className="pt-2 border-t border-ink-100">
+          <h3 className="text-sm font-semibold text-ink-800 mb-1 flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4 text-amber-600" /> Self-verification safeguard
+          </h3>
+          <p className="text-xs text-ink-400 mb-3">
+            Self-verified payments at or above this amount always go to "Pending review" for a committee
+            member to check, even if the bank lookup matched. Leave blank to only rely on the automatic
+            name/amount cross-checks.
+          </p>
+          <div className="max-w-xs">
+            <label className="label">Auto-verify review threshold (birr)</label>
+            <input
+              type="number" min="0" step="1" className="input"
+              placeholder="e.g. 5000"
+              value={form.autoVerifyMaxAmount}
+              onChange={(e) => updateField({ autoVerifyMaxAmount: e.target.value })}
+            />
+          </div>
+        </div>
+
+        {error && <div className="rounded-xl bg-rose-50 border border-rose-100 px-3.5 py-2.5 text-sm text-rose-600">{error}</div>}
+        {pendingNotice && (
+          <div className="rounded-xl bg-amber-50 border border-amber-200 px-3.5 py-2.5 text-sm text-amber-700 flex gap-2 items-start">
+            <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" /> {pendingNotice}
+          </div>
+        )}
+
+        <div className="flex items-center gap-3 pt-2">
+          <button type="submit" disabled={saving} className="btn-primary">
+            <Save className="h-4 w-4" /> {saving ? 'Saving…' : 'Save settings'}
+          </button>
+          {saved && !pendingNotice && (
+            <span className="flex items-center gap-1.5 text-sm text-emerald-600 font-medium">
+              <CheckCircle2 className="h-4 w-4" /> Saved
+            </span>
+          )}
+        </div>
+      </form>
+    </div>
+  )
+}
+
+// ===========================================================================
+// Approvals — per-person automation for the multi-committee sign-off flow.
+// Kept out of Community because it's not a shared setting — each committee
+// member turns this on/off for themselves only.
+// ===========================================================================
+function ApprovalsTab({ user }) {
+  const [changeTypes, setChangeTypes] = useState([])
+  const [autoApprovalSettings, setAutoApprovalSettings] = useState([])
+  const [autoApprovalLoading, setAutoApprovalLoading] = useState(true)
+  const [confirmEnable, setConfirmEnable] = useState(null)
+  const [enableDays, setEnableDays] = useState(7)
+  const [ackSaving, setAckSaving] = useState(false)
+
+  async function loadAutoApprovals() {
+    setAutoApprovalLoading(true)
+    try {
+      const { data } = await api.get(endpoints.committeeAutoApprovals())
+      setChangeTypes(data.data.changeTypes)
+      setAutoApprovalSettings(data.data.settings)
+    } catch (err) {
+      notify(err?.response?.data?.message || err.message)
+    } finally {
+      setAutoApprovalLoading(false)
+    }
+  }
+  useEffect(() => { loadAutoApprovals() }, [])
+
+  function mySetting(changeType) {
+    return autoApprovalSettings.find((s) => s.changeType === changeType && s.userId === user?.id)
+  }
+  function isMineEnabled(changeType) {
+    const s = mySetting(changeType)
+    return !!s?.enabled && new Date(s.expiresAt) > new Date()
+  }
+
+  async function turnOff(changeType) {
+    try {
+      const { data } = await api.put(endpoints.committeeAutoApprovals(), { changeType, enabled: false })
+      setAutoApprovalSettings((list) => {
+        const others = list.filter((s) => !(s.changeType === changeType && s.userId === user?.id))
+        return [...others, data.data]
+      })
+      notify('Auto-approval turned off.', 'success')
+    } catch (err) {
+      notify(err?.response?.data?.message || err.message)
+    }
+  }
+
+  function requestTurnOn(changeType) {
+    setEnableDays(7)
+    setConfirmEnable({ changeType })
+  }
+
+  async function confirmTurnOn(e) {
+    e.preventDefault()
+    if (!confirmEnable) return
+    setAckSaving(true)
+    try {
+      const { data } = await api.put(endpoints.committeeAutoApprovals(), {
+        changeType: confirmEnable.changeType,
+        enabled: true,
+        expiresInDays: Number(enableDays),
+        acknowledged: true,
+      })
+      setAutoApprovalSettings((list) => {
+        const others = list.filter((s) => !(s.changeType === confirmEnable.changeType && s.userId === user?.id))
+        return [...others, data.data]
+      })
+      setConfirmEnable(null)
+      notify(`Auto-approval turned on for ${enableDays} day(s).`, 'success')
+    } catch (err) {
+      notify(err?.response?.data?.message || err.message)
+    } finally {
+      setAckSaving(false)
+    }
+  }
+
+  return (
+    <div className="max-w-2xl">
+      <div className="card p-6">
+        <h3 className="text-sm font-semibold text-ink-800 mb-1 flex items-center gap-2">
+          <ShieldCheck className="h-4 w-4 text-brand-600" /> Committee approval automation
+        </h3>
+        <p className="text-xs text-ink-400 mb-4">
+          By default, every sensitive change needs your explicit approval. If that gets overwhelming, you can turn on
+          auto-approval per type of request, for a set number of days — your vote is then filled in automatically the
+          instant a matching request is created. This is per request type: turning it on for one doesn't turn it on
+          for the others, and you can turn it off again any time.
+        </p>
+
+        {autoApprovalLoading ? (
+          <p className="text-sm text-ink-400">Loading…</p>
+        ) : (
+          <div className="divide-y divide-ink-100">
+            {changeTypes.map((ct) => {
+              const mine = mySetting(ct.changeType)
+              const mineOn = isMineEnabled(ct.changeType)
+              const othersOn = autoApprovalSettings.filter((s) => s.changeType === ct.changeType && s.userId !== user?.id && s.enabled && new Date(s.expiresAt) > new Date())
+              return (
+                <div key={ct.changeType} className="py-3.5 flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-medium text-ink-700">{ct.label}</p>
+                    {mineOn && mine && (
+                      <p className="text-xs text-emerald-600 mt-0.5">
+                        On until {new Date(mine.expiresAt).toLocaleDateString()}
+                      </p>
+                    )}
+                    {othersOn.length > 0 && (
+                      <p className="text-xs text-ink-400 mt-0.5">
+                        Also auto-approving: {othersOn.map((s) => s.user?.fullName).join(', ')}
+                      </p>
+                    )}
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer shrink-0 mt-0.5">
+                    <input
+                      type="checkbox"
+                      className="sr-only peer"
+                      checked={mineOn}
+                      onChange={(e) => (e.target.checked ? requestTurnOn(ct.changeType) : turnOff(ct.changeType))}
+                    />
+                    <div className="w-10 h-6 bg-ink-200 peer-checked:bg-brand-600 rounded-full transition-colors relative">
+                      <div className={`absolute top-0.5 left-0.5 h-5 w-5 bg-white rounded-full shadow transition-transform ${mineOn ? 'translate-x-4' : ''}`} />
+                    </div>
+                  </label>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+
+      <Modal open={!!confirmEnable} onClose={() => setConfirmEnable(null)} title="Turn on auto-approval?">
+        <form onSubmit={confirmTurnOn} className="space-y-4">
+          <div className="rounded-xl bg-amber-50 border border-amber-200 px-3.5 py-2.5 text-sm text-amber-700 flex gap-2 items-start">
+            <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+            <span>
+              Auto-approving does not make you immune from accountability. If a request gets waved through this way
+              and turns out to be abusive or wrong, you're still responsible for having had auto-approval on when it
+              happened — the audit log records every auto-approved decision under your name.
+            </span>
+          </div>
+          <div>
+            <label className="label">Auto-approve for how many days?</label>
+            <input
+              type="number" min="1" max="365" required className="input"
+              value={enableDays}
+              onChange={(e) => setEnableDays(e.target.value)}
+            />
+          </div>
+          <div className="flex gap-2 pt-2">
+            <button type="button" onClick={() => setConfirmEnable(null)} disabled={ackSaving} className="btn-secondary flex-1">Cancel</button>
+            <button type="submit" disabled={ackSaving} className="btn-primary flex-1">{ackSaving ? 'Turning on…' : 'I understand, turn it on'}</button>
+          </div>
+        </form>
+      </Modal>
+    </div>
+  )
+}
+
+// ===========================================================================
+// Membership — handing off a committee seat. About "him" (his own seat),
+// but consequential enough for the whole community's governance that it
+// gets its own tab rather than hiding inside Profile.
+// ===========================================================================
+function MembershipTab({ user }) {
+  const { residents, requestCommitteeTransfer, fetchMyTransferItems, cancelCommitteeTransfer } = useData()
+
+  const [transferOpen, setTransferOpen] = useState(false)
+  const [transferTarget, setTransferTarget] = useState('')
+  const [transferQuery, setTransferQuery] = useState('')
+  const [transferSubmitting, setTransferSubmitting] = useState(false)
+  const [transferError, setTransferError] = useState('')
+  const [transferConfirm, setTransferConfirm] = useState(false)
+  const [myOutgoingRequest, setMyOutgoingRequest] = useState(null)
+  const [cancelling, setCancelling] = useState(false)
+  const [banner, setBanner] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    fetchMyTransferItems().then((r) => {
+      if (!cancelled) setMyOutgoingRequest(r.asRequester?.[0] || null)
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [fetchMyTransferItems])
+
+  const eligibleResidents = residents.filter((r) => r.userId !== user?.id && r.status === 'active')
+  const filteredResidents = (() => {
+    const q = transferQuery.trim().toLowerCase()
+    if (!q) return eligibleResidents
+    return eligibleResidents.filter((r) => [r.name, r.unit, r.email].join(' ').toLowerCase().includes(q))
+  })()
+  const selectedResident = eligibleResidents.find((r) => r.id === transferTarget)
+
+  async function confirmTransfer() {
+    setTransferSubmitting(true)
+    setTransferError('')
+    try {
+      const created = await requestCommitteeTransfer(transferTarget)
+      setMyOutgoingRequest(created)
+      setTransferConfirm(false)
+      setTransferOpen(false)
+      setBanner('Transfer request sent. It needs every other committee member to approve, then the resident\u2019s acceptance.')
+      setTimeout(() => setBanner(''), 5000)
+    } catch (err) {
+      setTransferError(err?.response?.data?.message || err.message || 'Could not start the transfer.')
+      setTransferConfirm(false)
+    } finally {
+      setTransferSubmitting(false)
+    }
+  }
+
+  async function cancelOutgoing() {
+    if (!myOutgoingRequest) return
+    setCancelling(true)
+    try {
+      await cancelCommitteeTransfer(myOutgoingRequest.id)
+      setMyOutgoingRequest(null)
+    } catch (err) {
+      notify(err?.response?.data?.message || err.message || 'Could not cancel the request.')
+    } finally {
+      setCancelling(false)
+    }
+  }
+
+  return (
+    <div className="max-w-2xl">
+      {banner && <div className="mb-5 rounded-xl bg-emerald-50 border border-emerald-100 px-4 py-3 text-sm text-emerald-700">{banner}</div>}
+
+      <div className="card p-5 space-y-3">
+        <h3 className="font-semibold text-ink-800 flex items-center gap-2"><Users2 className="h-4 w-4 text-brand-600" /> Transfer committee status</h3>
+        <p className="text-sm text-ink-500">
+          Hand your committee seat to another resident. The transfer only goes through once every other
+          committee member approves, and the resident you choose accepts it too.
+        </p>
+
+        {myOutgoingRequest ? (
+          <div className="rounded-xl bg-amber-50 border border-amber-100 px-4 py-3 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 text-sm text-amber-700">
+              <Clock className="h-4 w-4 shrink-0" />
+              <span>
+                Pending &mdash; {myOutgoingRequest.status === 'PENDING_COMMITTEE' ? 'awaiting committee approval' : 'awaiting the resident\u2019s acceptance'} for{' '}
+                <strong>{myOutgoingRequest.toResident?.user?.fullName}</strong>.
+              </span>
+            </div>
+            <button onClick={cancelOutgoing} disabled={cancelling} className="btn-secondary !py-1.5 !px-3 text-xs shrink-0">
+              <XCircle className="h-3.5 w-3.5" /> {cancelling ? 'Cancelling…' : 'Cancel'}
+            </button>
+          </div>
+        ) : (
+          <button onClick={() => { setTransferOpen(true); setTransferTarget(''); setTransferQuery(''); setTransferError('') }} className="btn-secondary">
+            <Users2 className="h-4 w-4" /> Start a transfer
+          </button>
+        )}
+      </div>
 
       {/* Transfer: pick resident */}
       <Modal open={transferOpen} onClose={() => setTransferOpen(false)} title="Transfer committee status">
@@ -337,9 +995,9 @@ export default function Profile() {
       <Modal open={transferConfirm} onClose={() => setTransferConfirm(false)} title="Confirm transfer request">
         <div className="space-y-4">
           <p className="text-sm text-ink-500">
-            You\u2019re about to request handing your committee seat to{' '}
+            You’re about to request handing your committee seat to{' '}
             <strong className="text-ink-800">{selectedResident?.name}</strong>.
-            This can\u2019t be undone once everyone accepts &mdash; are you sure?
+            This can’t be undone once everyone accepts &mdash; are you sure?
           </p>
           <div className="flex gap-2 pt-2">
             <button type="button" onClick={() => setTransferConfirm(false)} className="btn-secondary flex-1">Go back</button>
@@ -349,31 +1007,6 @@ export default function Profile() {
           </div>
         </div>
       </Modal>
-
-      {/* OTP modal */}
-      {pendingAction && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-ink-900/40 backdrop-blur-sm" onClick={() => setPendingAction(null)} />
-          <div className="relative w-full max-w-sm card p-6 animate-fade-up">
-            <h3 className="text-lg font-bold text-ink-900 mb-1">Verify it\u2019s you</h3>
-            <p className="text-sm text-ink-500 mb-4">{sentNotice}</p>
-            <label className="label">6-digit code</label>
-            <input
-              autoFocus
-              inputMode="numeric"
-              maxLength={6}
-              className="input tracking-[0.5em] text-center text-lg font-semibold"
-              value={otpInput}
-              onChange={(e) => setOtpInput(e.target.value.replace(/\D/g, ''))}
-            />
-            {otpError && <p className="text-sm text-rose-600 mt-2">{otpError}</p>}
-            <div className="flex gap-2 pt-4">
-              <button onClick={() => setPendingAction(null)} className="btn-secondary flex-1">Cancel</button>
-              <button onClick={confirmOtp} className="btn-primary flex-1">Confirm</button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }

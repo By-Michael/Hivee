@@ -1,18 +1,9 @@
 const multer = require('multer');
-const path = require('path');
-const crypto = require('crypto');
 const AppError = require('../utils/AppError');
 
-const UPLOAD_DIR = path.join(__dirname, '..', '..', 'uploads', 'receipts');
-
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, UPLOAD_DIR),
-  filename: (req, file, cb) => {
-    const unique = crypto.randomUUID();
-    cb(null, `${unique}${path.extname(file.originalname)}`);
-  },
-});
-
+// memoryStorage regardless of target (Supabase or local disk) — the actual
+// write happens in src/config/storage.js's saveReceiptFile, which needs a
+// buffer either way (multer.diskStorage can't hand off to a cloud SDK).
 const ALLOWED_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']);
 
 function fileFilter(req, file, cb) {
@@ -23,7 +14,7 @@ function fileFilter(req, file, cb) {
 }
 
 const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   fileFilter,
   limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
 });
@@ -43,4 +34,4 @@ const screenshotUpload = multer({
   limits: { fileSize: 5 * 1024 * 1024 },
 });
 
-module.exports = { upload, UPLOAD_DIR, screenshotUpload };
+module.exports = { upload, screenshotUpload };

@@ -1,13 +1,12 @@
-/** Jest config for cfms-backend. */
+/** @type {import('jest').Config} */
 module.exports = {
   testEnvironment: 'node',
-  // Loads test env vars (DATABASE_URL pointing at the TEST db, JWT secrets,
-  // etc.) before any test file or module (like src/config/prisma.js) runs.
-  setupFiles: ['<rootDir>/tests/env.setup.js'],
+  // Loaded before any test file or app module is imported, so DATABASE_URL
+  // (read by src/config/prisma.js) and JWT secrets are set in time.
+  // See tests/env.setup.js for details.
+  setupFiles: ['./tests/env.setup.js'],
   testMatch: ['**/tests/**/*.test.js'],
-  // Integration tests share one real database, so running test files in
-  // parallel would race on the same tables. Keep it simple and serial.
-  maxWorkers: 1,
-  clearMocks: true,
-  verbose: true,
+  // Truncation-based resetDb() isn't safe to run concurrently against the
+  // same test database, so tests also run with --runInBand (see package.json).
+  testTimeout: 15000,
 };

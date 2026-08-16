@@ -2,14 +2,21 @@ import { useMemo, useState } from 'react'
 import { Plus, Pencil, Trash2, Landmark, TrendingUp, Target, Users, Lock } from 'lucide-react'
 import { useData } from '../../context/DataContext'
 import { PageHeader, Modal, currency, ConfirmDialog, notify } from '../../components/ui'
-import { getMeta, setMeta } from '../../lib/adapters'
+import { getMeta, setMeta, FUND_CATEGORIES } from '../../lib/adapters'
 
-const empty = { name: '', category: 'Security', goal: '' }
+const empty = { name: '', category: 'Security', goal: '', reason: '' }
 const catColors = {
   Security: 'from-brand-500 to-brand-600',
   Utilities: 'from-sky-400 to-sky-600',
   Maintenance: 'from-emerald-500 to-emerald-600',
   Development: 'from-violet-500 to-violet-600',
+  Landscaping: 'from-lime-500 to-emerald-600',
+  Sanitation: 'from-teal-400 to-teal-600',
+  Emergency: 'from-rose-500 to-rose-600',
+  Events: 'from-fuchsia-500 to-purple-600',
+  Administration: 'from-slate-500 to-slate-600',
+  Insurance: 'from-amber-500 to-orange-600',
+  Other: 'from-ink-400 to-ink-600',
 }
 
 export default function Funds() {
@@ -34,10 +41,17 @@ export default function Funds() {
     const collected = f.verifiedCollected // trust the backend total, not a client re-derivation
     const contributorIds = new Set(verifiedPayments.map((p) => p.residentId))
     const goal = Number(getMeta('fundGoal', f.id, 0)) || null
-    // Deletion is blocked server-side once any linked project has expenses
-    // logged against it — mirror that here so the button reflects reality
-    // instead of letting the admin hit a 403.
-    const hasExpenses = projects.some((p) => p.fundId === f.id && p.expenseCount > 0)
+    // Mirror the server's deletion rule (fundController.js deleteFund) so
+    // the button/lock icon reflects reality instead of letting the admin
+    // hit a 403: deletable once the fund's real balance is exactly zero
+    // AND nothing is still pending against it (direct or via a project) —
+    // an unverified payment could still land money into it later.
+    const projectIdsArr = Array.from(projectIdsInFund)
+    const hasPending = payments.some((p) =>
+      (p.status === 'pending' || p.status === 'pending_review') &&
+      (p.fundId === f.id || projectIdsArr.includes(p.projectId))
+    )
+    const canDelete = f.actualBalance === 0 && !hasPending
     return {
       ...f,
       collected,
@@ -45,12 +59,17 @@ export default function Funds() {
       nonContributors: Math.max(residents.length - contributorIds.size, 0),
       goal,
       pct: goal ? Math.min(100, Math.round((collected / goal) * 100)) : null,
-      hasExpenses,
+      canDelete,
+      deleteBlockedReason: f.actualBalance !== 0
+        ? `Still holds a balance of ${currency(f.actualBalance)} — spend it down to zero first.`
+        : hasPending
+          ? "Has a pending payment awaiting verification — resolve it first."
+          : '',
     }
   }), [funds, projects, payments, residents])
 
   function openAdd() { setEditing(null); setForm(empty); setModal(true) }
-  function openEdit(f) { setEditing(f); setForm({ ...f, goal: getMeta('fundGoal', f.id, '') }); setModal(true) }
+  function openEdit(f) { setEditing(f); setForm({ ...f, goal: getMeta('fundGoal', f.id, ''), reason: f.reason || '' }); setModal(true) }
 
   function confirmDelete() {
     if (!deleteTarget) return
@@ -64,7 +83,7 @@ export default function Funds() {
   function submit(e) {
     e.preventDefault()
     setSaving(true)
-    const payload = { name: form.name, category: form.category }
+    const payload = { name: form.name, category: form.category, reason: form.reason || undefined }
     const wasEditing = !!editing
     const action = wasEditing ? updateFund(editing.id, payload) : addFund(payload)
     action.then((idMaybe) => {
@@ -96,8 +115,8 @@ export default function Funds() {
                 </div>
                 <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                   <button onClick={() => openEdit(f)} className="p-1.5 rounded-lg text-ink-400 hover:bg-brand-50 hover:text-brand-600"><Pencil className="h-3.5 w-3.5" /></button>
-                  {f.hasExpenses ? (
-                    <span title="Can't be deleted — one of this fund's projects has expenses logged against it." className="p-1.5 rounded-lg text-ink-300 cursor-not-allowed">
+                  {!f.canDelete ? (
+                    <span title={`Can't be deleted — ${f.deleteBlockedReason}`} className="p-1.5 rounded-lg text-ink-300 cursor-not-allowed">
                       <Lock className="h-3.5 w-3.5" />
                     </span>
                   ) : (
@@ -107,6 +126,9 @@ export default function Funds() {
               </div>
               <p className="mt-4 font-semibold text-ink-800">{f.name}</p>
               <span className="badge bg-ink-100 text-ink-600 mt-1">{f.category}</span>
+              {f.reason && (
+                <p className="mt-1.5 text-xs text-ink-400 line-clamp-2" title={f.reason}>{f.reason}</p>
+              )}
               <p className="mt-4 text-2xl font-bold font-display text-ink-900">{currency(f.actualBalance)}</p>
               <p className="text-xs text-ink-400">Actually collected, minus spent</p>
               <p className="mt-1 text-xs text-ink-400">
@@ -157,9 +179,28 @@ export default function Funds() {
           </div>
           <div>
             <label className="label">Category</label>
-            <select className="input" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
-              <option>Security</option><option>Utilities</option><option>Maintenance</option><option>Development</option>
+            <select
+              className="input"
+              value={FUND_CATEGORIES.includes(form.category) ? form.category : 'Other'}
+              onChange={(e) => setForm({ ...form, category: e.target.value === 'Other' ? '' : e.target.value })}
+            >
+              {FUND_CATEGORIES.map((c) => <option key={c}>{c}</option>)}
+              <option value="Other">Other…</option>
             </select>
+            {!FUND_CATEGORIES.includes(form.category) && (
+              <input
+                required autoFocus className="input mt-2" placeholder="Type a category name"
+                value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}
+              />
+            )}
+          </div>
+          <div>
+            <label className="label">Reason <span className="text-ink-400 font-normal normal-case">(optional)</span></label>
+            <textarea
+              className="input" rows={2}
+              placeholder="Anything specific behind setting up this fund — e.g. what prompted it, what it's earmarked for…"
+              value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })}
+            />
           </div>
           <div>
             <label className="label">Collection goal (ETB, optional)</label>

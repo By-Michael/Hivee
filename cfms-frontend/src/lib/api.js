@@ -89,6 +89,9 @@ export const endpoints = {
   residents: () => '/residents',
   resident: (id) => `/residents/${id}`,
   residentSummary: (id) => `/residents/${id}/summary`,
+  residentExport: (id) => `/residents/${id}/export`,
+  residentDeactivate: (id) => `/residents/${id}/deactivate`,
+  residentReactivate: (id) => `/residents/${id}/reactivate`,
   myResidentProfile: () => '/residents/me',
 
   auditLogs: () => '/audit-logs',
@@ -102,6 +105,7 @@ export const endpoints = {
   payment: (id) => `/payments/${id}`,
   paymentReceipt: (id) => `/payments/${id}/receipt`,
   paymentSelfVerify: () => '/payments/self-verify',
+  paymentBatchVerify: () => '/payments/batch-verify',
   paymentParseScreenshot: () => '/payments/parse-screenshot',
   paymentRetract: (id) => `/payments/${id}/retract`,
 
@@ -111,6 +115,9 @@ export const endpoints = {
 
   projects: () => '/projects',
   project: (id) => `/projects/${id}`,
+  projectCancel: (id) => `/projects/${id}/cancel`,
+
+  committeeAutoApprovals: () => '/committee-auto-approvals',
 
   expenses: () => '/expenses',
   expense: (id) => `/expenses/${id}`,

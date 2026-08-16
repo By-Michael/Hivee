@@ -4,10 +4,27 @@ const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/AppError');
 const { recordAudit } = require('../utils/audit');
 const { phoneSearchKeyFor } = require('../utils/phone');
+const { sendResidentDeactivatedEmail } = require('../utils/email');
 
-// ADMIN registers a resident under their own community.
+// Preset list of common deactivation reasons, surfaced in the UI as
+// one-click chips so the committee doesn't have to type the same handful
+// of reasons over and over. The UI can still send any free-typed reason
+// instead — this list is a convenience, not an enum enforced server-side.
+const COMMON_INACTIVE_REASONS = [
+  'Non-payment of fees',
+  'Moved out / no longer a resident',
+  'Property sold',
+  'Requested by resident',
+  'Violation of community rules',
+  'Duplicate or incorrect account',
+];
+
+// ADMIN registers a resident under their own community. Always created as
+// ACTIVE — a resident only ever becomes inactive afterwards, through the
+// dedicated deactivate action below, so there's no "status" field for the
+// committee to set at creation time.
 const createResident = catchAsync(async (req, res) => {
-  const { fullName, email, password, unitNumber, status, phone, idNumber, address, ownerType } = req.body;
+  const { fullName, email, password, unitNumber, phone, idNumber, address, ownerType } = req.body;
 
   const existing = await prisma.user.findUnique({ where: { email } });
   if (existing) throw new AppError('Email already in use', 409);
@@ -41,7 +58,7 @@ const createResident = catchAsync(async (req, res) => {
       resident: {
         create: {
           unitNumber,
-          status: status || 'ACTIVE',
+          status: 'ACTIVE',
           phone,
           phoneSearchKey: phoneSearchKeyFor(phone),
           idNumber,
@@ -279,6 +296,158 @@ const updateMyResidentProfile = catchAsync(async (req, res) => {
   res.json({ success: true, data: updated });
 });
 
+// ADMIN: deactivate a resident's account. Inactivity happens for lots of
+// reasons (non-payment, moved out, rule violations, ...), so the committee
+// must record why — either one of COMMON_INACTIVE_REASONS or their own
+// free-typed text. Once inactive, the resident can no longer log in (see
+// authController.login), and they're emailed the reason plus a pointer to
+// contact the committee office for more info.
+const deactivateResident = catchAsync(async (req, res) => {
+  const { reason } = req.body;
+  if (!reason || !reason.trim()) throw new AppError('A reason is required to deactivate a resident', 422);
+
+  const resident = await prisma.resident.findFirst({
+    where: { id: req.params.id, user: { communityId: req.communityId } },
+    include: { user: true },
+  });
+  if (!resident) throw new AppError('Resident not found', 404);
+
+  if (resident.user.role === 'ADMIN') {
+    throw new AppError('This person is a committee member and can\'t be deactivated from the residents panel.', 422);
+  }
+  if (resident.status !== 'ACTIVE') {
+    throw new AppError('This resident is already inactive', 422);
+  }
+
+  const updated = await prisma.resident.update({
+    where: { id: resident.id },
+    data: { status: 'INACTIVE', inactiveReason: reason.trim(), inactivatedAt: new Date() },
+    include: { user: { select: { id: true, fullName: true, email: true } } },
+  });
+
+  const community = await prisma.community.findUnique({ where: { id: req.communityId } });
+
+  await sendResidentDeactivatedEmail({
+    to: updated.user.email,
+    fullName: updated.user.fullName,
+    reason: updated.inactiveReason,
+    communityName: community?.name,
+  });
+
+  await recordAudit(req, {
+    action: 'UPDATE',
+    entityType: 'Resident',
+    entityId: resident.id,
+    description: `Deactivated resident "${updated.user.fullName}" (unit ${updated.unitNumber}) — reason: ${updated.inactiveReason}`,
+  });
+
+  res.json({ success: true, data: updated });
+});
+
+// ADMIN: reactivate a previously-deactivated resident's account.
+const reactivateResident = catchAsync(async (req, res) => {
+  const resident = await prisma.resident.findFirst({
+    where: { id: req.params.id, user: { communityId: req.communityId } },
+    include: { user: true },
+  });
+  if (!resident) throw new AppError('Resident not found', 404);
+  if (resident.status === 'ACTIVE') throw new AppError('This resident is already active', 422);
+
+  const updated = await prisma.resident.update({
+    where: { id: resident.id },
+    data: { status: 'ACTIVE', inactiveReason: null, inactivatedAt: null },
+    include: { user: { select: { id: true, fullName: true, email: true } } },
+  });
+
+  await recordAudit(req, {
+    action: 'UPDATE',
+    entityType: 'Resident',
+    entityId: resident.id,
+    description: `Reactivated resident "${updated.user.fullName}" (unit ${updated.unitNumber})`,
+  });
+
+  res.json({ success: true, data: updated });
+});
+
+const listCommonInactiveReasons = catchAsync(async (req, res) => {
+  res.json({ success: true, data: COMMON_INACTIVE_REASONS });
+});
+
+// ADMIN: export one resident's profile + full payment history to an Excel
+// (.xlsx) file — used by the "Export" button in the resident info popup.
+// Works for every resident regardless of how many payments they have.
+const exportResidentPayments = catchAsync(async (req, res) => {
+  // Lazy-required: only this route pays the cost of loading exceljs.
+  const ExcelJS = require('exceljs');
+
+  const resident = await prisma.resident.findFirst({
+    where: { id: req.params.id, user: { communityId: req.communityId } },
+    include: {
+      user: { select: { fullName: true, email: true } },
+      payments: {
+        include: { fee: { select: { name: true } }, project: { select: { name: true } }, fund: { select: { name: true } } },
+        orderBy: { paidAt: 'desc' },
+      },
+    },
+  });
+  if (!resident) throw new AppError('Resident not found', 404);
+
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = 'CFMS';
+  workbook.created = new Date();
+
+  const infoSheet = workbook.addWorksheet('Resident Info');
+  infoSheet.columns = [
+    { header: 'Field', key: 'field', width: 24 },
+    { header: 'Value', key: 'value', width: 40 },
+  ];
+  infoSheet.addRows([
+    { field: 'Full name', value: resident.user.fullName },
+    { field: 'Email', value: resident.user.email },
+    { field: 'Unit / house number', value: resident.unitNumber },
+    { field: 'Phone', value: resident.phone || '' },
+    { field: 'ID number', value: resident.idNumber || '' },
+    { field: 'Owner/Renter', value: resident.ownerType || '' },
+    { field: 'Address', value: resident.address || '' },
+    { field: 'Status', value: resident.status },
+    { field: 'Inactive reason', value: resident.inactiveReason || '' },
+    { field: 'Joined', value: resident.joinedAt?.toISOString().slice(0, 10) || '' },
+  ]);
+  infoSheet.getRow(1).font = { bold: true };
+
+  const paymentsSheet = workbook.addWorksheet('Payments');
+  paymentsSheet.columns = [
+    { header: 'Date', key: 'date', width: 14 },
+    { header: 'For', key: 'for', width: 28 },
+    { header: 'Amount', key: 'amount', width: 14 },
+    { header: 'Method', key: 'method', width: 16 },
+    { header: 'Status', key: 'status', width: 16 },
+    { header: 'Payer name', key: 'payer', width: 20 },
+    { header: 'Reference', key: 'ref', width: 22 },
+    { header: 'Reason / note', key: 'note', width: 26 },
+  ];
+  paymentsSheet.getRow(1).font = { bold: true };
+  resident.payments.forEach((p) => {
+    paymentsSheet.addRow({
+      date: p.paidAt?.toISOString().slice(0, 10) || '',
+      for: p.fee?.name || p.project?.name || p.fund?.name || '',
+      amount: Number(p.amount),
+      method: p.paymentMethod,
+      status: p.status,
+      payer: p.payerName || '',
+      ref: p.transactionReference || '',
+      note: p.reason || '',
+    });
+  });
+
+  const safeName = (resident.user.fullName || 'resident').replace(/[^a-z0-9]+/gi, '_');
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${safeName}_payments.xlsx"`);
+
+  await workbook.xlsx.write(res);
+  res.end();
+});
+
 module.exports = {
   createResident,
   listResidents,
@@ -288,4 +457,8 @@ module.exports = {
   deleteResident,
   getMyResidentProfile,
   updateMyResidentProfile,
+  deactivateResident,
+  reactivateResident,
+  listCommonInactiveReasons,
+  exportResidentPayments,
 };

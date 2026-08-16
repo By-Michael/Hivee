@@ -113,6 +113,20 @@ const login = catchAsync(async (req, res) => {
   const valid = await bcrypt.compare(password, user.passwordHash);
   if (!valid) throw new AppError('Invalid credentials', 401);
 
+  // A resident whose account has been deactivated by the committee (for
+  // non-payment or any other reason) can't log in — even with the right
+  // password — until the committee reactivates them. Committee members
+  // (ADMIN) are unaffected even though they also have a Resident record.
+  if (user.role === 'RESIDENT') {
+    const resident = await prisma.resident.findUnique({ where: { userId: user.id } });
+    if (resident && resident.status !== 'ACTIVE') {
+      throw new AppError(
+        'Your account has been deactivated. Please contact the committee office for more information.',
+        403
+      );
+    }
+  }
+
   const accessToken = await issueTokenPair(res, user);
 
   // Include resident/community relations directly in the login response

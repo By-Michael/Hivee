@@ -1,4 +1,5 @@
-import { Navigate, Route, Routes } from 'react-router-dom'
+import { useEffect } from 'react'
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { useAuth } from './context/AuthContext'
 import AppLayout from './layouts/AppLayout'
 import Login from './pages/Login'
@@ -13,7 +14,6 @@ import AdminProjects from './pages/admin/Projects'
 import AdminExpenses from './pages/admin/Expenses'
 import AdminReports from './pages/admin/Reports'
 import AdminAuditLog from './pages/admin/AuditLog'
-import AdminSettings from './pages/admin/Settings'
 
 import ResidentDashboard from './pages/resident/Dashboard'
 import ResidentPayments from './pages/resident/Payments'
@@ -24,10 +24,27 @@ import ResidentReports from './pages/resident/Reports'
 
 import Profile from './pages/shared/Profile'
 
+// Without this, the browser's default scroll restoration carries whatever
+// scroll position a previous page was left at (e.g. half-scrolled down a
+// long table) onto the next panel navigated to, so it opens already
+// scrolled instead of at the top.
+function ScrollToTop() {
+  const { pathname } = useLocation()
+  useEffect(() => {
+    window.scrollTo(0, 0)
+  }, [pathname])
+  return null
+}
+
 function Protected({ role, children }) {
   const { user } = useAuth()
   if (!user) return <Navigate to="/login" replace />
-  if (role && user.role !== role) return <Navigate to={user.role === 'admin' ? '/admin' : '/resident'} replace />
+  // Admins are always also a resident of their own community (see
+  // AuthContext#normalizeUser -> residentId), so they're allowed into the
+  // resident-side pages too — the top-right account menu lets them switch
+  // between the two views. Residents still can't cross into /admin.
+  const allowed = user.role === role || (user.role === 'admin' && role === 'resident')
+  if (role && !allowed) return <Navigate to={user.role === 'admin' ? '/admin' : '/resident'} replace />
   return children
 }
 
@@ -45,6 +62,7 @@ export default function App() {
   return (
     <>
       <Toaster />
+      <ScrollToTop />
       <Routes>
       <Route path="/login" element={user ? <Navigate to={user.role === 'admin' ? '/admin' : '/resident'} replace /> : <Login />} />
 
@@ -58,7 +76,7 @@ export default function App() {
         <Route path="expenses" element={<AdminExpenses />} />
         <Route path="reports" element={<AdminReports />} />
         <Route path="audit-log" element={<AdminAuditLog />} />
-        <Route path="settings" element={<AdminSettings />} />
+        <Route path="settings" element={<Profile />} />
         <Route path="profile" element={<Profile />} />
       </Route>
 

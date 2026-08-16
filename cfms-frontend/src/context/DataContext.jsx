@@ -6,7 +6,7 @@ import {
   feeToUI, feeToAPI,
   paymentToUI, paymentToCreateAPI, paymentToUpdateAPI,
   fundToUI, fundToAPI,
-  projectToUI, projectToAPI,
+  projectToUI, projectToAPI, projectCancelToAPI,
   expenseToUI, expenseToAPI,
   receiptToUI,
   communityToUI, communityToUpdateAPI,
@@ -417,6 +417,47 @@ export function DataProvider({ children }) {
       const updated = residentToUI(data.data)
       patchList('residents')((list) => list.map((r) => (r.id === id ? updated : r)))
     },
+    // Deactivating always requires a reason (picked from a common-reasons
+    // list or free-typed) — the backend records it, emails the resident,
+    // and blocks their next login. See "Deactivate resident" in
+    // Residents.jsx.
+    deactivateResident: async (id, reason) => {
+      const { data } = await api.post(endpoints.residentDeactivate(id), { reason })
+      const updated = residentToUI(data.data)
+      patchList('residents')((list) => list.map((r) => (r.id === id ? updated : r)))
+      setData((d) => ({
+        ...d,
+        residentsMeta: { ...d.residentsMeta, activeTotal: Math.max(0, d.residentsMeta.activeTotal - 1) },
+      }))
+      return updated
+    },
+    reactivateResident: async (id) => {
+      const { data } = await api.post(endpoints.residentReactivate(id))
+      const updated = residentToUI(data.data)
+      patchList('residents')((list) => list.map((r) => (r.id === id ? updated : r)))
+      setData((d) => ({
+        ...d,
+        residentsMeta: { ...d.residentsMeta, activeTotal: d.residentsMeta.activeTotal + 1 },
+      }))
+      return updated
+    },
+    // Downloads an Excel (.xlsx) file with this resident's profile +
+    // full payment history. Uses a blob response so the auth header still
+    // applies (a plain <a href> to the API URL wouldn't carry it).
+    exportResidentPayments: async (id, fileHint) => {
+      const response = await api.get(endpoints.residentExport(id), { responseType: 'blob' })
+      const disposition = response.headers?.['content-disposition'] || ''
+      const match = /filename="?([^"]+)"?/.exec(disposition)
+      const filename = match?.[1] || `${fileHint || 'resident'}_payments.xlsx`
+      const url = window.URL.createObjectURL(new Blob([response.data]))
+      const link = document.createElement('a')
+      link.href = url
+      link.download = filename
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      window.URL.revokeObjectURL(url)
+    },
     removeResident: async (id) => {
       await api.delete(endpoints.resident(id))
       setData((d) => {
@@ -492,6 +533,18 @@ export function DataProvider({ children }) {
       }
       refresh({ silent: true })
     },
+    // Batch-verify a set of pending/needs-review payments in one call.
+    // NOTE: the backend endpoint is currently a placeholder that marks
+    // them verified without re-checking the bank — see the TODO in
+    // paymentController.js. Swap-in-ready once the real batch bank
+    // lookup API is wired up; this call site won't need to change.
+    batchVerifyPayments: async (ids) => {
+      const { data } = await api.post(endpoints.paymentBatchVerify(), { ids })
+      const byId = new Map(data.data.map((p) => [p.id, paymentToUI(p)]))
+      patchList('payments')((list) => list.map((p) => byId.get(p.id) || p))
+      refresh({ silent: true })
+      return data.meta?.verifiedCount ?? data.data.length
+    },
     // Edit a manually-recorded payment. The backend rejects this for a
     // resident's own self-verified (bank) payment — see paymentController.js.
     editPayment: async (id, form) => {
@@ -515,8 +568,8 @@ export function DataProvider({ children }) {
     // Resident self-serve flow: submit a bank txn ID and get verified
     // against the bank instantly (no admin step). Throws on mismatch/
     // failure so the caller can show the error inline and let them retry.
-    submitSelfPayment: async ({ feeId, fundId, txnId, payerName, reason, amount }) => {
-      const { data } = await api.post(endpoints.paymentSelfVerify(), { feeId, fundId, txnId, payerName, reason, amount })
+    submitSelfPayment: async ({ feeId, fundId, txnId, payerName, reason, amount, receiptAmount }) => {
+      const { data } = await api.post(endpoints.paymentSelfVerify(), { feeId, fundId, txnId, payerName, reason, amount, receiptAmount })
       patchList('payments')((list) => [paymentToUI(data.data), ...list])
       refresh({ silent: true })
       return paymentToUI(data.data)
@@ -603,11 +656,17 @@ export function DataProvider({ children }) {
       patchList('projects')((list) => list.map((p) => (p.id === id ? projectToUI(data.data) : p)))
       return data
     },
-    // Blocked by the backend once the project has any expenses logged —
-    // surfaces as a 403 with an explanatory message.
-    removeProject: async (id) => {
-      await api.delete(endpoints.project(id))
-      patchList('projects')((list) => list.filter((p) => p.id !== id))
+    // There is no delete endpoint anymore — projects can't be deleted,
+    // only cancelled with a mandatory reason, and cancellation needs every
+    // other committee member's approval (see cancelProject in the
+    // backend). Returns { pendingChange, message } same shape as
+    // updateProject's budget-approval path.
+    cancelProject: async (id, reason) => {
+      const { data } = await api.post(endpoints.projectCancel(id), projectCancelToAPI(reason))
+      if (!data.pendingChange) {
+        patchList('projects')((list) => list.map((p) => (p.id === id ? projectToUI(data.data) : p)))
+      }
+      return data
     },
 
     // ---- expenses ----

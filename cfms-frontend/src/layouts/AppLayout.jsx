@@ -11,6 +11,7 @@ import { useAuth } from '../context/AuthContext'
 import { useData } from '../context/DataContext'
 import { useTheme } from '../context/ThemeContext'
 import { currency, formatDate, Modal, PageSkeleton, notify } from '../components/ui'
+import { getNotificationPrefs, onNotificationPrefsChanged } from '../lib/notificationPrefs'
 
 const adminNav = [
   { to: '/admin', label: 'Dashboard', icon: LayoutDashboard, end: true },
@@ -32,6 +33,7 @@ const residentNav = [
   { to: '/resident/projects', label: 'Projects', icon: FolderKanban },
   { to: '/resident/expenses', label: 'Expenses', icon: FileText },
   { to: '/resident/reports', label: 'Reports', icon: BarChart3 },
+  { to: '/resident/profile', label: 'Profile', icon: UserCog },
 ]
 
 const CHANGE_TYPE_LABELS = { COMMUNITY_PAYMENT_DETAILS: 'community payment account details' }
@@ -58,6 +60,15 @@ export default function AppLayout({ role }) {
   const data = useData()
   const { residents, payments, projects, fees, expenses, funds, fetchMyTransferItems, respondAsCommitteeMember, respondAsTransferRecipient, respondToPendingChange, pendingChanges, loading, hasLoadedOnce } = data
   const navigate = useNavigate()
+
+  // ---- notification mute preferences (Settings > Notifications) ----
+  const [notifPrefs, setNotifPrefs] = useState(() => getNotificationPrefs(user?.id))
+  useEffect(() => {
+    setNotifPrefs(getNotificationPrefs(user?.id))
+    return onNotificationPrefsChanged((e) => {
+      if (e.detail?.userId === user?.id) setNotifPrefs(e.detail.prefs)
+    })
+  }, [user?.id])
   const menuRef = useRef(null)
   const notifRef = useRef(null)
   const searchRef = useRef(null)
@@ -136,6 +147,7 @@ export default function AppLayout({ role }) {
         detail: `${req.fromUser?.fullName} wants to hand their seat to ${req.toResident?.user?.fullName}`,
         date: req.createdAt,
         transfer: { kind: 'approver', request: req },
+        category: 'transfers',
       })
     })
     transferItems.asRecipient.forEach((req) => {
@@ -147,6 +159,7 @@ export default function AppLayout({ role }) {
         detail: `${req.fromUser?.fullName} wants to transfer their seat to you`,
         date: req.createdAt,
         transfer: { kind: 'recipient', request: req },
+        category: 'transfers',
       })
     })
 
@@ -160,6 +173,7 @@ export default function AppLayout({ role }) {
           detail: `${pc.proposedBy?.fullName || 'A committee member'} proposed: ${describePendingChangeDiff(pc.diff)}`,
           date: pc.createdAt,
           pendingChange: { request: pc },
+          category: 'approvals',
         })
       })
     }
@@ -176,6 +190,7 @@ export default function AppLayout({ role }) {
           detail: `${r?.name || 'A resident'} · ${currency(p.amount)}`,
           date: p.date,
           to: `${base}/payments`,
+          category: 'payments',
         })
       })
       const noReceipt = expenses.filter((e) => !e.receiptId)
@@ -188,6 +203,7 @@ export default function AppLayout({ role }) {
           detail: `${e.description} · ${currency(e.amount)}`,
           date: e.date,
           to: `${base}/expenses`,
+          category: 'expenses',
         })
       })
     } else {
@@ -203,6 +219,7 @@ export default function AppLayout({ role }) {
           detail: `${currency(f.amount)} · ${f.frequency}`,
           date: null,
           to: `${base}/payments`,
+          category: 'fees',
         })
       })
       myPayments.filter((p) => p.status === 'paid').slice(0, 3).forEach((p) => {
@@ -214,11 +231,14 @@ export default function AppLayout({ role }) {
           detail: `${currency(p.amount)} on ${formatDate(p.date)}`,
           date: p.date,
           to: `${base}/payments`,
+          category: 'payments',
         })
       })
     }
-    return items
-  }, [role, payments, residents, expenses, fees, user, base, transferItems, pendingChanges])
+    // Respect per-category mute preferences set in Settings > Notifications
+    // (see lib/notificationPrefs.js) before returning the final list.
+    return items.filter((item) => notifPrefs[item.category] !== false)
+  }, [role, payments, residents, expenses, fees, user, base, transferItems, pendingChanges, notifPrefs])
 
   // ---- Global search across residents / payments / projects / expenses / funds ----
   const searchResults = useMemo(() => {
@@ -434,6 +454,26 @@ export default function AppLayout({ role }) {
                 >
                   <UserCog className="h-4 w-4" /> Profile settings
                 </button>
+                {/* Admins are also a resident of their own community, so give
+                    them a one-click way to see the app as a resident would —
+                    and back again — instead of forcing a full log-out/in. */}
+                {user?.role === 'admin' && (
+                  role === 'admin' ? (
+                    <button
+                      onClick={() => { setMenuOpen(false); navigate('/resident') }}
+                      className="w-full flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-ink-600 hover:bg-brand-50 hover:text-brand-700 mt-1"
+                    >
+                      <Users className="h-4 w-4" /> Switch to resident view
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => { setMenuOpen(false); navigate('/admin') }}
+                      className="w-full flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-ink-600 hover:bg-brand-50 hover:text-brand-700 mt-1"
+                    >
+                      <ShieldCheck className="h-4 w-4" /> Switch to admin view
+                    </button>
+                  )
+                )}
                 <button onClick={handleLogout} className="w-full flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-rose-500 hover:bg-rose-50 mt-1">
                   <LogOut className="h-4 w-4" /> Sign out
                 </button>

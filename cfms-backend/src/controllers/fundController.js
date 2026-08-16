@@ -39,33 +39,50 @@ const getFund = catchAsync(async (req, res) => {
 // projectId/status), and combines the results in memory — a handful of
 // rows per fund, not every transaction ever recorded.
 async function computeFundMoneyForCommunity(communityId, fundIds) {
-  const [projectTotals, projectCounts, expenseTotals, paymentsViaProjects, paymentsDirect] = await Promise.all([
-    prisma.project.groupBy({
-      by: ['fundId'],
-      where: { communityId, fundId: { in: fundIds } },
-      _sum: { budget: true },
-    }),
-    prisma.project.groupBy({
-      by: ['fundId'],
-      where: { communityId, fundId: { in: fundIds } },
-      _count: { _all: true },
-    }),
-    // Expense has no fundId column (only projectId), so this one join is
-    // unavoidable — but it's a single grouped query, not a full-table
-    // fetch, and it's backed by Expense.projectId's index.
+  const [allocationTotals, projectCounts, expenseTotals, paymentsViaProjects, paymentsDirect] = await Promise.all([
+    // A project's budget can now be split across several funds
+    // (ProjectFundAllocation), so "allocated" per fund is the sum of this
+    // fund's own slice, not the whole project.budget — see schema.prisma
+    // comment on ProjectFundAllocation.
     prisma.$queryRaw`
-      SELECT pr."fundId" as "fundId", COALESCE(SUM(e.amount), 0)::float AS total
-      FROM expenses e
-      JOIN projects pr ON pr.id = e."projectId"
-      WHERE pr."communityId" = ${communityId} AND pr."fundId" = ANY(${fundIds}::text[])
-      GROUP BY pr."fundId"
+      SELECT pfa."fundId" as "fundId", COALESCE(SUM(pfa.amount), 0)::float AS total
+      FROM project_fund_allocations pfa
+      JOIN projects pr ON pr.id = pfa."projectId"
+      WHERE pr."communityId" = ${communityId} AND pfa."fundId" = ANY(${fundIds}::text[])
+      GROUP BY pfa."fundId"
     `,
     prisma.$queryRaw`
-      SELECT pr."fundId" as "fundId", COALESCE(SUM(pay.amount), 0)::float AS total
+      SELECT pfa."fundId" as "fundId", COUNT(DISTINCT pfa."projectId")::int AS count
+      FROM project_fund_allocations pfa
+      JOIN projects pr ON pr.id = pfa."projectId"
+      WHERE pr."communityId" = ${communityId} AND pfa."fundId" = ANY(${fundIds}::text[])
+      GROUP BY pfa."fundId"
+    `,
+    // Expenses/payments are recorded per-project, not per-fund, so once a
+    // project spans multiple funds we attribute spend/collection to each
+    // fund proportionally to that fund's share of the project's budget
+    // (pfa.amount / pr.budget). A single-fund project just gets a ratio of
+    // 1, so this is a no-op for the common case and existing data
+    // (backfilled 1:1 by the migration).
+    prisma.$queryRaw`
+      SELECT pfa."fundId" as "fundId",
+             COALESCE(SUM(e.amount * (pfa.amount / pr.budget)), 0)::float AS total
+      FROM expenses e
+      JOIN projects pr ON pr.id = e."projectId"
+      JOIN project_fund_allocations pfa ON pfa."projectId" = pr.id
+      WHERE pr."communityId" = ${communityId} AND pfa."fundId" = ANY(${fundIds}::text[])
+        AND pr.budget > 0
+      GROUP BY pfa."fundId"
+    `,
+    prisma.$queryRaw`
+      SELECT pfa."fundId" as "fundId",
+             COALESCE(SUM(pay.amount * (pfa.amount / pr.budget)), 0)::float AS total
       FROM payments pay
       JOIN projects pr ON pr.id = pay."projectId"
-      WHERE pay.status = 'VERIFIED' AND pr."communityId" = ${communityId} AND pr."fundId" = ANY(${fundIds}::text[])
-      GROUP BY pr."fundId"
+      JOIN project_fund_allocations pfa ON pfa."projectId" = pr.id
+      WHERE pay.status = 'VERIFIED' AND pr."communityId" = ${communityId} AND pfa."fundId" = ANY(${fundIds}::text[])
+        AND pr.budget > 0
+      GROUP BY pfa."fundId"
     `,
     prisma.payment.groupBy({
       by: ['fundId'],
@@ -74,8 +91,8 @@ async function computeFundMoneyForCommunity(communityId, fundIds) {
     }),
   ]);
 
-  const allocatedByFund = new Map(projectTotals.map((r) => [r.fundId, Number(r._sum.budget || 0)]));
-  const projectCountByFund = new Map(projectCounts.map((r) => [r.fundId, r._count._all]));
+  const allocatedByFund = new Map(allocationTotals.map((r) => [r.fundId, Number(r.total || 0)]));
+  const projectCountByFund = new Map(projectCounts.map((r) => [r.fundId, r.count]));
   const spentByFund = new Map(expenseTotals.map((r) => [r.fundId, Number(r.total || 0)]));
   const collectedViaProjectsByFund = new Map(paymentsViaProjects.map((r) => [r.fundId, Number(r.total || 0)]));
   const collectedDirectByFund = new Map(paymentsDirect.map((r) => [r.fundId, Number(r._sum.amount || 0)]));
@@ -151,25 +168,61 @@ const updateFund = catchAsync(async (req, res) => {
   res.json({ success: true, data: updated });
 });
 
-// Same reasoning as project deletion: once money has actually been spent
-// under this fund (via any of its projects), deleting the fund would take
-// the financial trail down with it, so it's blocked. Name/description stay
-// freely editable via updateFund above since they don't affect history.
+// Deletion rule: a fund can be deleted once it's fully wound down —
+//   1. actualBalance is exactly zero (everything verified-collected has
+//      been spent; no leftover cash that deletion would just erase).
+//   2. No pending/pending_review payment is sitting against it (direct or
+//      via one of its projects) — i.e. nothing that, if verified after
+//      deletion, would have landed money into a fund that no longer
+//      exists. This covers "no payment made to it after/while it was
+//      zero" — a payment can only ever push the balance again once it's
+//      actually verified, so an unresolved one is exactly the risk.
+// This replaces the old "any expense ever logged blocks deletion
+// forever" rule — that was overly permanent. Money already spent is fine
+// to have happened; what matters is nothing is left AND nothing is still
+// in flight. Projects under the fund cascade-delete, but their expenses
+// and payments are NOT lost — see schema.prisma: Payment.project/fund and
+// Expense.project all use SetNull, not Cascade, so the financial trail
+// (what was actually paid and spent) survives as orphaned records.
 const deleteFund = catchAsync(async (req, res) => {
   const fund = await prisma.fund.findFirst({
     where: { id: req.params.id, communityId: req.communityId },
-    include: { projects: { include: { _count: { select: { expenses: true } } } } },
+    include: { projects: { select: { id: true } } },
   });
   if (!fund) throw new AppError('Fund not found', 404);
 
-  const totalExpenses = fund.projects.reduce((sum, p) => sum + p._count.expenses, 0);
-  if (totalExpenses > 0) {
-    throw new AppError('This fund has projects with expenses logged against them and can no longer be deleted.', 403);
+  const byFund = await computeFundMoneyForCommunity(req.communityId, [fund.id]);
+  const { actualBalance } = byFund.get(fund.id) || { actualBalance: 0 };
+  if (actualBalance !== 0) {
+    throw new AppError(
+      `This fund still holds a balance of ${actualBalance.toFixed(2)} — it needs to be fully spent (or otherwise brought to zero) before it can be deleted.`,
+      403
+    );
+  }
+
+  const projectIds = fund.projects.map((p) => p.id);
+  const pendingCount = await prisma.payment.count({
+    where: {
+      communityId: req.communityId,
+      status: { in: ['PENDING', 'PENDING_REVIEW'] },
+      OR: [{ fundId: fund.id }, ...(projectIds.length ? [{ projectId: { in: projectIds } }] : [])],
+    },
+  });
+  if (pendingCount > 0) {
+    throw new AppError(
+      `This fund has ${pendingCount} pending payment${pendingCount === 1 ? '' : 's'} awaiting verification. Verify or reject ${pendingCount === 1 ? 'it' : 'them'} first — approving one after the fund is deleted would have nowhere to land.`,
+      403
+    );
   }
 
   await prisma.fund.delete({ where: { id: fund.id } });
-  await recordAudit(req, { action: 'DELETE', entityType: 'Fund', entityId: fund.id, description: `Deleted fund "${fund.name}" (no expenses had been logged under it)` });
+  await recordAudit(req, {
+    action: 'DELETE',
+    entityType: 'Fund',
+    entityId: fund.id,
+    description: `Deleted fund "${fund.name}" at zero balance with no pending payments (${projectIds.length} linked project(s) removed; their expenses/payments were kept and detached, not deleted)`,
+  });
   res.json({ success: true, message: 'Fund deleted' });
 });
 
-module.exports = { createFund, listFunds, getFund, getFundSummary, listFundSummaries, updateFund, deleteFund };
+module.exports = { createFund, listFunds, getFund, getFundSummary, listFundSummaries, updateFund, deleteFund, computeFundMoneyForCommunity };

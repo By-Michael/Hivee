@@ -73,6 +73,24 @@ async function createPendingChange(req, { changeType, entityId, currentEntity, p
     return { applied: true, entity: applied };
   }
 
+  // Members who have a standing CommitteeAutoApproval enabled for this
+  // exact changeType get their approval row filled in as APPROVED right
+  // away instead of PENDING — same effect as them clicking approve the
+  // instant the request was created, just automatic. Scoped strictly per
+  // changeType (see schema.prisma comment on CommitteeAutoApproval): a
+  // member who auto-approves PROJECT_BUDGET is not silently opted into
+  // auto-approving PROJECT_CANCELLATION too.
+  const autoApprovals = await prisma.committeeAutoApproval.findMany({
+    where: {
+      communityId: req.communityId,
+      changeType,
+      enabled: true,
+      expiresAt: { gt: new Date() },
+      userId: { in: otherMembers.map((m) => m.id) },
+    },
+  });
+  const autoApprovedUserIds = new Set(autoApprovals.map((a) => a.userId));
+
   const pendingChange = await prisma.pendingChange.create({
     data: {
       communityId: req.communityId,
@@ -82,10 +100,26 @@ async function createPendingChange(req, { changeType, entityId, currentEntity, p
       diff,
       proposedById: req.user.id,
       expiresAt: new Date(Date.now() + EXPIRY_HOURS * 60 * 60 * 1000),
-      approvals: { create: otherMembers.map((m) => ({ committeeUserId: m.id })) },
+      approvals: {
+        create: otherMembers.map((m) => (
+          autoApprovedUserIds.has(m.id)
+            ? { committeeUserId: m.id, decision: 'APPROVED', respondedAt: new Date(), autoApproved: true }
+            : { committeeUserId: m.id }
+        )),
+      },
     },
     include: changeInclude,
   });
+
+  if (autoApprovedUserIds.size > 0) {
+    const names = otherMembers.filter((m) => autoApprovedUserIds.has(m.id)).map((m) => m.fullName).join(', ');
+    await recordAudit(req, {
+      action: 'UPDATE',
+      entityType: 'PendingChange',
+      entityId: pendingChange.id,
+      description: `Auto-approved on behalf of ${names} per their standing auto-approval setting for ${def.label}`,
+    });
+  }
 
   await recordAudit(req, {
     action: 'CREATE',
@@ -93,6 +127,31 @@ async function createPendingChange(req, { changeType, entityId, currentEntity, p
     entityId: pendingChange.id,
     description: `Proposed change to ${def.label}, needs approval from ${otherMembers.length} other committee member(s): ${describeDiff(diff)}`,
   });
+
+  // If auto-approvals happened to cover everyone else already, resolve
+  // immediately rather than leaving a fully-approved request sitting in
+  // PENDING until someone happens to reload the list.
+  const stillPending = await prisma.pendingChangeApproval.count({
+    where: { pendingChangeId: pendingChange.id, decision: { not: 'APPROVED' } },
+  });
+  if (stillPending === 0 && otherMembers.length > 0) {
+    const [resolved] = await prisma.$transaction(async (tx) => {
+      await def.apply(tx, pendingChange.entityId, pendingChange.diff);
+      const r = await tx.pendingChange.update({
+        where: { id: pendingChange.id },
+        data: { status: 'APPROVED', resolvedAt: new Date() },
+        include: changeInclude,
+      });
+      return [r];
+    });
+    await recordAudit(req, {
+      action: 'UPDATE',
+      entityType: def.entityType,
+      entityId: pendingChange.entityId,
+      description: `${def.label} updated — every other committee member had auto-approval on for this change type: ${describeDiff(diff)}`,
+    });
+    return { applied: true, entity: resolved };
+  }
 
   return { pending: pendingChange };
 }

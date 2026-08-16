@@ -4,7 +4,7 @@ import {
 } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import { useData } from '../../context/DataContext'
-import { PageHeader, Modal, Badge, EmptyState, currency, formatDate } from '../../components/ui'
+import { PageHeader, Modal, Badge, EmptyState, currency, formatDate, usePagedList, Pager } from '../../components/ui'
 
 // Small "value + copy button" row used in the "pay to" block.
 function CopyRow({ label, value, mono }) {
@@ -44,6 +44,7 @@ export default function ResidentPayments() {
   const resident = residents.find((r) => r.id === user?.residentId) || residents[0]
   const mine = payments.filter((p) => p.residentId === resident?.id).sort((a, b) => new Date(b.date) - new Date(a.date))
   const feeOf = (id) => fees.find((f) => f.id === id)
+  const { pageItems: pagedMine, page: tablePage, totalPages: tableTotalPages, total: tableTotal, setPage: setTablePage } = usePagedList(mine, 50)
 
   const [modal, setModal] = useState(false)
   const [form, setForm] = useState(emptyForm)
@@ -56,6 +57,7 @@ export default function ResidentPayments() {
   const [successReviewFlags, setSuccessReviewFlags] = useState('')
   const [ocrLoading, setOcrLoading] = useState(false)
   const [ocrNote, setOcrNote] = useState('')
+  const [receiptAmount, setReceiptAmount] = useState(null)
   const fileInputRef = useRef(null)
 
   const selectedFee = fees.find((f) => f.id === form.feeId)
@@ -67,6 +69,7 @@ export default function ResidentPayments() {
     setError('')
     setCanRetry(false)
     setOcrNote('')
+    setReceiptAmount(null)
     setModal(true)
   }
 
@@ -107,6 +110,7 @@ export default function ResidentPayments() {
       } else {
         setOcrNote("Couldn't read a name or transaction ID from that image. Please fill them in manually.")
       }
+      setReceiptAmount(result.amount != null ? Number(result.amount) : null)
     } catch (err) {
       setOcrNote(err?.response?.data?.message || err.message || 'Could not read that screenshot.')
     } finally {
@@ -125,6 +129,7 @@ export default function ResidentPayments() {
         txnId: form.txnId.trim(),
         payerName: form.payerName.trim(),
         reason: form.reason.trim(),
+        receiptAmount,
       })
       setSuccessStatus(payment?.status || 'paid')
       setSuccessReviewFlags(payment?.reviewFlags || '')
@@ -190,7 +195,7 @@ export default function ResidentPayments() {
             <table className="data-table">
               <thead><tr><th>Fee</th><th>Amount</th><th>Method</th><th>Paid by</th><th>Reference</th><th>Date</th><th>Status</th><th></th></tr></thead>
               <tbody>
-                {mine.map((p) => (
+                {pagedMine.map((p) => (
                   <tr key={p.id}>
                     <td className="font-medium text-ink-800">{feeOf(p.feeId)?.name}</td>
                     <td className="font-semibold">{currency(p.amount)}</td>
@@ -215,6 +220,7 @@ export default function ResidentPayments() {
                 ))}
               </tbody>
             </table>
+            <Pager page={tablePage} totalPages={tableTotalPages} total={tableTotal} onChange={setTablePage} pageSize={50} />
           </div>
         )}
       </div>

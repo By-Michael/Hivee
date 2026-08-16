@@ -1,8 +1,19 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ShieldCheck, Search, RefreshCw, Lock, FileSpreadsheet, FileText } from 'lucide-react'
+import { ShieldCheck, RefreshCw, Lock, FileSpreadsheet, FileText } from 'lucide-react'
 import { useData } from '../../context/DataContext'
-import { PageHeader, EmptyState, usePagedList, Pager } from '../../components/ui'
+import {
+  PageHeader, EmptyState, usePagedList, Pager,
+  FilterPopover, FilterGrid, FilterField, FilterTextInput, FilterSelectInput, FilterDateInput,
+} from '../../components/ui'
 import { exportToExcel, exportToPdf } from '../../lib/exportUtils'
+
+function inRange(dateStr, from, to) {
+  if (!dateStr) return false
+  const t = new Date(dateStr).getTime()
+  if (from && t < new Date(from).getTime()) return false
+  if (to && t > new Date(to).getTime() + 86399999) return false
+  return true
+}
 
 const ACTION_TONE = {
   CREATE: 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200',
@@ -23,6 +34,18 @@ export default function AuditLog() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [query, setQuery] = useState('')
+  const [filterAction, setFilterAction] = useState('all')
+  const [filterEntity, setFilterEntity] = useState('all')
+  const [filterActor, setFilterActor] = useState('all')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
+
+  const activeCount = [
+    !!query, filterAction !== 'all', filterEntity !== 'all', filterActor !== 'all', !!(dateFrom || dateTo),
+  ].filter(Boolean).length
+  const clearFilters = () => {
+    setQuery(''); setFilterAction('all'); setFilterEntity('all'); setFilterActor('all'); setDateFrom(''); setDateTo('')
+  }
 
   async function load() {
     setLoading(true)
@@ -39,11 +62,33 @@ export default function AuditLog() {
 
   useEffect(() => { load() }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Dynamic option lists — action/entity/actor values aren't a fixed enum
+  // on the backend, so build the dropdown choices from whatever the loaded
+  // log actually contains.
+  const actionOptions = useMemo(() => {
+    const set = new Set(logs.map((l) => l.action).filter(Boolean))
+    return [...set].sort()
+  }, [logs])
+  const entityOptions = useMemo(() => {
+    const set = new Set(logs.map((l) => l.entityType).filter(Boolean))
+    return [...set].sort()
+  }, [logs])
+  const actorOptions = useMemo(() => {
+    const set = new Set(logs.map((l) => l.actorName).filter(Boolean))
+    return [...set].sort()
+  }, [logs])
+
   const filtered = useMemo(() => {
     const q = query.toLowerCase()
-    if (!q) return logs
-    return logs.filter((l) => [l.actorName, l.action, l.entityType, l.description].join(' ').toLowerCase().includes(q))
-  }, [logs, query])
+    return logs.filter((l) => {
+      if (filterAction !== 'all' && l.action !== filterAction) return false
+      if (filterEntity !== 'all' && l.entityType !== filterEntity) return false
+      if (filterActor !== 'all' && l.actorName !== filterActor) return false
+      if ((dateFrom || dateTo) && !inRange(l.createdAt, dateFrom, dateTo)) return false
+      if (q && ![l.actorName, l.action, l.entityType, l.description].join(' ').toLowerCase().includes(q)) return false
+      return true
+    })
+  }, [logs, query, filterAction, filterEntity, filterActor, dateFrom, dateTo])
 
   // Render at most 50 rows at a time (exports/totals still use the full
   // `filtered` array — only the on-screen table is paginated).
@@ -58,15 +103,21 @@ export default function AuditLog() {
     { header: 'Details', key: 'description', width: 40 },
   ]
 
+  const auditMeta = [
+    { label: 'Report', value: 'System Audit Log' },
+    { label: 'Generated', value: new Date().toLocaleString('en-GB') },
+    { label: 'Filter · Search', value: query || 'none' },
+    { label: 'Filter · Action', value: filterAction === 'all' ? 'all actions' : filterAction },
+    { label: 'Filter · Entity', value: filterEntity === 'all' ? 'all entities' : filterEntity },
+    { label: 'Filter · Member', value: filterActor === 'all' ? 'all members' : filterActor },
+    { label: 'Filter · Date', value: `${dateFrom || 'all time'} → ${dateTo || 'now'}` },
+    { label: 'Total entries', value: filtered.length },
+  ]
+
   const exportExcel = () => exportToExcel({
     filename: 'cfms-audit-log',
     sheetName: 'Audit log',
-    meta: [
-      { label: 'Report', value: 'System Audit Log' },
-      { label: 'Generated', value: new Date().toLocaleString('en-GB') },
-      { label: 'Search filter', value: query || 'none' },
-      { label: 'Total entries', value: filtered.length },
-    ],
+    meta: auditMeta,
     columns: logColumns,
     rows: filtered,
   })
@@ -76,11 +127,7 @@ export default function AuditLog() {
     title: 'System Audit Log',
     subtitle: 'Every committee member\'s actions — read-only record',
     orientation: 'landscape',
-    meta: [
-      { label: 'Generated', value: new Date().toLocaleString('en-GB') },
-      { label: 'Search filter', value: query || 'none' },
-      { label: 'Total entries', value: filtered.length },
-    ],
+    meta: auditMeta,
     columns: logColumns,
     rows: filtered,
   })
@@ -99,11 +146,30 @@ export default function AuditLog() {
         }
       />
 
-      <div className="card p-4 mb-5 flex flex-col sm:flex-row sm:items-center gap-3">
-        <div className="relative max-w-sm flex-1">
-          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-400" />
-          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by member, action, entity…" className="input pl-10" />
-        </div>
+      <div className="card p-4 mb-5 flex flex-wrap items-center justify-between gap-3">
+        <FilterPopover active={activeCount} onClear={clearFilters}>
+          <FilterGrid>
+            <FilterField label="Search" full>
+              <FilterTextInput placeholder="Search by member, action, entity, details…" value={query} onChange={setQuery} />
+            </FilterField>
+            <FilterField label="Action">
+              <FilterSelectInput value={filterAction} onChange={setFilterAction} options={[['all', 'All actions'], ...actionOptions.map((a) => [a, a])]} />
+            </FilterField>
+            <FilterField label="Entity">
+              <FilterSelectInput value={filterEntity} onChange={setFilterEntity} options={[['all', 'All entities'], ...entityOptions.map((e) => [e, e])]} />
+            </FilterField>
+            <FilterField label="Committee member">
+              <FilterSelectInput value={filterActor} onChange={setFilterActor} options={[['all', 'All members'], ...actorOptions.map((a) => [a, a])]} />
+            </FilterField>
+            <FilterField label="Date range">
+              <div className="flex items-center gap-2">
+                <FilterDateInput value={dateFrom} onChange={setDateFrom} />
+                <span className="text-ink-400 text-xs">to</span>
+                <FilterDateInput value={dateTo} onChange={setDateTo} />
+              </div>
+            </FilterField>
+          </FilterGrid>
+        </FilterPopover>
         <div className="flex items-center gap-1.5 text-xs text-ink-400">
           <Lock className="h-3.5 w-3.5" /> Read-only — no edit or delete
         </div>
@@ -117,7 +183,11 @@ export default function AuditLog() {
         {loading ? (
           <p className="text-sm text-ink-400 py-12 text-center">Loading audit trail…</p>
         ) : filtered.length === 0 ? (
-          <EmptyState icon={ShieldCheck} title="No activity yet" subtitle="Actions taken by committee members will show up here as they happen." />
+          logs.length === 0 ? (
+            <EmptyState icon={ShieldCheck} title="No activity yet" subtitle="Actions taken by committee members will show up here as they happen." />
+          ) : (
+            <EmptyState icon={ShieldCheck} title="No entries match these filters" subtitle="Try clearing a filter or widening the date range." />
+          )
         ) : (
           <div className="table-wrap !border-0">
             <table className="data-table">

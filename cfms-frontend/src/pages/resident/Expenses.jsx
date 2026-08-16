@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Paperclip, Eye, Download, CheckCircle2, CircleDashed } from 'lucide-react'
 import { useData } from '../../context/DataContext'
-import { PageHeader, Modal, currency, formatDate } from '../../components/ui'
+import { PageHeader, Modal, currency, formatDate, usePagedList, Pager } from '../../components/ui'
 import { fileUrl } from '../../lib/api'
 
 export default function ResidentExpenses() {
@@ -9,6 +9,7 @@ export default function ResidentExpenses() {
   const [detail, setDetail] = useState(null)
   const projectOf = (id) => projects.find((p) => p.id === id)?.name || '—'
   const receiptOf = (id) => receipts.find((r) => r.id === id)
+  const { pageItems: pagedExpenses, page, totalPages, total, setPage } = usePagedList(expenses, 50)
 
   function open(e) {
     setDetail(e)
@@ -25,7 +26,7 @@ export default function ResidentExpenses() {
           <table className="data-table">
             <thead><tr><th>Description</th><th>Project</th><th>Vendor</th><th>Amount</th><th>Date</th><th>Receipt</th></tr></thead>
             <tbody>
-              {expenses.map((e) => {
+              {pagedExpenses.map((e) => {
                 const r = receiptOf(e.receiptId)
                 return (
                   <tr key={e.id} className="cursor-pointer" onClick={() => open(e)}>
@@ -47,6 +48,7 @@ export default function ResidentExpenses() {
             </tbody>
           </table>
         </div>
+        <Pager page={page} totalPages={totalPages} total={total} onChange={setPage} pageSize={50} />
       </div>
 
       <Modal open={!!detail} onClose={() => setDetail(null)} title={detail?.description || 'Expense'}>
