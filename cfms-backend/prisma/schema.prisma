@@ -159,6 +159,7 @@ model User {
   community     Community?     @relation(fields: [communityId], references: [id], onDelete: Cascade)
   resident      Resident?
   refreshTokens RefreshToken[]
+  passwordResetTokens PasswordResetToken[]
   verifiedPayments Payment[]  @relation("PaymentVerifiedBy")
   recordedPayments Payment[]  @relation("PaymentRecordedBy")
   recordedExpenses Expense[]  @relation("ExpenseRecordedBy")
@@ -217,6 +218,25 @@ model RefreshToken {
 
   @@index([userId])
   @@map("refresh_tokens")
+}
+
+// Forgot-password flow. Mirrors RefreshToken's pattern: only a hash of the
+// token is ever stored, so a DB dump alone can't be used to reset anyone's
+// password. Single-use (consumedAt) and short-lived (expiresAt), separate
+// from RefreshToken so a password-reset link can't be repurposed as a
+// login/refresh token or vice versa.
+model PasswordResetToken {
+  id         String    @id @default(uuid())
+  userId     String
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("password_reset_tokens")
 }
 
 model Resident {
@@ -642,6 +662,13 @@ model CommitteeAutoApproval {
   // enabled is set to true, so the warning can't be silently bypassed by
   // a direct API call that skips the confirmation dialog.
   acknowledgedAt DateTime
+  // Who this auto-approval applies to, by proposer. Empty array (the
+  // default) means "anyone" — matches the original blanket behavior. A
+  // non-empty array narrows it to only auto-approve requests proposed by
+  // those specific committee members (userId of the OTHER admin who
+  // proposed the change), everyone else still needs an explicit vote from
+  // this user. Checked in pendingChangeController alongside changeType.
+  scopedToUserIds String[] @default([])
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 

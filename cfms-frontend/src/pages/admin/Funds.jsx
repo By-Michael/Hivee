@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Plus, Pencil, Trash2, Landmark, TrendingUp, Target, Users, Lock } from 'lucide-react'
 import { useData } from '../../context/DataContext'
-import { PageHeader, Modal, currency, ConfirmDialog, notify } from '../../components/ui'
+import { PageHeader, Modal, currency, currencyBalance, ConfirmDialog, notify } from '../../components/ui'
 import { getMeta, setMeta, FUND_CATEGORIES } from '../../lib/adapters'
 
 const empty = { name: '', category: 'Security', goal: '', reason: '' }
@@ -129,7 +129,7 @@ export default function Funds() {
               {f.reason && (
                 <p className="mt-1.5 text-xs text-ink-400 line-clamp-2" title={f.reason}>{f.reason}</p>
               )}
-              <p className="mt-4 text-2xl font-bold font-display text-ink-900">{currency(f.actualBalance)}</p>
+              <p className="mt-4 text-2xl font-bold font-display text-ink-900">{currencyBalance(f.actualBalance, 'short')}</p>
               <p className="text-xs text-ink-400">Actually collected, minus spent</p>
               <p className="mt-1 text-xs text-ink-400">
                 Budgeted: <span className="font-medium text-ink-500">{currency(f.budgetRemaining)}</span> remaining of {currency(f.budgetAllocated)}

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate, useLocation } from 'react-router-dom'
+import { useNavigate, useLocation, Link } from 'react-router-dom'
 import { Landmark, Mail, Phone, Lock, Eye, EyeOff, ShieldCheck, TrendingUp, Users } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 
@@ -152,7 +152,7 @@ export default function Login() {
                 <input type="checkbox" className="rounded border-ink-300 text-brand-600 focus:ring-brand-400" />
                 Remember me
               </label>
-              <a href="#" className="text-brand-600 font-medium hover:text-brand-700">Forgot password?</a>
+              <Link to="/forgot-password" className="text-brand-600 font-medium hover:text-brand-700">Forgot password?</Link>
             </div>
 
             <button type="submit" disabled={loading} className="btn-primary w-full py-3">

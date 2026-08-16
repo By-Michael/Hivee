@@ -3,7 +3,7 @@ import { Wallet, Landmark, FolderKanban, Users, ArrowUpRight, Clock, Receipt, Sh
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, CartesianGrid, BarChart, Bar } from 'recharts'
 import { useData } from '../../context/DataContext'
 import { useAuth } from '../../context/AuthContext'
-import { StatCard, Badge, PageHeader, Modal, currency, formatDate, notify, ChartPlaceholder } from '../../components/ui'
+import { StatCard, Badge, PageHeader, Modal, currency, currencyBalance, formatDate, notify, ChartPlaceholder } from '../../components/ui'
 
 const CHANGE_TYPE_LABELS = { COMMUNITY_PAYMENT_DETAILS: 'community payment account details', PROJECT_BUDGET: 'a project budget' }
 const DIFF_FIELD_LABELS = { paymentBankName: 'Bank name', paymentAccountName: 'Account holder', paymentAccountNumber: 'Account number', budget: 'Budget' }
@@ -208,7 +208,7 @@ export default function AdminDashboard() {
         <StatCard
           icon={Landmark}
           label="Total fund balance"
-          value={currency(totalBalance)}
+          value={currencyBalance(totalBalance, 'short')}
           sub={`Across ${funds.length} fund${funds.length === 1 ? '' : 's'}`}
           accent="brand"
           to="/admin/funds"
@@ -318,7 +318,7 @@ export default function AdminDashboard() {
                       <span className="h-2 w-2 rounded-full shrink-0" style={{ background: COLORS[i % COLORS.length] }} />
                       {f.name}
                     </span>
-                    <span className={`font-semibold ${f.value < 0 ? 'text-rose-600' : 'text-ink-700'}`}>{currency(f.value)}</span>
+                    <span className="font-semibold text-ink-700">{currencyBalance(f.value, 'short')}</span>
                   </div>
                 ))}
               </div>

@@ -8,6 +8,8 @@ const {
   loginSchema,
   refreshSchema,
   changePasswordSchema,
+  forgotPasswordSchema,
+  resetPasswordSchema,
 } = require('../validators/authValidators');
 
 const router = express.Router();
@@ -37,6 +39,21 @@ router.patch(
   authLimiter,
   validate(changePasswordSchema),
   authController.changePassword
+);
+// Unauthenticated by nature (that's the point of "forgot" password) —
+// authLimiter throttles both against brute-forcing/enumerating emails and
+// against mail-bombing an inbox with reset requests.
+router.post(
+  '/forgot-password',
+  authLimiter,
+  validate(forgotPasswordSchema),
+  authController.forgotPassword
+);
+router.post(
+  '/reset-password',
+  authLimiter,
+  validate(resetPasswordSchema),
+  authController.resetPassword
 );
 
 module.exports = router;

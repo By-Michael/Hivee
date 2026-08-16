@@ -85,6 +85,8 @@ export const endpoints = {
   logout: () => '/auth/logout',
   refresh: () => '/auth/refresh',
   changePassword: () => '/auth/change-password',
+  forgotPassword: () => '/auth/forgot-password',
+  resetPassword: () => '/auth/reset-password',
 
   residents: () => '/residents',
   resident: (id) => `/residents/${id}`,

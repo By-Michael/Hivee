@@ -1,4 +1,5 @@
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const prisma = require('../config/prisma');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/AppError');
@@ -9,6 +10,13 @@ const {
   verifyRefreshToken,
   hashToken,
 } = require('../utils/tokens');
+const { sendPasswordResetEmail, sendPasswordChangedEmail } = require('../utils/email');
+
+const PASSWORD_RESET_EXPIRES_MINUTES = 30;
+// Where the frontend's reset-password page lives, e.g.
+// https://app.example.com/reset-password?token=... — matches the
+// CORS_ORIGIN pattern used elsewhere in this file for cross-service URLs.
+const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
 
 const REFRESH_COOKIE_NAME = 'cfms_refresh_token';
 const REFRESH_COOKIE_OPTS = {
@@ -219,7 +227,91 @@ const changePassword = catchAsync(async (req, res) => {
     prisma.refreshToken.updateMany({ where: { userId: user.id, revoked: false }, data: { revoked: true } }),
   ]);
 
+  sendPasswordChangedEmail({ to: user.email, fullName: user.fullName }).catch(() => {});
+
   res.json({ success: true, message: 'Password updated' });
 });
 
-module.exports = { registerCommunity, login, refresh, logout, me, changePassword };
+/**
+ * Forgot-password: issues a one-time, 30-minute reset token and emails a
+ * link containing it. Always responds with the same generic message
+ * regardless of whether the email matched an account — enumerating valid
+ * emails via response differences is exactly what this endpoint must not
+ * do, since it's unauthenticated and open to anyone.
+ */
+const forgotPassword = catchAsync(async (req, res) => {
+  const { email } = req.body;
+
+  const user = await prisma.user.findUnique({ where: { email } });
+
+  if (user) {
+    // Raw token goes in the email link; only its hash is persisted (same
+    // pattern as RefreshToken) so a DB leak can't be replayed as a valid
+    // reset link.
+    const rawToken = crypto.randomBytes(32).toString('hex');
+    await prisma.passwordResetToken.create({
+      data: {
+        userId: user.id,
+        tokenHash: hashToken(rawToken),
+        expiresAt: new Date(Date.now() + PASSWORD_RESET_EXPIRES_MINUTES * 60 * 1000),
+      },
+    });
+
+    const resetUrl = `${FRONTEND_URL.replace(/\/$/, '')}/reset-password?token=${rawToken}`;
+    // Fire-and-forget: sendEmail never throws (see utils/email.js), and the
+    // response to the client must not reveal whether sending succeeded.
+    sendPasswordResetEmail({
+      to: user.email,
+      fullName: user.fullName,
+      resetUrl,
+      expiresInMinutes: PASSWORD_RESET_EXPIRES_MINUTES,
+    }).catch(() => {});
+  }
+
+  res.json({
+    success: true,
+    message: 'If an account exists for that email, a password reset link has been sent.',
+  });
+});
+
+/**
+ * Completes a forgot-password reset: validates the one-time token, sets
+ * the new password, consumes the token so it can't be replayed, and (like
+ * changePassword) revokes every outstanding refresh token so any other
+ * logged-in session is forced to re-authenticate.
+ */
+const resetPassword = catchAsync(async (req, res) => {
+  const { token, newPassword } = req.body;
+
+  const stored = await prisma.passwordResetToken.findUnique({
+    where: { tokenHash: hashToken(token) },
+  });
+  if (!stored || stored.consumedAt || stored.expiresAt < new Date()) {
+    throw new AppError('This reset link is invalid or has expired', 400);
+  }
+
+  const user = await prisma.user.findUnique({ where: { id: stored.userId } });
+  if (!user) throw new AppError('User no longer exists', 400);
+
+  const passwordHash = await bcrypt.hash(newPassword, 12);
+  await prisma.$transaction([
+    prisma.user.update({ where: { id: user.id }, data: { passwordHash } }),
+    prisma.passwordResetToken.update({ where: { id: stored.id }, data: { consumedAt: new Date() } }),
+    prisma.refreshToken.updateMany({ where: { userId: user.id, revoked: false }, data: { revoked: true } }),
+  ]);
+
+  sendPasswordChangedEmail({ to: user.email, fullName: user.fullName }).catch(() => {});
+
+  res.json({ success: true, message: 'Password has been reset. Please sign in with your new password.' });
+});
+
+module.exports = {
+  registerCommunity,
+  login,
+  refresh,
+  logout,
+  me,
+  changePassword,
+  forgotPassword,
+  resetPassword,
+};

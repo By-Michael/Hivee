@@ -3,6 +3,8 @@ import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { useAuth } from './context/AuthContext'
 import AppLayout from './layouts/AppLayout'
 import Login from './pages/Login'
+import ForgotPassword from './pages/ForgotPassword'
+import ResetPassword from './pages/ResetPassword'
 import { Toaster } from './components/ui'
 
 import AdminDashboard from './pages/admin/Dashboard'
@@ -65,6 +67,8 @@ export default function App() {
       <ScrollToTop />
       <Routes>
       <Route path="/login" element={user ? <Navigate to={user.role === 'admin' ? '/admin' : '/resident'} replace /> : <Login />} />
+      <Route path="/forgot-password" element={user ? <Navigate to={user.role === 'admin' ? '/admin' : '/resident'} replace /> : <ForgotPassword />} />
+      <Route path="/reset-password" element={user ? <Navigate to={user.role === 'admin' ? '/admin' : '/resident'} replace /> : <ResetPassword />} />
 
       <Route path="/admin" element={<Protected role="admin"><AppLayout role="admin" /></Protected>}>
         <Route index element={<AdminDashboard />} />

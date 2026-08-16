@@ -15,11 +15,20 @@ const listAutoApprovals = catchAsync(async (req, res) => {
     orderBy: { updatedAt: 'desc' },
   });
 
+  // Other committee members this user could scope an auto-approval to —
+  // the frontend uses this to render the "specific members" picker.
+  const committeeMembers = await prisma.user.findMany({
+    where: { communityId: req.communityId, role: 'ADMIN', id: { not: req.user.id } },
+    select: { id: true, fullName: true },
+    orderBy: { fullName: 'asc' },
+  });
+
   res.json({
     success: true,
     data: {
       changeTypes: Object.entries(CHANGE_TYPES).map(([key, def]) => ({ changeType: key, label: def.label })),
       settings: rows,
+      committeeMembers,
     },
   });
 });
@@ -31,15 +40,29 @@ const listAutoApprovals = catchAsync(async (req, res) => {
 const upsertAutoApproval = catchAsync(async (req, res) => {
   if (req.user.role !== 'ADMIN') throw new AppError('Only a committee member can set this', 403);
 
-  const { changeType, enabled, expiresInDays, acknowledged } = req.body;
+  const { changeType, enabled, expiresInDays, acknowledged, scopedToUserIds } = req.body;
   getChangeType(changeType); // throws 400 if not a real change type
 
+  let cleanScope = [];
   if (enabled) {
     if (!acknowledged) {
       throw new AppError('You must acknowledge the accountability notice to enable auto-approval', 400);
     }
     if (!Number.isInteger(expiresInDays) || expiresInDays < 1 || expiresInDays > 365) {
       throw new AppError('expiresInDays must be between 1 and 365', 400);
+    }
+    if (Array.isArray(scopedToUserIds) && scopedToUserIds.length > 0) {
+      // De-dupe and drop yourself (auto-approving your own proposals isn't
+      // meaningful — every other member still votes on those normally).
+      const requested = [...new Set(scopedToUserIds)].filter((id) => id !== req.user.id);
+      const validMembers = await prisma.user.findMany({
+        where: { id: { in: requested }, communityId: req.communityId, role: 'ADMIN' },
+        select: { id: true },
+      });
+      if (validMembers.length !== requested.length) {
+        throw new AppError('One or more selected committee members are invalid', 400);
+      }
+      cleanScope = requested;
     }
   }
 
@@ -52,6 +75,7 @@ const upsertAutoApproval = catchAsync(async (req, res) => {
         enabled: true,
         expiresAt: new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000),
         acknowledgedAt: new Date(),
+        scopedToUserIds: cleanScope,
       }
     : { enabled: false };
 
@@ -67,6 +91,7 @@ const upsertAutoApproval = catchAsync(async (req, res) => {
       enabled: !!enabled,
       expiresAt: data.expiresAt || new Date(),
       acknowledgedAt: data.acknowledgedAt || new Date(),
+      scopedToUserIds: data.scopedToUserIds || [],
     },
     update: data,
   });
@@ -76,7 +101,7 @@ const upsertAutoApproval = catchAsync(async (req, res) => {
     entityType: 'CommitteeAutoApproval',
     entityId: setting.id,
     description: enabled
-      ? `Turned ON auto-approval for "${getChangeType(changeType).label}" requests for ${expiresInDays} day(s)`
+      ? `Turned ON auto-approval for "${getChangeType(changeType).label}" requests for ${expiresInDays} day(s)${cleanScope.length > 0 ? ` (limited to ${cleanScope.length} specific committee member(s))` : ' (applies to any proposer)'}`
       : `Turned OFF auto-approval for "${getChangeType(changeType).label}" requests`,
     metadata: { before: existing ? { enabled: existing.enabled, expiresAt: existing.expiresAt } : null, after: { enabled: setting.enabled, expiresAt: setting.expiresAt } },
   });

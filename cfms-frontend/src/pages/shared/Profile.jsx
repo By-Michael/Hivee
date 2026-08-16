@@ -41,11 +41,20 @@ const TABS = [
 
 export default function Profile() {
   const { user } = useAuth()
-  const isCommittee = user?.role === 'admin'
+  const location = useLocation()
+  // An admin can switch into "resident view" (see AppLayout's "Switch to
+  // resident view") without their account's actual role changing — so
+  // which tabs show here needs to follow the *view* the person is
+  // currently browsing under (the /admin vs /resident URL prefix), not
+  // just user.role. Otherwise committee-only tabs (Community, Approvals,
+  // Membership) kept showing up even while looking at things as a
+  // resident would. A real resident account can never reach /admin/* in
+  // the first place (that route is already role-protected), so this only
+  // ever narrows what an admin sees, never widens what a resident can.
+  const isCommittee = user?.role === 'admin' && location.pathname.startsWith('/admin')
   const roleKey = isCommittee ? 'admin' : 'resident'
   const visibleTabs = TABS.filter((t) => t.roles.includes(roleKey))
 
-  const location = useLocation()
   const [searchParams, setSearchParams] = useSearchParams()
   // /admin/settings is still the sidebar's "Settings" link — land on the
   // Community tab when arriving that way, otherwise honour ?tab=, otherwise
@@ -683,9 +692,12 @@ function CommunityTab() {
 function ApprovalsTab({ user }) {
   const [changeTypes, setChangeTypes] = useState([])
   const [autoApprovalSettings, setAutoApprovalSettings] = useState([])
+  const [committeeMembers, setCommitteeMembers] = useState([])
   const [autoApprovalLoading, setAutoApprovalLoading] = useState(true)
   const [confirmEnable, setConfirmEnable] = useState(null)
   const [enableDays, setEnableDays] = useState(7)
+  const [scopeMode, setScopeMode] = useState('all') // 'all' | 'specific'
+  const [scopedIds, setScopedIds] = useState([])
   const [ackSaving, setAckSaving] = useState(false)
 
   async function loadAutoApprovals() {
@@ -694,6 +706,7 @@ function ApprovalsTab({ user }) {
       const { data } = await api.get(endpoints.committeeAutoApprovals())
       setChangeTypes(data.data.changeTypes)
       setAutoApprovalSettings(data.data.settings)
+      setCommitteeMembers(data.data.committeeMembers || [])
     } catch (err) {
       notify(err?.response?.data?.message || err.message)
     } finally {
@@ -725,12 +738,24 @@ function ApprovalsTab({ user }) {
 
   function requestTurnOn(changeType) {
     setEnableDays(7)
+    const existing = mySetting(changeType)
+    const existingScope = existing?.scopedToUserIds || []
+    setScopeMode(existingScope.length > 0 ? 'specific' : 'all')
+    setScopedIds(existingScope)
     setConfirmEnable({ changeType })
+  }
+
+  function toggleScopedId(id) {
+    setScopedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
   }
 
   async function confirmTurnOn(e) {
     e.preventDefault()
     if (!confirmEnable) return
+    if (scopeMode === 'specific' && scopedIds.length === 0) {
+      notify('Pick at least one committee member, or switch to "Anyone".')
+      return
+    }
     setAckSaving(true)
     try {
       const { data } = await api.put(endpoints.committeeAutoApprovals(), {
@@ -738,6 +763,7 @@ function ApprovalsTab({ user }) {
         enabled: true,
         expiresInDays: Number(enableDays),
         acknowledged: true,
+        scopedToUserIds: scopeMode === 'specific' ? scopedIds : [],
       })
       setAutoApprovalSettings((list) => {
         const others = list.filter((s) => !(s.changeType === confirmEnable.changeType && s.userId === user?.id))
@@ -762,7 +788,8 @@ function ApprovalsTab({ user }) {
           By default, every sensitive change needs your explicit approval. If that gets overwhelming, you can turn on
           auto-approval per type of request, for a set number of days — your vote is then filled in automatically the
           instant a matching request is created. This is per request type: turning it on for one doesn't turn it on
-          for the others, and you can turn it off again any time.
+          for the others, and you can turn it off again any time. You can also limit it to specific committee
+          members instead of covering anyone's proposals.
         </p>
 
         {autoApprovalLoading ? (
@@ -780,6 +807,11 @@ function ApprovalsTab({ user }) {
                     {mineOn && mine && (
                       <p className="text-xs text-emerald-600 mt-0.5">
                         On until {new Date(mine.expiresAt).toLocaleDateString()}
+                        {mine.scopedToUserIds?.length > 0 && (
+                          <> — only for {mine.scopedToUserIds
+                            .map((id) => committeeMembers.find((m) => m.id === id)?.fullName || 'a former member')
+                            .join(', ')}</>
+                        )}
                       </p>
                     )}
                     {othersOn.length > 0 && (
@@ -823,6 +855,46 @@ function ApprovalsTab({ user }) {
               value={enableDays}
               onChange={(e) => setEnableDays(e.target.value)}
             />
+          </div>
+          <div>
+            <label className="label">Whose proposals should this cover?</label>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setScopeMode('all')}
+                className={`flex-1 rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${scopeMode === 'all' ? 'border-brand-600 bg-brand-50 text-brand-700' : 'border-ink-200 text-ink-500 hover:bg-ink-50'}`}
+              >
+                Anyone
+              </button>
+              <button
+                type="button"
+                onClick={() => setScopeMode('specific')}
+                className={`flex-1 rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${scopeMode === 'specific' ? 'border-brand-600 bg-brand-50 text-brand-700' : 'border-ink-200 text-ink-500 hover:bg-ink-50'}`}
+              >
+                Specific member(s)
+              </button>
+            </div>
+            {scopeMode === 'specific' && (
+              <div className="mt-2 max-h-40 overflow-y-auto rounded-lg border border-ink-200 divide-y divide-ink-100">
+                {committeeMembers.length === 0 ? (
+                  <p className="text-xs text-ink-400 px-3 py-2">No other committee members yet.</p>
+                ) : committeeMembers.map((m) => (
+                  <label key={m.id} className="flex items-center gap-2 px-3 py-2 text-sm cursor-pointer hover:bg-ink-50">
+                    <input
+                      type="checkbox"
+                      checked={scopedIds.includes(m.id)}
+                      onChange={() => toggleScopedId(m.id)}
+                    />
+                    {m.fullName}
+                  </label>
+                ))}
+              </div>
+            )}
+            <p className="text-xs text-ink-400 mt-1.5">
+              {scopeMode === 'all'
+                ? 'Any committee member who proposes this type of change gets auto-approved by you.'
+                : 'Only proposals from the member(s) you pick above get auto-approved — everyone else still needs your explicit vote.'}
+            </p>
           </div>
           <div className="flex gap-2 pt-2">
             <button type="button" onClick={() => setConfirmEnable(null)} disabled={ackSaving} className="btn-secondary flex-1">Cancel</button>

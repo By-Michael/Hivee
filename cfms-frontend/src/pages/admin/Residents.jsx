@@ -60,6 +60,7 @@ export default function Residents() {
   const [deactivating, setDeactivating] = useState(false)
   const [deactivateError, setDeactivateError] = useState('')
   const [reactivating, setReactivating] = useState(false)
+  const [reactivateTarget, setReactivateTarget] = useState(null)
 
   const filtered = useMemo(() => {
     const q = query.toLowerCase()
@@ -221,6 +222,12 @@ export default function Residents() {
       .catch((err) => notify(err?.response?.data?.message || err.message || 'Could not reactivate this resident.'))
       .finally(() => setReactivating(false))
   }
+  function confirmReactivate() {
+    if (!reactivateTarget) return
+    const target = reactivateTarget
+    setReactivateTarget(null)
+    doReactivate(target)
+  }
 
   function doExport(r) {
     setExporting(true)
@@ -288,7 +295,7 @@ export default function Residents() {
                           r.status === 'active' ? (
                             <button onClick={() => openDeactivate(r)} className="p-2 rounded-lg text-ink-400 hover:bg-amber-50 hover:text-amber-600" title="Deactivate resident"><Ban className="h-4 w-4" /></button>
                           ) : (
-                            <button onClick={() => doReactivate(r)} disabled={reactivating} className="p-2 rounded-lg text-ink-400 hover:bg-emerald-50 hover:text-emerald-600" title="Reactivate resident"><RotateCcw className="h-4 w-4" /></button>
+                            <button onClick={() => setReactivateTarget(r)} disabled={reactivating} className="p-2 rounded-lg text-ink-400 hover:bg-emerald-50 hover:text-emerald-600" title="Reactivate resident"><RotateCcw className="h-4 w-4" /></button>
                           )
                         )}
                         <button
@@ -424,7 +431,7 @@ export default function Residents() {
                     <Ban className="h-3.5 w-3.5" /> Deactivate
                   </button>
                 ) : (
-                  <button type="button" onClick={() => doReactivate(infoResident)} disabled={reactivating} className="btn-secondary !py-1.5 !px-3 text-xs shrink-0">
+                  <button type="button" onClick={() => setReactivateTarget(infoResident)} disabled={reactivating} className="btn-secondary !py-1.5 !px-3 text-xs shrink-0">
                     <RotateCcw className="h-3.5 w-3.5" /> Reactivate
                   </button>
                 )}
@@ -560,6 +567,17 @@ export default function Residents() {
           </div>
         )}
       </Modal>
+
+      <ConfirmDialog
+        open={!!reactivateTarget}
+        title="Reactivate resident?"
+        message={reactivateTarget ? `"${reactivateTarget.name}" will regain access and be billed again as an active resident.` : ''}
+        confirmLabel="Reactivate"
+        danger={false}
+        loading={reactivating}
+        onConfirm={confirmReactivate}
+        onCancel={() => setReactivateTarget(null)}
+      />
 
       <ConfirmDialog
         open={!!deleteTarget}

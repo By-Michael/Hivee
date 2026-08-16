@@ -49,15 +49,43 @@ app.use(helmet());
 // not server compute, but transfer + JSON.parse time on plain-text bodies
 // several times larger than they needed to be.
 app.use(compression());
-const corsOrigin = process.env.CORS_ORIGIN || '*';
-// Printed on every boot so a misconfigured/missing CORS_ORIGIN is visible
-// in the Render logs immediately, instead of only showing up as a vague
-// browser-side CORS error with no indication of what the server actually
-// received.
-console.log(`[cors] Allowing origin: ${corsOrigin}${corsOrigin === '*' ? ' (CORS_ORIGIN env var is not set!)' : ''}`);
+// credentials: true (required so the httpOnly refresh cookie survives a
+// cross-origin request between the Render frontend/backend services) is
+// fundamentally incompatible with a wildcard '*' origin — browsers refuse
+// to expose credentialed responses to a wildcard-origin request, so the
+// cookie silently never round-trips and /auth/refresh fails, logging
+// everyone out ~15 minutes in ("Your session expired") even though nothing
+// is actually wrong. Previously this fell back to '*' when CORS_ORIGIN was
+// unset, which hid the misconfiguration behind an unrelated-looking
+// symptom. Support a comma-separated list (e.g. prod + a preview URL) and
+// fail loudly at boot instead, since a silent '*' fallback is worse than a
+// crash here.
+const CORS_ORIGINS = (process.env.CORS_ORIGIN || '')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
+
+if (CORS_ORIGINS.length === 0) {
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error(
+      'CORS_ORIGIN env var is not set. It must be your frontend URL (e.g. https://app.example.com), ' +
+        'or a comma-separated list of allowed origins. A wildcard cannot be used because auth relies on ' +
+        'a credentialed (cookie-based) cross-origin request.'
+    );
+  }
+  console.warn('[cors] CORS_ORIGIN not set — defaulting to http://localhost:5173 for local dev.');
+  CORS_ORIGINS.push('http://localhost:5173');
+}
+
+console.log(`[cors] Allowing origin(s): ${CORS_ORIGINS.join(', ')}`);
 app.use(
   cors({
-    origin: corsOrigin,
+    origin(origin, callback) {
+      // Same-origin/non-browser requests (curl, health checks) send no
+      // Origin header at all — allow those through.
+      if (!origin || CORS_ORIGINS.includes(origin)) return callback(null, true);
+      callback(new Error(`Origin ${origin} not allowed by CORS_ORIGIN`));
+    },
     credentials: true,
   })
 );

@@ -2,7 +2,7 @@ import { Wallet, Landmark, FolderKanban, CheckCircle2, Clock } from 'lucide-reac
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts'
 import { useAuth } from '../../context/AuthContext'
 import { useData } from '../../context/DataContext'
-import { StatCard, Badge, PageHeader, currency, formatDate, usePagedList, Pager } from '../../components/ui'
+import { StatCard, Badge, PageHeader, currency, currencyBalance, formatDate, usePagedList, Pager } from '../../components/ui'
 
 export default function ResidentDashboard() {
   const { user } = useAuth()
@@ -28,7 +28,7 @@ export default function ResidentDashboard() {
       <div className="grid sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
         <StatCard icon={Wallet} label="You've contributed" value={currency(totalPaid)} sub={`${myPayments.filter(p=>p.status==='paid').length} payments`} accent="brand" to="/resident/payments" />
         <StatCard icon={Clock} label="Pending dues" value={pending.length} sub={pending.length ? currency(pending.reduce((s,p)=>s+p.amount,0)) + ' outstanding — awaiting or past due' : 'All clear'} accent="amber" to="/resident/payments" />
-        <StatCard icon={Landmark} label="Total community funds" value={currency(totalFunds)} sub="Managed transparently" accent="green" to="/resident/funds" />
+        <StatCard icon={Landmark} label="Total community funds" value={currencyBalance(totalFunds, 'short')} sub="Managed transparently" accent="green" to="/resident/funds" />
         <StatCard icon={FolderKanban} label="Active projects" value={activeProjects} sub="Funded by your community" accent="rose" to="/resident/projects" />
       </div>
 

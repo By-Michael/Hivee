@@ -443,16 +443,16 @@ export default function AppLayout({ role }) {
               <ChevronDown className="h-4 w-4 text-ink-400 hidden sm:block" />
             </button>
             {menuOpen && (
-              <div className="absolute right-0 mt-2 w-52 card p-1.5 z-40 select-none">
+              <div className="absolute right-0 mt-2 w-64 card p-1.5 z-40 select-none">
                 <div className="px-3 py-2 border-b border-ink-50">
                   <p className="text-sm font-medium text-ink-800 truncate">{user?.name}</p>
                   <p className="text-xs text-ink-400 truncate">{user?.community}</p>
                 </div>
                 <button
                   onClick={() => { setMenuOpen(false); navigate(`${base}/profile`) }}
-                  className="w-full flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-ink-600 hover:bg-brand-50 hover:text-brand-700 mt-1"
+                  className="w-full flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-ink-600 hover:bg-brand-50 hover:text-brand-700 mt-1 whitespace-nowrap"
                 >
-                  <UserCog className="h-4 w-4" /> Profile settings
+                  <UserCog className="h-4 w-4 shrink-0" /> Profile settings
                 </button>
                 {/* Admins are also a resident of their own community, so give
                     them a one-click way to see the app as a resident would —
@@ -461,21 +461,21 @@ export default function AppLayout({ role }) {
                   role === 'admin' ? (
                     <button
                       onClick={() => { setMenuOpen(false); navigate('/resident') }}
-                      className="w-full flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-ink-600 hover:bg-brand-50 hover:text-brand-700 mt-1"
+                      className="w-full flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-ink-600 hover:bg-brand-50 hover:text-brand-700 mt-1 whitespace-nowrap"
                     >
-                      <Users className="h-4 w-4" /> Switch to resident view
+                      <Users className="h-4 w-4 shrink-0" /> Switch to resident view
                     </button>
                   ) : (
                     <button
                       onClick={() => { setMenuOpen(false); navigate('/admin') }}
-                      className="w-full flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-ink-600 hover:bg-brand-50 hover:text-brand-700 mt-1"
+                      className="w-full flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-ink-600 hover:bg-brand-50 hover:text-brand-700 mt-1 whitespace-nowrap"
                     >
-                      <ShieldCheck className="h-4 w-4" /> Switch to admin view
+                      <ShieldCheck className="h-4 w-4 shrink-0" /> Switch to admin view
                     </button>
                   )
                 )}
-                <button onClick={handleLogout} className="w-full flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-rose-500 hover:bg-rose-50 mt-1">
-                  <LogOut className="h-4 w-4" /> Sign out
+                <button onClick={handleLogout} className="w-full flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-rose-500 hover:bg-rose-50 mt-1 whitespace-nowrap">
+                  <LogOut className="h-4 w-4 shrink-0" /> Sign out
                 </button>
               </div>
             )}

@@ -42,7 +42,11 @@ export function Toaster() {
   if (toasts.length === 0) return null
 
   return (
-    <div className="fixed z-[100] top-4 right-4 flex flex-col gap-2 w-full max-w-sm pointer-events-none">
+    // top-20 (not top-4) so toasts stack below the sticky topbar (h-16)
+    // instead of overlapping its icons/dropdowns; z-[200] keeps them above
+    // the topbar's own z-30/z-40 dropdown layers regardless of stacking
+    // context quirks introduced by the topbar's backdrop-blur.
+    <div className="fixed z-[200] top-20 right-4 flex flex-col gap-2 w-[calc(100%-2rem)] sm:w-full max-w-sm pointer-events-none">
       {toasts.map((t) => {
         const style = TOAST_STYLES[t.type] || TOAST_STYLES.error
         const Icon = style.icon
@@ -481,6 +485,17 @@ export function Pager({ page, totalPages, total, onChange, pageSize = 50 }) {
 
 export function currency(n) {
   return new Intl.NumberFormat('en-ET', { style: 'currency', currency: 'ETB', maximumFractionDigits: 0 }).format(n || 0)
+}
+
+// For balances where a negative number is an expected, normal state (e.g. a
+// fund that hasn't finished collecting against its budget yet) rather than
+// an error — shows the magnitude without a leading "-" so it doesn't read
+// as a danger/error signal. Pass a `shortfallLabel` to say so in words
+// instead, e.g. currencyBalance(f.actualBalance, 'short of budget').
+export function currencyBalance(n, shortfallLabel) {
+  const amount = currency(Math.abs(n || 0))
+  if ((n || 0) >= 0) return amount
+  return shortfallLabel ? `${amount} ${shortfallLabel}` : amount
 }
 
 export function formatDate(d) {

@@ -89,7 +89,15 @@ async function createPendingChange(req, { changeType, entityId, currentEntity, p
       userId: { in: otherMembers.map((m) => m.id) },
     },
   });
-  const autoApprovedUserIds = new Set(autoApprovals.map((a) => a.userId));
+  // scopedToUserIds: [] means "anyone" (original blanket behavior); a
+  // non-empty array means this member only auto-approves proposals from
+  // those specific committee members, so it only counts here if the
+  // current proposer (req.user.id) is one of them.
+  const autoApprovedUserIds = new Set(
+    autoApprovals
+      .filter((a) => a.scopedToUserIds.length === 0 || a.scopedToUserIds.includes(req.user.id))
+      .map((a) => a.userId)
+  );
 
   const pendingChange = await prisma.pendingChange.create({
     data: {

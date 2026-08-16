@@ -2,7 +2,7 @@ import { useMemo, useRef, useState } from 'react'
 import { Landmark, Target, Users, TrendingUp, HandCoins, Copy, Check, Camera, Loader2, ShieldCheck, Clock, RotateCw } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import { useData } from '../../context/DataContext'
-import { PageHeader, Modal, Badge, currency, usePagedList, Pager, formatDate } from '../../components/ui'
+import { PageHeader, Modal, Badge, currency, currencyBalance, usePagedList, Pager, formatDate } from '../../components/ui'
 import { getMeta } from '../../lib/adapters'
 
 const catColors = {
@@ -190,7 +190,7 @@ export default function ResidentFunds() {
             </div>
             <p className="mt-4 font-semibold text-ink-800">{f.name}</p>
             <span className="badge bg-ink-100 text-ink-600 mt-1">{f.category}</span>
-            <p className="mt-4 text-2xl font-bold font-display text-ink-900">{currency(f.actualBalance)}</p>
+            <p className="mt-4 text-2xl font-bold font-display text-ink-900">{currencyBalance(f.actualBalance, 'short')}</p>
             <p className="text-xs text-ink-400">Actually collected, minus spent</p>
             <p className="mt-1 text-xs text-ink-400">
               Budgeted: <span className="font-medium text-ink-500">{currency(f.budgetRemaining)}</span> remaining of {currency(f.budgetAllocated)}

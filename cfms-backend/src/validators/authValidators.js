@@ -45,10 +45,25 @@ const changePasswordSchema = z.object({
   }),
 });
 
+const forgotPasswordSchema = z.object({
+  body: z.object({
+    email: z.string().email(),
+  }),
+});
+
+const resetPasswordSchema = z.object({
+  body: z.object({
+    token: z.string().min(10),
+    newPassword: z.string().min(8),
+  }),
+});
+
 module.exports = {
   registerCommunitySchema,
   registerResidentSchema,
   loginSchema,
   refreshSchema,
   changePasswordSchema,
+  forgotPasswordSchema,
+  resetPasswordSchema,
 };
