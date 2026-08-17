@@ -346,23 +346,86 @@ async function main() {
   await bulkInsert('payment', paymentRows, 'payments');
 
   // -------------------------------------------------------------------
-  // Expenses (+ some receipts), append-only style like the real app
+  // Expenses (+ some receipts), append-only style like the real app.
+  //
+  // The real app (expenseController.createExpense) never lets an expense
+  // be recorded past what's actually available: a project-linked expense
+  // is capped by BOTH the project's remaining budget and the real,
+  // verified cash sitting in the project's fund, and a project-less
+  // ("general") expense is capped by the community's overall real cash
+  // position (total VERIFIED payments minus total expenses so far). This
+  // seed used to generate expense amounts completely independent of any
+  // of that, which is exactly how a large seed could produce an
+  // impossible, deeply-negative community balance on the dashboard. Track
+  // the same running balances here so seeded data can never violate the
+  // rule the app itself enforces.
   // -------------------------------------------------------------------
-  console.log(`Building ${EXPENSES} expenses...`);
+  console.log(`Building up to ${EXPENSES} expenses (capped by real available funds)...`);
+
+  // Running "collected" per fund: direct-to-fund payments + payments made
+  // against a project that belongs to that fund (mirrors
+  // computeFundMoneyForCommunity in fundController.js, minus the
+  // multi-fund-allocation ratio math, since this seed always gives a
+  // project exactly one fund).
+  const fundCollected = new Map(fundRows.map((f) => [f.id, 0]));
+  for (const p of paymentRows) {
+    if (p.status !== 'VERIFIED') continue;
+    if (p.fundId) {
+      fundCollected.set(p.fundId, (fundCollected.get(p.fundId) || 0) + Number(p.amount));
+    } else if (p.projectId) {
+      const project = projectRows.find((pr) => pr.id === p.projectId);
+      if (project) fundCollected.set(project.fundId, (fundCollected.get(project.fundId) || 0) + Number(p.amount));
+    }
+  }
+  const fundSpent = new Map(fundRows.map((f) => [f.id, 0]));
+  const projectSpent = new Map(projectRows.map((pr) => [pr.id, 0]));
+
+  // Community-wide real cash position — same formula as
+  // dashboardController.getAdminDashboard's netBalance, and the same guard
+  // rail createExpense now applies to project-less expenses.
+  const totalVerifiedCollected = paymentRows
+    .filter((p) => p.status === 'VERIFIED')
+    .reduce((sum, p) => sum + Number(p.amount), 0);
+  let communityRemaining = totalVerifiedCollected;
+
   const expenseRows = [];
   const receiptRows = [];
-  for (let i = 0; i < EXPENSES; i++) {
-    const linkToProject = Math.random() < 0.7;
+  let attempts = 0;
+  // Try up to 3x the target count since some attempts will be skipped
+  // (nothing left available to spend), so we still land close to
+  // EXPENSES rows without ever spending money that isn't there.
+  while (expenseRows.length < EXPENSES && attempts < EXPENSES * 3) {
+    attempts++;
+    const linkToProject = Math.random() < 0.7 && projectRows.length > 0;
+    let projectId = null;
+    let amount = randDecimal(50, 6000);
+
+    if (linkToProject) {
+      const project = pick(projectRows);
+      const remainingBudget = Number(project.budget) - (projectSpent.get(project.id) || 0);
+      const fundAvailable = (fundCollected.get(project.fundId) || 0) - (fundSpent.get(project.fundId) || 0);
+      const cap = Math.min(remainingBudget, fundAvailable);
+      if (cap < 50) continue; // nothing meaningful left on this project/fund — skip and try another
+      amount = randDecimal(50, Math.min(6000, cap));
+      projectId = project.id;
+      projectSpent.set(project.id, (projectSpent.get(project.id) || 0) + amount);
+      fundSpent.set(project.fundId, (fundSpent.get(project.fundId) || 0) + amount);
+    } else {
+      if (communityRemaining < 50) continue; // community has nothing left to spend — skip and try again
+      amount = randDecimal(50, Math.min(6000, communityRemaining));
+      communityRemaining -= amount;
+    }
+
     const expenseId = uuid();
     expenseRows.push({
       id: expenseId,
       communityId: community.id,
-      projectId: linkToProject ? pick(projectRows).id : null,
+      projectId,
       recordedBy: admin.id,
       category: pick(CATEGORIES),
       description: pick(EXPENSE_DESCRIPTIONS),
       vendor: pick(VENDORS),
-      amount: randDecimal(50, 6000),
+      amount,
       spentAt: randDateBetween(daysAgo(500), daysAgo(0)),
     });
 
@@ -376,6 +439,9 @@ async function main() {
         });
       }
     }
+  }
+  if (expenseRows.length < EXPENSES) {
+    console.log(`  (stopped at ${expenseRows.length}/${EXPENSES} expenses — that's all the community's real funds can cover without going into deficit)`);
   }
   await bulkInsert('expense', expenseRows, 'expenses');
   await bulkInsert('receipt', receiptRows, 'receipts');

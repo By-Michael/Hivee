@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
 import { Plus, Search, Wallet, Filter, Check, CheckCheck, X as XIcon, Paperclip, Pencil, Trash2, FileText, AlertTriangle, UserX, SlidersHorizontal, Landmark } from 'lucide-react'
 import { useData } from '../../context/DataContext'
-import { PageHeader, Modal, Badge, EmptyState, currency, formatDate, ConfirmDialog, notify, usePagedList, Pager } from '../../components/ui'
+import { PageHeader, Modal, Badge, EmptyState, currency, formatDate, ConfirmDialog, notify, usePagedList, Pager, useDebouncedValue } from '../../components/ui'
 
 const empty = { residentId: '', targetType: 'fee', feeId: '', projectId: '', amount: '', method: 'Bank Transfer', reference: '', receiptFile: null }
 
@@ -14,6 +14,9 @@ const STATUS_OPTIONS = [
   { value: 'rejected', label: 'Rejected' },
 ]
 const METHOD_OPTIONS = ['Cash', 'Bank Transfer', 'Mobile Money', 'Card', 'Other']
+// UI-facing method labels -> API enum, used by both the record-payment form
+// (via PaymentForm, unchanged) and the new batch-verify filter below.
+const METHOD_TO_API = { Cash: 'CASH', 'Bank Transfer': 'BANK_TRANSFER', 'Mobile Money': 'MOBILE_MONEY', Card: 'CARD', Other: 'OTHER' }
 
 const emptyFilters = {
   residentQuery: '',
@@ -26,6 +29,22 @@ const emptyFilters = {
   maxAmount: '',
   nonPayersOnly: false,
   includeInactiveResidents: false,
+}
+
+// Batch verification is capped server-side at this many payments per run
+// (see MAX_BATCH_VERIFY in paymentController.js) — surfaced here so the
+// modal copy and result messaging stay in sync with the actual limit.
+const MAX_BATCH_VERIFY = 100
+
+const emptyBatchFilters = {
+  residentQuery: '',
+  target: 'all', // 'all' | `fee:<id>` | `project:<id>` | `fund:<id>`
+  status: 'any', // 'any' | 'pending' | 'pending_review'
+  method: 'all',
+  minAmount: '',
+  maxAmount: '',
+  dateFrom: '',
+  dateTo: '',
 }
 
 function countActiveFilters(f) {
@@ -196,16 +215,19 @@ function PaymentForm({ form, setForm, fees, projects, residents, showResidentPic
 }
 
 export default function Payments() {
-  const { payments, residents, fees, projects, addPayment, updatePayment, batchVerifyPayments, editPayment, removePayment, dataFullyLoaded } = useData()
+  const { payments, residents, fees, projects, funds, addPayment, updatePayment, batchVerifyPayments, editPayment, removePayment, dataFullyLoaded } = useData()
   const [query, setQuery] = useState('')
+  // The quick-search box re-filters the whole payments list on every
+  // keystroke; debouncing what actually drives that filter (rather than
+  // the input's own value, which stays instant) is what keeps typing from
+  // feeling laggy once there are hundreds/thousands of payments.
+  const debouncedQuery = useDebouncedValue(query, 200)
   const [modal, setModal] = useState(false)
   const [form, setForm] = useState(empty)
   const [saving, setSaving] = useState(false)
   const [rejectTarget, setRejectTarget] = useState(null)
   const [rejecting, setRejecting] = useState(false)
   const [verifyingId, setVerifyingId] = useState(null)
-  const [selectedIds, setSelectedIds] = useState(() => new Set())
-  const [batchVerifying, setBatchVerifying] = useState(false)
   const [editTarget, setEditTarget] = useState(null)
   const [editForm, setEditForm] = useState(empty)
   const [editSaving, setEditSaving] = useState(false)
@@ -213,6 +235,19 @@ export default function Payments() {
   const [deleting, setDeleting] = useState(false)
   const fileInputRef = useRef(null)
   const editFileInputRef = useRef(null)
+
+  // ---- Batch verification: permanent button + filter popup ----
+  // Replaces the old per-row/select-all checkboxes, which only ever
+  // selected whatever was rendered on the current page (ticking "select
+  // all" across the whole filtered set would mean holding thousands of
+  // rows in state, which is exactly what made the page lag). Instead the
+  // committee describes which group of payments they mean and the server
+  // finds + verifies up to MAX_BATCH_VERIFY of them — see
+  // paymentController.batchVerifyPayments.
+  const [batchOpen, setBatchOpen] = useState(false)
+  const [batchDraft, setBatchDraft] = useState(emptyBatchFilters)
+  const [batchRunning, setBatchRunning] = useState(false)
+  const [batchError, setBatchError] = useState('')
 
   // ---- Comprehensive filter panel ----
   // `filters` is what's actually applied to the list; `draft` is what the
@@ -223,8 +258,15 @@ export default function Payments() {
   const [filters, setFilters] = useState(emptyFilters)
   const [draft, setDraft] = useState(emptyFilters)
 
-  const residentOf = (id) => residents.find((r) => r.id === id)
-  const feeOf = (id) => fees.find((f) => f.id === id)
+  const residentOf = (id) => residentsById.get(id)
+  const feeOf = (id) => feesById.get(id)
+
+  // O(1) lookups instead of Array.find — filtering/rendering payments
+  // does a residentOf/feeOf lookup per row, so with hundreds of residents
+  // and thousands of payments the old .find() calls turned into a
+  // quadratic scan on every keystroke. Maps make each lookup constant time.
+  const residentsById = useMemo(() => new Map(residents.map((r) => [r.id, r])), [residents])
+  const feesById = useMemo(() => new Map(fees.map((f) => [f.id, f])), [fees])
 
   const yearOptions = useMemo(() => {
     const years = new Set()
@@ -268,9 +310,9 @@ export default function Payments() {
     const min = filters.minAmount !== '' ? Number(filters.minAmount) : null
     const max = filters.maxAmount !== '' ? Number(filters.maxAmount) : null
     return payments.filter((p) => {
-      const q = query.toLowerCase()
+      const q = debouncedQuery.toLowerCase()
       const label = p.feeId ? feeOf(p.feeId)?.name : p.projectName
-      const matchesQuery = [residentOf(p.residentId)?.name, label, p.reference].join(' ').toLowerCase().includes(q)
+      const matchesQuery = !q || [residentOf(p.residentId)?.name, label, p.reference].join(' ').toLowerCase().includes(q)
       const matchesResident = !filters.residentQuery.trim() ||
         [residentOf(p.residentId)?.name, residentOf(p.residentId)?.unit, residentOf(p.residentId)?.phone]
           .join(' ').toLowerCase().includes(filters.residentQuery.trim().toLowerCase())
@@ -287,7 +329,7 @@ export default function Payments() {
       return matchesQuery && matchesResident && matchesYear && matchesMonth && matchesTarget &&
         matchesStatus && matchesMethod && matchesMin && matchesMax
     }).sort((a, b) => new Date(b.date) - new Date(a.date))
-  }, [payments, query, filters, residents, fees])
+  }, [payments, debouncedQuery, filters, residentsById, feesById])
 
   // ---- "Who hasn't paid" — residents with no non-rejected payment for
   // the selected fee within the selected period. This is the answer to
@@ -386,41 +428,38 @@ export default function Payments() {
   const { pageItems: pagedPayments, page: tablePage, totalPages: tableTotalPages, total: tableTotal, setPage: setTablePage } = usePagedList(filtered, 50)
   const { pageItems: pagedNonPayers, page: npPage, totalPages: npTotalPages, total: npTotal, setPage: setNpPage } = usePagedList(nonPayers, 50)
 
-  // Only pending / needs-review rows are ever selectable — verified/
-  // rejected rows have nothing to batch-verify.
-  const selectablePaged = pagedPayments.filter((p) => p.status === 'pending' || p.status === 'pending_review')
-  const allPagedSelected = selectablePaged.length > 0 && selectablePaged.every((p) => selectedIds.has(p.id))
+  function openBatchVerify() { setBatchDraft(emptyBatchFilters); setBatchError(''); setBatchOpen(true) }
 
-  function toggleRow(id) {
-    setSelectedIds((prev) => {
-      const next = new Set(prev)
-      next.has(id) ? next.delete(id) : next.add(id)
-      return next
-    })
-  }
-  function toggleAllOnPage() {
-    setSelectedIds((prev) => {
-      const next = new Set(prev)
-      if (allPagedSelected) {
-        selectablePaged.forEach((p) => next.delete(p.id))
-      } else {
-        selectablePaged.forEach((p) => next.add(p.id))
-      }
-      return next
-    })
-  }
-
-  function runBatchVerify() {
-    const ids = Array.from(selectedIds)
-    if (ids.length === 0) return
-    setBatchVerifying(true)
-    batchVerifyPayments(ids)
-      .then((count) => {
-        notify(`${count} payment${count === 1 ? '' : 's'} verified.`, 'success')
-        setSelectedIds(new Set())
+  function runBatchVerify(e) {
+    e?.preventDefault()
+    setBatchRunning(true)
+    setBatchError('')
+    const targetFeeId = batchDraft.target.startsWith('fee:') ? batchDraft.target.slice(4) : ''
+    const targetProjectId = batchDraft.target.startsWith('project:') ? batchDraft.target.slice(8) : ''
+    const targetFundId = batchDraft.target.startsWith('fund:') ? batchDraft.target.slice(5) : ''
+    const payload = {
+      ...(batchDraft.residentQuery.trim() ? { residentQuery: batchDraft.residentQuery.trim() } : {}),
+      ...(targetFeeId ? { feeId: targetFeeId } : {}),
+      ...(targetProjectId ? { projectId: targetProjectId } : {}),
+      ...(targetFundId ? { fundId: targetFundId } : {}),
+      ...(batchDraft.status !== 'any' ? { status: batchDraft.status } : {}),
+      ...(batchDraft.method !== 'all' ? { paymentMethod: METHOD_TO_API[batchDraft.method] } : {}),
+      ...(batchDraft.minAmount !== '' ? { minAmount: Number(batchDraft.minAmount) } : {}),
+      ...(batchDraft.maxAmount !== '' ? { maxAmount: Number(batchDraft.maxAmount) } : {}),
+      ...(batchDraft.dateFrom ? { dateFrom: batchDraft.dateFrom } : {}),
+      ...(batchDraft.dateTo ? { dateTo: batchDraft.dateTo } : {}),
+    }
+    batchVerifyPayments(payload)
+      .then(({ verifiedCount, matchedCount, remainingCount }) => {
+        if (remainingCount > 0) {
+          notify(`Verified ${verifiedCount} of ${matchedCount} matching payments (capped at ${MAX_BATCH_VERIFY} per run). Run batch verify again with the same filters to process the remaining ${remainingCount}.`, 'success')
+        } else {
+          notify(`${verifiedCount} payment${verifiedCount === 1 ? '' : 's'} verified.`, 'success')
+        }
+        setBatchOpen(false)
       })
-      .catch((err) => notify(err?.response?.data?.message || err.message))
-      .finally(() => setBatchVerifying(false))
+      .catch((err) => setBatchError(err?.response?.data?.message || err.message || 'Could not batch-verify payments with those filters.'))
+      .finally(() => setBatchRunning(false))
   }
 
   function confirmReject() {
@@ -470,17 +509,14 @@ export default function Payments() {
               Clear filters
             </button>
           )}
-          {selectedIds.size > 0 && (
-            <button
-              type="button"
-              onClick={runBatchVerify}
-              disabled={batchVerifying}
-              className="btn-primary text-sm disabled:opacity-50"
-              title="Marks the selected payments as verified. The bulk bank re-check API isn't wired in yet — this is a placeholder until that's connected."
-            >
-              <CheckCheck className="h-4 w-4" /> {batchVerifying ? 'Verifying…' : `Batch verify (${selectedIds.size})`}
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={openBatchVerify}
+            className="btn-primary text-sm"
+            title="Verify a group of pending payments matched by filters (name, fee/project/fund, amount, date…), up to 100 at a time."
+          >
+            <CheckCheck className="h-4 w-4" /> Batch verify
+          </button>
         </div>
       </div>
 
@@ -523,21 +559,11 @@ export default function Payments() {
             <table className="data-table">
               <thead>
                 <tr>
-                  <th className="w-8">
-                    {selectablePaged.length > 0 && (
-                      <input type="checkbox" checked={allPagedSelected} onChange={toggleAllOnPage} title="Select all pending on this page" />
-                    )}
-                  </th>
                   <th>Resident</th><th>For</th><th>Amount</th><th>Method</th><th>Reference</th><th>Date</th><th>Status</th><th /></tr>
               </thead>
               <tbody>
                 {pagedPayments.map((p) => (
                   <tr key={p.id}>
-                    <td>
-                      {(p.status === 'pending' || p.status === 'pending_review') && (
-                        <input type="checkbox" checked={selectedIds.has(p.id)} onChange={() => toggleRow(p.id)} />
-                      )}
-                    </td>
                     <td className="font-medium text-ink-800">{residentOf(p.residentId)?.name}</td>
                     <td>
                       {p.feeId ? feeOf(p.feeId)?.name : (
@@ -734,6 +760,90 @@ export default function Payments() {
           <div className="flex gap-2 pt-2">
             <button type="button" onClick={clearFilters} className="btn-secondary flex-1">Clear all</button>
             <button type="submit" className="btn-primary flex-1">Apply filters</button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Batch verify: filter popup instead of ticking individual/page checkboxes */}
+      <Modal open={batchOpen} onClose={() => setBatchOpen(false)} title="Batch verify payments" wide>
+        <form onSubmit={runBatchVerify} className="space-y-5">
+          <p className="text-xs text-ink-500">
+            Verifies every matching pending / needs-review payment in one go — up to {MAX_BATCH_VERIFY} at a time. Leave a field blank to not filter on it. If more than {MAX_BATCH_VERIFY} payments match, the oldest ones are verified first; run this again with the same filters to work through the rest.
+          </p>
+
+          {batchError && (
+            <div className="rounded-xl bg-rose-50 border border-rose-200 px-3.5 py-2.5 text-xs text-rose-700">{batchError}</div>
+          )}
+
+          <div>
+            <label className="label">Resident</label>
+            <input
+              className="input" placeholder="Name, house number, or phone…"
+              value={batchDraft.residentQuery} onChange={(e) => setBatchDraft({ ...batchDraft, residentQuery: e.target.value })}
+            />
+          </div>
+
+          <div>
+            <label className="label">Paying for</label>
+            <select className="input" value={batchDraft.target} onChange={(e) => setBatchDraft({ ...batchDraft, target: e.target.value })}>
+              <option value="all">Any fee, project, or fund</option>
+              <optgroup label="Fees">
+                {fees.map((f) => <option key={f.id} value={`fee:${f.id}`}>{f.name}</option>)}
+              </optgroup>
+              <optgroup label="Projects">
+                {projects.map((p) => <option key={p.id} value={`project:${p.id}`}>{p.name}</option>)}
+              </optgroup>
+              <optgroup label="Funds">
+                {funds.map((f) => <option key={f.id} value={`fund:${f.id}`}>{f.name}</option>)}
+              </optgroup>
+            </select>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="label">Queue</label>
+              <select className="input" value={batchDraft.status} onChange={(e) => setBatchDraft({ ...batchDraft, status: e.target.value })}>
+                <option value="any">Pending + needs review</option>
+                <option value="pending">Pending only</option>
+                <option value="pending_review">Needs review only</option>
+              </select>
+            </div>
+            <div>
+              <label className="label">Method</label>
+              <select className="input" value={batchDraft.method} onChange={(e) => setBatchDraft({ ...batchDraft, method: e.target.value })}>
+                <option value="all">Any method</option>
+                {METHOD_OPTIONS.map((m) => <option key={m} value={m}>{m}</option>)}
+              </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="label">Min amount (ETB)</label>
+              <input type="number" min="0" className="input" value={batchDraft.minAmount} onChange={(e) => setBatchDraft({ ...batchDraft, minAmount: e.target.value })} placeholder="No minimum" />
+            </div>
+            <div>
+              <label className="label">Max amount (ETB)</label>
+              <input type="number" min="0" className="input" value={batchDraft.maxAmount} onChange={(e) => setBatchDraft({ ...batchDraft, maxAmount: e.target.value })} placeholder="No maximum" />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="label">Paid from</label>
+              <input type="date" className="input" value={batchDraft.dateFrom} onChange={(e) => setBatchDraft({ ...batchDraft, dateFrom: e.target.value })} />
+            </div>
+            <div>
+              <label className="label">Paid to</label>
+              <input type="date" className="input" value={batchDraft.dateTo} onChange={(e) => setBatchDraft({ ...batchDraft, dateTo: e.target.value })} />
+            </div>
+          </div>
+
+          <div className="flex gap-2 pt-2">
+            <button type="button" onClick={() => setBatchOpen(false)} disabled={batchRunning} className="btn-secondary flex-1">Cancel</button>
+            <button type="submit" disabled={batchRunning} className="btn-primary flex-1">
+              <CheckCheck className="h-4 w-4" /> {batchRunning ? 'Verifying…' : 'Verify matching payments'}
+            </button>
           </div>
         </form>
       </Modal>

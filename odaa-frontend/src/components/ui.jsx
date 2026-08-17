@@ -439,6 +439,18 @@ export function EmptyState({ icon: Icon, title, subtitle, action }) {
   )
 }
 
+// Debounces a fast-changing value (typically a search input) so expensive
+// work derived from it — filtering thousands of rows, refetching, etc —
+// only runs after the user pauses typing, instead of on every keystroke.
+export function useDebouncedValue(value, delayMs = 200) {
+  const [debounced, setDebounced] = useState(value)
+  useEffect(() => {
+    const timer = setTimeout(() => setDebounced(value), delayMs)
+    return () => clearTimeout(timer)
+  }, [value, delayMs])
+  return debounced
+}
+
 // Client-side pagination for big in-memory lists (residents, payments,
 // expenses, etc). The full filtered array is still what totals/reports are
 // computed from — this only limits how many rows get rendered into the

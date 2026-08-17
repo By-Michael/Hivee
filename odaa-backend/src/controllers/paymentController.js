@@ -222,28 +222,88 @@ const updatePaymentStatus = catchAsync(async (req, res) => {
   res.json({ success: true, data: updated });
 });
 
-// ADMIN batch-verifies a set of pending payments at once.
+// ADMIN batch-verifies a group of pending payments matched by filter
+// criteria, instead of a client-supplied list of ids. Ticking rows one by
+// one (or "select all") doesn't scale once a community has thousands of
+// payments — the UI would have to either hold a giant selection Set across
+// pages (laggy) or only ever select what's currently rendered (confusing,
+// silently incomplete). Filtering server-side and capping the result is
+// both faster and safer: the committee describes *which* payments they
+// mean ("this fee, this month, under 500 birr") and the server finds and
+// verifies exactly that group, up to a hard ceiling per run.
+//
+// MAX_BATCH_VERIFY caps how many payments a single run can touch — keeps
+// each request fast, keeps the resulting audit-log burst bounded, and
+// forces a large backlog to be worked through in deliberate, reviewable
+// chunks rather than one enormous blind action.
 //
 // PLACEHOLDER IMPLEMENTATION: batch lookup against Veritas isn't wired up
 // yet (single-transaction /verify only, see bankVerification.js) — this
-// currently just marks every selected pending/pending_review payment as
+// currently just marks every matched pending/pending_review payment as
 // VERIFIED without re-checking the bank, per explicit instruction to ship
 // the button now and fill in the real batch call later.
 //
 // TODO(batch-verification-api): once the batch endpoint is available,
 // replace the block below with a single call like
-// `verifyBankTransactionsBatch(pendingPayments.map(p => p.transactionReference))`
+// `verifyBankTransactionsBatch(matched.map(p => p.transactionReference))`
 // and only mark as VERIFIED the ones that come back matched — mirroring
 // the safeguard flagging in selfVerifyPayment above (do NOT blind-trust a
 // batch "matched: true" any more than the single-lookup path does).
-const batchVerifyPayments = catchAsync(async (req, res) => {
-  const ids = Array.isArray(req.body.ids) ? req.body.ids : [];
-  if (ids.length === 0) throw new AppError('No payment ids provided', 422);
+const MAX_BATCH_VERIFY = 100;
 
+const batchVerifyPayments = catchAsync(async (req, res) => {
+  const {
+    residentQuery, feeId, projectId, fundId, status, paymentMethod,
+    minAmount, maxAmount, dateFrom, dateTo,
+  } = req.body || {};
+
+  const statusFilter = status === 'pending'
+    ? ['PENDING']
+    : status === 'pending_review'
+      ? ['PENDING_REVIEW']
+      : ['PENDING', 'PENDING_REVIEW']; // 'any' or omitted — both queues
+
+  const where = {
+    ...communityPaymentFilter(req.communityId),
+    status: { in: statusFilter },
+    ...(feeId ? { feeId } : {}),
+    ...(projectId ? { projectId } : {}),
+    ...(fundId ? { fundId } : {}),
+    ...(paymentMethod ? { paymentMethod } : {}),
+    ...((minAmount !== undefined || maxAmount !== undefined) ? {
+      amount: {
+        ...(minAmount !== undefined ? { gte: minAmount } : {}),
+        ...(maxAmount !== undefined ? { lte: maxAmount } : {}),
+      },
+    } : {}),
+    ...((dateFrom || dateTo) ? {
+      paidAt: {
+        ...(dateFrom ? { gte: new Date(dateFrom) } : {}),
+        ...(dateTo ? { lte: new Date(dateTo) } : {}),
+      },
+    } : {}),
+    ...(residentQuery ? {
+      resident: {
+        OR: [
+          { user: { fullName: { contains: residentQuery, mode: 'insensitive' } } },
+          { unitNumber: { contains: residentQuery, mode: 'insensitive' } },
+          { phone: { contains: residentQuery, mode: 'insensitive' } },
+        ],
+      },
+    } : {}),
+  };
+
+  const matchedCount = await prisma.payment.count({ where });
+  if (matchedCount === 0) throw new AppError('No pending payments match those filters', 404);
+
+  // Oldest first — works through the backlog in order rather than
+  // whatever order the DB happens to return, so repeated runs on a group
+  // larger than MAX_BATCH_VERIFY make steady forward progress.
   const payments = await prisma.payment.findMany({
-    where: { id: { in: ids }, ...communityPaymentFilter(req.communityId), status: { in: ['PENDING', 'PENDING_REVIEW'] } },
+    where,
+    orderBy: { paidAt: 'asc' },
+    take: MAX_BATCH_VERIFY,
   });
-  if (payments.length === 0) throw new AppError('No matching pending payments found', 404);
 
   // ---- BLIND MARK-AS-VERIFIED (placeholder — see TODO above) ----
   await prisma.payment.updateMany({
@@ -264,7 +324,15 @@ const batchVerifyPayments = catchAsync(async (req, res) => {
     include: PAYMENT_INCLUDE,
   });
 
-  res.json({ success: true, data: updated.map(withSenderName), meta: { verifiedCount: updated.length } });
+  res.json({
+    success: true,
+    data: updated.map(withSenderName),
+    meta: {
+      verifiedCount: updated.length,
+      matchedCount,
+      remainingCount: Math.max(0, matchedCount - updated.length),
+    },
+  });
 });
 
 // ADMIN edits a payment they (or a fellow committee member) typed in

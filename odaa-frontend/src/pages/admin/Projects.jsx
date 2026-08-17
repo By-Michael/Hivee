@@ -1,9 +1,17 @@
-import { useState } from 'react'
-import { Plus, Pencil, FolderKanban, Calendar, Ban, X } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { Plus, Pencil, FolderKanban, Calendar, Ban, X, Search } from 'lucide-react'
 import { useData } from '../../context/DataContext'
-import { PageHeader, Modal, Badge, currency, formatDate, EmptyState, notify } from '../../components/ui'
+import { PageHeader, Modal, Badge, currency, formatDate, EmptyState, notify, useDebouncedValue } from '../../components/ui'
 
 const empty = { name: '', description: '', fundId: '', budget: '', status: 'planned', startDate: '', endDate: '' }
+
+const STATUS_OPTIONS = [
+  { value: 'all', label: 'Any status' },
+  { value: 'planned', label: 'Planned' },
+  { value: 'in-progress', label: 'In progress' },
+  { value: 'completed', label: 'Completed' },
+  { value: 'cancelled', label: 'Cancelled' },
+]
 
 export default function Projects() {
   const { projects, funds, addProject, updateProject, cancelProject } = useData()
@@ -21,7 +29,33 @@ export default function Projects() {
   const [cancelReason, setCancelReason] = useState('')
   const [cancelling, setCancelling] = useState(false)
 
+  // ---- Filters: quick search + status + fund ----
+  const [query, setQuery] = useState('')
+  const debouncedQuery = useDebouncedValue(query, 200)
+  const [statusFilter, setStatusFilter] = useState('all')
+  const [fundFilter, setFundFilter] = useState('all')
+  const activeFilterCount = (statusFilter !== 'all' ? 1 : 0) + (fundFilter !== 'all' ? 1 : 0) + (query.trim() ? 1 : 0)
+
+  function clearFilters() {
+    setQuery('')
+    setStatusFilter('all')
+    setFundFilter('all')
+  }
+
   const fundOf = (id) => funds.find((f) => f.id === id)?.name || '—'
+
+  const filteredProjects = useMemo(() => {
+    const q = debouncedQuery.trim().toLowerCase()
+    return projects.filter((p) => {
+      const matchesQuery = !q || [p.name, p.description, ...(p.fundAllocations || []).map((a) => a.fundName)]
+        .join(' ').toLowerCase().includes(q)
+      const matchesStatus = statusFilter === 'all' || p.status === statusFilter
+      const matchesFund = fundFilter === 'all' ||
+        (p.fundAllocations || []).some((a) => a.fundId === fundFilter) ||
+        p.fundId === fundFilter
+      return matchesQuery && matchesStatus && matchesFund
+    })
+  }, [projects, debouncedQuery, statusFilter, fundFilter])
 
   function openAdd() {
     setEditing(null); setForm(empty); setSplitFunds(false); setAllocations([]); setModal(true)
@@ -101,15 +135,40 @@ export default function Projects() {
     <div>
       <PageHeader
         title="Projects"
-        subtitle={`${projects.length} projects · ${projects.filter((p) => p.status === 'in-progress').length} in progress`}
+        subtitle={`${filteredProjects.length} of ${projects.length} projects · ${projects.filter((p) => p.status === 'in-progress').length} in progress`}
         action={<button onClick={openAdd} className="btn-primary"><Plus className="h-4 w-4" /> New project</button>}
       />
 
+      {projects.length > 0 && (
+        <div className="card p-4 mb-5 flex flex-col sm:flex-row gap-3 sm:items-center">
+          <div className="relative flex-1 max-w-sm">
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-400" />
+            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search projects…" className="input pl-10" />
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <select className="input !w-auto" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+              {STATUS_OPTIONS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+            </select>
+            <select className="input !w-auto" value={fundFilter} onChange={(e) => setFundFilter(e.target.value)}>
+              <option value="all">Any fund</option>
+              {funds.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+            </select>
+            {activeFilterCount > 0 && (
+              <button type="button" onClick={clearFilters} className="text-xs text-ink-400 hover:text-rose-500 underline underline-offset-2">
+                Clear filters
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       {projects.length === 0 ? (
         <div className="card"><EmptyState icon={FolderKanban} title="No projects yet" subtitle="Create a project to start tracking budget and spend." action={<button onClick={openAdd} className="btn-primary"><Plus className="h-4 w-4" /> New project</button>} /></div>
+      ) : filteredProjects.length === 0 ? (
+        <div className="card"><EmptyState icon={FolderKanban} title="No projects match your filters" subtitle="Try a different search term or clear the filters." action={<button onClick={clearFilters} className="btn-secondary">Clear filters</button>} /></div>
       ) : (
         <div className="grid sm:grid-cols-2 gap-4">
-          {projects.map((p) => {
+          {filteredProjects.map((p) => {
             const pct = p.budget ? Math.min(100, Math.round((p.spent / p.budget) * 100)) : 0
             const cancelled = p.status === 'cancelled'
             return (

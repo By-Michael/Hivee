@@ -346,8 +346,7 @@ export default function Residents() {
           </div>
           <div>
             <label className="label">Email</label>
-            <input required type="email" className="input" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} disabled={!!editing} />
-            {editing && <p className="mt-1 text-xs text-ink-400">Change the email from the resident's info popup.</p>}
+            <input required type="email" className="input" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
           </div>
           <div>
             <label className="label">Address</label>

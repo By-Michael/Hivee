@@ -4,6 +4,20 @@ const AppError = require('../utils/AppError');
 const { recordAudit } = require('../utils/audit');
 const { computeFundMoneyForCommunity } = require('./fundController');
 
+// Community-wide real cash position: every VERIFIED payment collected,
+// minus every expense recorded so far (reversals are already negative
+// amounts, so they net out automatically — see Expense.reversesId comment
+// in schema.prisma). This is the same formula the admin dashboard uses for
+// `netBalance`, kept here as the source of truth so the two can never
+// drift apart.
+async function computeCommunityBalance(communityId) {
+  const [collected, spent] = await Promise.all([
+    prisma.payment.aggregate({ where: { communityId, status: 'VERIFIED' }, _sum: { amount: true } }),
+    prisma.expense.aggregate({ where: { communityId }, _sum: { amount: true } }),
+  ]);
+  return Number(collected._sum.amount || 0) - Number(spent._sum.amount || 0);
+}
+
 const createExpense = catchAsync(async (req, res) => {
   let project = null;
   if (req.body.projectId) {
@@ -51,6 +65,22 @@ const createExpense = catchAsync(async (req, res) => {
         availableAcrossFunds > 0
           ? `The ${fundWord} only ${availableAcrossFunds.toFixed(2)} available — this expense would put it into deficit.`
           : `The ${fundWord} a balance of ${availableAcrossFunds < 0 ? availableAcrossFunds.toFixed(2) : '0.00'} — there's no money left to spend from it.`,
+        422,
+      );
+    }
+  } else {
+    // No project attached — there's no fund/budget to check this against
+    // directly, so the only guard rail available is the community's real
+    // cash position as a whole: it never had a validation before, which is
+    // exactly how a committee could log a general expense with nothing
+    // backing it and drive the whole community into an impossible deficit.
+    const amount = Number(req.body.amount);
+    const available = await computeCommunityBalance(req.communityId);
+    if (amount > available) {
+      throw new AppError(
+        available > 0
+          ? `The community only has ${available.toFixed(2)} available in total — this expense would put it into deficit. Link it to a project/fund with enough balance, or reduce the amount.`
+          : `The community has no funds available (balance: ${available.toFixed(2)}) — there's nothing left to spend. Verify more payments first, or reduce the amount.`,
         422,
       );
     }
@@ -206,4 +236,4 @@ const deleteExpense = catchAsync(async (req, res) => {
   res.json({ success: true, message: 'Expense deleted' });
 });
 
-module.exports = { createExpense, listExpenses, getExpense, reverseExpense, deleteExpense };
+module.exports = { createExpense, listExpenses, getExpense, reverseExpense, deleteExpense, computeCommunityBalance };

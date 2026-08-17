@@ -1,28 +1,60 @@
-import { useState } from 'react'
-import { Calendar, ChevronRight, Landmark, Paperclip, Ban, FolderKanban } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { Calendar, ChevronRight, Landmark, Paperclip, Ban, FolderKanban, Search } from 'lucide-react'
 import { useData } from '../../context/DataContext'
-import { PageHeader, Modal, Badge, currency, formatDate, usePagedList, Pager } from '../../components/ui'
+import { PageHeader, Modal, Badge, currency, formatDate, usePagedList, Pager, useDebouncedValue } from '../../components/ui'
 
 const EXPENSE_CATEGORY_LABEL = {
   SECURITY: 'Security', WATER: 'Water', CLEANING: 'Cleaning', MAINTENANCE: 'Maintenance',
   IMPROVEMENT: 'Improvement', ADMIN: 'Admin', OTHER: 'Other',
 }
 
+const STATUS_OPTIONS = [
+  { value: 'all', label: 'Any status' },
+  { value: 'planned', label: 'Planned' },
+  { value: 'in-progress', label: 'In progress' },
+  { value: 'completed', label: 'Completed' },
+  { value: 'cancelled', label: 'Cancelled' },
+]
+
 export default function ResidentProjects() {
   const { projects, funds, expenses, receipts } = useData()
   const [detail, setDetail] = useState(null)
+  const [query, setQuery] = useState('')
+  const debouncedQuery = useDebouncedValue(query, 200)
+  const [statusFilter, setStatusFilter] = useState('all')
 
   const fundOf = (id) => funds.find((f) => f.id === id)
   const receiptOf = (id) => receipts.find((r) => r.id === id)
 
+  const filteredProjects = useMemo(() => {
+    const q = debouncedQuery.trim().toLowerCase()
+    return projects.filter((p) => {
+      const matchesQuery = !q || [p.name, p.description, ...(p.fundAllocations || []).map((a) => a.fundName)]
+        .join(' ').toLowerCase().includes(q)
+      const matchesStatus = statusFilter === 'all' || p.status === statusFilter
+      return matchesQuery && matchesStatus
+    })
+  }, [projects, debouncedQuery, statusFilter])
+
   const detailExpenses = detail ? expenses.filter((e) => e.projectId === detail.id) : []
   const detailPct = detail?.budget ? Math.min(100, Math.round((detail.spent / detail.budget) * 100)) : 0
   const detailRemaining = detail ? detail.budget - detail.spent : 0
-  const { pageItems: pagedProjects, page, totalPages, total, setPage } = usePagedList(projects, 20)
+  const { pageItems: pagedProjects, page, totalPages, total, setPage } = usePagedList(filteredProjects, 20)
 
   return (
     <div>
       <PageHeader title="Community Projects" subtitle="See exactly where fund money is being invested. Tap a project for the full breakdown." />
+      {projects.length > 0 && (
+        <div className="card p-4 mb-5 flex flex-col sm:flex-row gap-3 sm:items-center">
+          <div className="relative flex-1 max-w-sm">
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-400" />
+            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search projects…" className="input pl-10" />
+          </div>
+          <select className="input !w-auto" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+            {STATUS_OPTIONS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+          </select>
+        </div>
+      )}
       <div className="grid sm:grid-cols-2 gap-4">
         {pagedProjects.map((p) => {
           const pct = p.budget ? Math.min(100, Math.round((p.spent / p.budget) * 100)) : 0
@@ -59,8 +91,10 @@ export default function ResidentProjects() {
             </button>
           )
         })}
-        {projects.length === 0 && (
+        {projects.length === 0 ? (
           <div className="card p-10 sm:col-span-2 text-center text-sm text-ink-400">No projects have been logged yet.</div>
+        ) : filteredProjects.length === 0 && (
+          <div className="card p-10 sm:col-span-2 text-center text-sm text-ink-400">No projects match your search.</div>
         )}
       </div>
       {totalPages > 1 && (

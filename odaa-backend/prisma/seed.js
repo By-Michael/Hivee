@@ -209,6 +209,7 @@ async function main() {
   // covering every PaymentStatus and every PaymentMethod.
   // -------------------------------------------------------------------
   const paymentStatuses = ['VERIFIED', 'VERIFIED', 'VERIFIED', 'PENDING', 'REJECTED']; // weighted
+  let totalVerifiedCollected = 0;
   for (const resident of residents) {
     const theirFees = pickSome(fees, 1, fees.length);
     for (const fee of theirFees) {
@@ -226,6 +227,7 @@ async function main() {
           verifiedBy: status === 'VERIFIED' ? admin.id : null,
         },
       });
+      if (status === 'VERIFIED') totalVerifiedCollected += Number(fee.amount);
     }
   }
 
@@ -275,10 +277,19 @@ async function main() {
   // -------------------------------------------------------------------
   // Expenses — some tied to a project, some general community expenses,
   // covering every ExpenseCategory. Some get one or more receipts.
+  //
+  // Capped by the community's real, verified cash position (same rule
+  // expenseController.createExpense enforces) so this seed can never
+  // produce an impossible negative balance on the dashboard the way an
+  // uncapped random amount could.
   // -------------------------------------------------------------------
   const EXPENSE_COUNT = 40;
+  let communityRemaining = totalVerifiedCollected;
   for (let i = 0; i < EXPENSE_COUNT; i++) {
+    if (communityRemaining < 50) break; // nothing real left to spend — stop rather than go negative
     const linkToProject = Math.random() < 0.7;
+    const amount = randDecimal(50, Math.min(5000, communityRemaining));
+    communityRemaining -= amount;
     const expense = await prisma.expense.create({
       data: {
         communityId: community.id,
@@ -287,7 +298,7 @@ async function main() {
         category: pick(CATEGORIES),
         description: pick(EXPENSE_DESCRIPTIONS),
         vendor: pick(VENDORS),
-        amount: randDecimal(50, 5000),
+        amount,
         spentAt: randDateBetween(daysAgo(300), daysAgo(0)),
       },
     });
