@@ -285,7 +285,7 @@ export default function AppLayout({ role }) {
   return (
     <div className="min-h-screen flex flex-col">
       {/* Top bar - spans full width, logo/brand and search live in one unbroken strip */}
-      <header className="sticky top-0 z-30 h-16 shrink-0 flex items-center gap-3 border-b border-ink-100 bg-white/80 backdrop-blur-xl px-4 sm:px-6">
+      <header className="sticky top-0 z-30 h-14 shrink-0 flex items-center gap-3 border-b border-ink-100 bg-white/80 backdrop-blur-xl px-4 sm:px-6">
         <button onClick={() => setOpen(true)} className="lg:hidden p-2 rounded-lg hover:bg-ink-100 text-ink-600">
           <Menu className="h-5 w-5" />
         </button>
@@ -485,7 +485,7 @@ export default function AppLayout({ role }) {
 
       <div className="flex flex-1 min-h-0">
       {/* Sidebar - desktop */}
-      <aside className={`hidden lg:flex lg:flex-col shrink-0 border-r border-ink-100 bg-white/80 backdrop-blur-xl py-4 sticky top-16 h-[calc(100vh-4rem)] transition-[width,padding] duration-300 ease-in-out ${collapsed ? 'w-20 px-2' : 'w-72 px-4'}`}>
+      <aside className={`hidden lg:flex lg:flex-col shrink-0 border-r border-ink-100 bg-white/80 backdrop-blur-xl py-4 sticky top-14 h-[calc(100vh-3.5rem)] transition-[width,padding] duration-300 ease-in-out ${collapsed ? 'w-[3.75rem] px-2' : 'w-56 px-4'}`}>
         <nav className="flex-1 space-y-1 overflow-y-auto">
           {nav.map((item) => (
             <NavLink
@@ -516,9 +516,9 @@ export default function AppLayout({ role }) {
       {open && (
         <div className="fixed inset-0 z-40 lg:hidden">
           <div className="absolute inset-0 bg-ink-900/50 backdrop-blur-sm" onClick={() => setOpen(false)} />
-          <aside className="absolute left-0 top-0 h-full w-72 bg-white px-4 py-6 flex flex-col animate-fade-up">
+          <aside className="absolute left-0 top-0 h-full w-64 bg-white px-4 py-6 flex flex-col animate-fade-up">
             <div className="flex items-center justify-between">
-              <Brand />
+              <Brand size="md" />
               <button onClick={() => setOpen(false)} className="p-1.5 text-ink-400"><X className="h-5 w-5" /></button>
             </div>
             <nav className="mt-8 flex-1 space-y-1 overflow-y-auto">
@@ -539,7 +539,7 @@ export default function AppLayout({ role }) {
 
       {/* Main column */}
       <div className="flex-1 min-w-0 flex flex-col">
-        <main className="flex-1 px-4 py-6 sm:px-8 sm:py-8 max-w-[1400px] w-full mx-auto">
+        <main className="flex-1 px-5 py-5 sm:px-5 sm:py-5 max-w-[72rem] w-full mx-auto">
           {/* Show a skeleton only for the very first load after login —
               not for background/action-triggered refreshes — so the page
               never flashes empty tables/zeroed stats and then suddenly
@@ -626,7 +626,7 @@ function Avatar({ user }) {
   )
 }
 
-function Brand({ collapsed = false, onToggle }) {
+function Brand({ collapsed = false, onToggle, size = 'sm' }) {
   // Logo + name live in the top bar. The icon's left padding animates
   // continuously between states (rather than toggling justify-content,
   // which can't be transitioned and causes a visible jump) so it glides
@@ -636,15 +636,21 @@ function Brand({ collapsed = false, onToggle }) {
   // in a row. When collapsed: only the logo mark remains, and hovering
   // it crossfades the logo into the expand icon in place - clicking it
   // (in either state) toggles the sidebar.
+  //
+  // Sizing matches spendwize's two logo tiers: the topbar/sidebar mark
+  // (.app-brand__mark img) sits at 2rem (32px), while the mobile drawer's
+  // brand (.mobile-drawer-brand .app-brand__mark img) is larger at 2.5rem (40px).
+  const markSize = size === 'md' ? 'h-10 w-10' : 'h-8 w-8'
+  const iconSize = size === 'md' ? 'h-[17px] w-[17px]' : 'h-[15px] w-[15px]'
   const LogoMark = (
-    <span className="relative h-11 w-11 shrink-0 grid place-items-center">
+    <span className={`relative ${markSize} shrink-0 grid place-items-center`}>
       <img
         src="/odaa-logo.png"
         alt="Odaa"
-        className={`h-11 w-11 object-contain transition-opacity duration-200 ease-in-out ${collapsed && onToggle ? 'group-hover:opacity-0' : ''}`}
+        className={`${markSize} object-contain transition-opacity duration-200 ease-in-out ${collapsed && onToggle ? 'group-hover:opacity-0' : ''}`}
       />
       {collapsed && onToggle && (
-        <PanelLeftOpen className="h-[19px] w-[19px] text-ink-400 absolute inset-0 m-auto opacity-0 group-hover:opacity-100 transition-opacity duration-200 ease-in-out" />
+        <PanelLeftOpen className={`${iconSize} text-ink-400 absolute inset-0 m-auto opacity-0 group-hover:opacity-100 transition-opacity duration-200 ease-in-out`} />
       )}
     </span>
   )
