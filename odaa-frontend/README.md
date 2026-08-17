@@ -1,8 +1,12 @@
-# ODAA — Community Fund Management System (Frontend)
+# Odaa — Community Fund Management System (Frontend)
 
-A complete React + Tailwind frontend for the Community Fund Management System, built to the
-Version 1 spec: residents, fees, payments, funds, projects, expenses, receipts, dashboards, and reports —
-in a white-and-blue theme with role-based views for **Admin (committee)** and **Resident**.
+A React + Tailwind frontend for the Odaa Community Fund Management System:
+residents, fees, payments, funds, projects, expenses, receipts, dashboards,
+and reports — with role-based views for **Admin (committee)** and
+**Resident**.
+
+The app talks to the `odaa-backend` API (Node/Express/Prisma/PostgreSQL)
+over REST.
 
 ## Quick start
 
@@ -11,43 +15,39 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:5173. Use the demo buttons on the login screen, or:
+Open http://localhost:5173. By default the dev server proxies `/api`
+requests to `http://localhost:4000` (see `vite.config.js`), so run
+`odaa-backend` alongside it. Use the demo buttons on the login screen, or
+sign in with a seeded account, password `Password123!` for both:
 
-- **Admin:** `admin@odaa.dev` / `admin123`
-- **Resident:** `resident@odaa.dev` / `resident123`
+- **Admin:** `admin@greenwood.example`
+- **Resident:** `bob@greenwood.example`
 
-## Connecting your real backend
+(Seed these accounts by running `npm run seed` in `odaa-backend` — see the
+root README.)
 
-The app ships in **mock mode** so it's fully usable standalone (data lives in `localStorage`).
-To wire it to your Node.js/Express + PostgreSQL backend:
+## Configuration
 
-1. In `src/context/AuthContext.jsx`, set `export const MOCK_AUTH = false`.
-2. In `src/context/DataContext.jsx`, set `export const MOCK_MODE = false`, then replace each
-   action (`addResident`, `updatePayment`, etc.) with a call through `src/lib/api.js`, e.g.:
-
-   ```js
-   addResident: async (r) => {
-     const { data } = await api.post(endpoints.residents(), r)
-     setData((d) => ({ ...d, residents: [data, ...d.residents] }))
-   }
-   ```
-
-3. `src/lib/api.js` already has the full REST endpoint map matching the ODAA core modules
-   (`/residents`, `/fees`, `/payments`, `/funds`, `/projects`, `/expenses`, `/receipts`, `/reports/*`,
-   `/auth/login`, `/auth/register`, `/auth/me`) and attaches your JWT automatically from
-   `localStorage['odaa_token']`.
-4. Set `VITE_API_URL` in a `.env` file if your API isn't proxied through `/api` (see `vite.config.js`
-   for the dev proxy to `http://localhost:4000`).
+- `src/lib/api.js` holds the Axios client and the full REST endpoint map
+  (`/residents`, `/fees`, `/payments`, `/funds`, `/projects`, `/expenses`,
+  `/receipts`, `/reports/*`, `/auth/login`, `/auth/register`, `/auth/me`,
+  `/auth/refresh`). It attaches the JWT automatically from
+  `localStorage['odaa_token']` and transparently refreshes it on a 401
+  using the backend's httpOnly refresh cookie.
+- Set `VITE_API_URL` in a `.env` file if the API isn't reachable through
+  the `/api` dev proxy — e.g. when pointing at a deployed backend, set it
+  to something like `https://api.example.com/api/v1`.
 
 ## Structure
 
 ```
 src/
   components/ui.jsx        Shared UI: StatCard, Badge, Modal, EmptyState, formatters
-  context/AuthContext.jsx  Login/logout, role handling
-  context/DataContext.jsx  All ODAA entities + CRUD actions (swap to real API here)
+  context/AuthContext.jsx  Login/logout, role handling, session refresh
+  context/DataContext.jsx  All Odaa entities + CRUD actions, calling the real API
   layouts/AppLayout.jsx    Sidebar + topbar shell, role-aware nav
   lib/api.js               Axios instance + REST endpoint map
+  lib/adapters.js          Translates between UI field names and the backend's schema
   pages/Login.jsx          Split-screen login
   pages/admin/*             Dashboard, Residents, Fees, Payments, Funds, Projects, Expenses, Receipts, Reports
   pages/resident/*          Read-only resident-facing views of the same modules

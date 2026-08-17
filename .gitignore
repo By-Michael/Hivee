@@ -1,28 +1,28 @@
 # ---- Dependencies ----
 node_modules/
-cfms-backend/node_modules/
-cfms-frontend/node_modules/
+odaa-backend/node_modules/
+odaa-frontend/node_modules/
 
 # ---- Env / secrets ----
 .env
 .env.local
 .env.*.local
-cfms-backend/.env
-cfms-frontend/.env
+odaa-backend/.env
+odaa-frontend/.env
 
 # ---- Build output ----
 dist/
 build/
-cfms-frontend/dist/
+odaa-frontend/dist/
 
 # ---- Vite cache ----
 .vite/
-cfms-frontend/.vite/
-cfms-frontend/node_modules/.vite/
+odaa-frontend/.vite/
+odaa-frontend/node_modules/.vite/
 
 # ---- Uploads (receipts etc.) ----
-cfms-backend/uploads/*
-!cfms-backend/uploads/.gitkeep
+odaa-backend/uploads/*
+!odaa-backend/uploads/.gitkeep
 
 # ---- Logs ----
 npm-debug.log*
@@ -31,8 +31,8 @@ yarn-error.log*
 *.log
 
 # ---- Prisma ----
-cfms-backend/prisma/*.db
-cfms-backend/prisma/migrations/dev/
+odaa-backend/prisma/*.db
+odaa-backend/prisma/migrations/dev/
 
 # ---- OS / editor junk ----
 .DS_Store
