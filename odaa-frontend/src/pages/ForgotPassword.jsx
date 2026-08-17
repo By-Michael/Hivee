@@ -30,7 +30,7 @@ export default function ForgotPassword() {
     <div className="min-h-screen flex items-center justify-center px-6 py-12 bg-white">
       <div className="w-full max-w-sm animate-fade-up">
         <div className="flex items-center gap-1 mb-8">
-          <img src="/odaa-logo.png" alt="Odaa" className="h-10 w-10 object-contain" />
+          <img src="/odaa-logo.png" alt="Odaa" className="h-12 w-12 object-contain" />
           <span className="font-display font-bold text-lg text-ink-900">daa</span>
         </div>
 

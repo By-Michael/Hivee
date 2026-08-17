@@ -637,11 +637,11 @@ function Brand({ collapsed = false, onToggle }) {
   // it crossfades the logo into the expand icon in place - clicking it
   // (in either state) toggles the sidebar.
   const LogoMark = (
-    <span className="relative h-9 w-9 shrink-0 grid place-items-center">
+    <span className="relative h-11 w-11 shrink-0 grid place-items-center">
       <img
         src="/odaa-logo.png"
         alt="Odaa"
-        className={`h-9 w-9 object-contain transition-opacity duration-200 ease-in-out ${collapsed && onToggle ? 'group-hover:opacity-0' : ''}`}
+        className={`h-11 w-11 object-contain transition-opacity duration-200 ease-in-out ${collapsed && onToggle ? 'group-hover:opacity-0' : ''}`}
       />
       {collapsed && onToggle && (
         <PanelLeftOpen className="h-[19px] w-[19px] text-ink-400 absolute inset-0 m-auto opacity-0 group-hover:opacity-100 transition-opacity duration-200 ease-in-out" />
@@ -650,32 +650,32 @@ function Brand({ collapsed = false, onToggle }) {
   )
 
   return (
-    <div className={`flex items-center gap-1 transition-[padding] duration-300 ease-in-out ${collapsed ? 'pl-3' : 'pl-1'}`}>
+    <div className={`flex items-center w-full transition-[padding] duration-300 ease-in-out ${collapsed ? 'pl-3' : 'pl-1'}`}>
       {onToggle ? (
         <button
           type="button"
           onClick={onToggle}
           title={collapsed ? 'Expand sidebar' : undefined}
-          className="group rounded-xl"
+          className="group rounded-xl shrink-0"
         >
           {LogoMark}
         </button>
       ) : (
         LogoMark
       )}
-      <div className={`overflow-hidden flex items-center transition-all duration-300 ease-in-out ${collapsed ? 'max-w-0 opacity-0' : 'max-w-[140px] opacity-100'}`}>
-        <p className="font-display font-bold text-sm text-ink-900 leading-tight whitespace-nowrap">daa</p>
-        {onToggle && (
-          <button
-            type="button"
-            onClick={onToggle}
-            title="Collapse sidebar"
-            className="ml-1 p-1.5 rounded-lg text-ink-400 hover:bg-ink-100 hover:text-ink-600 shrink-0"
-          >
-            <PanelLeftClose className="h-[17px] w-[17px]" />
-          </button>
-        )}
+      <div className={`overflow-hidden flex items-center transition-all duration-300 ease-in-out ${collapsed ? 'max-w-0 opacity-0' : 'max-w-[60px] opacity-100 ml-1.5'}`}>
+        <p className="font-display font-bold text-xl text-ink-900 whitespace-nowrap mt-1">daa</p>
       </div>
+      {onToggle && (
+        <button
+          type="button"
+          onClick={onToggle}
+          title="Collapse sidebar"
+          className={`ml-auto p-2 rounded-lg text-ink-400 hover:bg-ink-100 hover:text-ink-600 shrink-0 transition-all duration-300 ease-in-out ${collapsed ? 'opacity-0 max-w-0 pointer-events-none overflow-hidden p-0' : 'opacity-100 max-w-[40px]'}`}
+        >
+          <PanelLeftClose className="h-5 w-5" />
+        </button>
+      )}
     </div>
   )
 }
