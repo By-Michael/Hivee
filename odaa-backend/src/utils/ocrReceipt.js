@@ -123,4 +123,8 @@ async function parseReceiptImage(fileBuffer, mimetype, filename) {
   return { ...regexResult, source: 'regex', rawText };
 }
 
-module.exports = { parseReceiptImage };
+function isStubActive() {
+  return !process.env.OCRSPACE_API_KEY;
+}
+
+module.exports = { parseReceiptImage, isStubActive };

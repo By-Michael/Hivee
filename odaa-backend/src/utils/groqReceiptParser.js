@@ -111,4 +111,8 @@ async function extractReceiptFields(rawText, regexHints = {}) {
   };
 }
 
-module.exports = { extractReceiptFields };
+function isStubActive() {
+  return !process.env.GROQ_API_KEY;
+}
+
+module.exports = { extractReceiptFields, isStubActive };

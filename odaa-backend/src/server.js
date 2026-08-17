@@ -4,6 +4,8 @@ const prisma = require('./config/prisma');
 const { isStubActive } = require('./utils/bankVerification');
 const { isStubActive: isEmailStubActive, verifyEmailTransport } = require('./utils/email');
 const { isSupabaseConfigured } = require('./config/storage');
+const { isStubActive: isOcrStubActive } = require('./utils/ocrReceipt');
+const { isStubActive: isGroqStubActive } = require('./utils/groqReceiptParser');
 
 const PORT = process.env.PORT || 4000;
 
@@ -65,6 +67,43 @@ if (!isSupabaseConfigured) {
   ].join('\n');
   if (process.env.NODE_ENV === 'production') {
     console.error(banner);
+  } else {
+    console.warn(banner);
+  }
+}
+
+if (isOcrStubActive()) {
+  const banner = [
+    '',
+    '#############################################################',
+    '#  WARNING: OCRSPACE_API_KEY is not set.                     #',
+    '#  Receipt-screenshot autofill is DISABLED — any attempt to  #',
+    '#  use it will fail with an error (this is not a silent      #',
+    '#  mock, it hard-fails). Set OCRSPACE_API_KEY to enable it.  #',
+    '#############################################################',
+    '',
+  ].join('\n');
+  if (process.env.NODE_ENV === 'production') {
+    console.error(banner);
+  } else {
+    console.warn(banner);
+  }
+}
+
+if (isGroqStubActive()) {
+  const banner = [
+    '',
+    '#############################################################',
+    '#  WARNING: GROQ_API_KEY is not set.                         #',
+    '#  Receipt autofill is running in REGEX-ONLY mode — only     #',
+    '#  transaction ID and sender name are extracted; amount,     #',
+    '#  bank name, and date will NOT be autofilled. Set           #',
+    '#  GROQ_API_KEY for full structured extraction.              #',
+    '#############################################################',
+    '',
+  ].join('\n');
+  if (process.env.NODE_ENV === 'production') {
+    console.warn(banner);
   } else {
     console.warn(banner);
   }
