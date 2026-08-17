@@ -5,9 +5,8 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        // Font stack matched from spendwize (style.css `body{font-family:...}`)
-        display: ['-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'Roboto', 'sans-serif'],
-        sans: ['-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'Roboto', 'sans-serif'],
+        display: ['"Sora"', 'system-ui', 'sans-serif'],
+        sans: ['"Inter"', 'system-ui', 'sans-serif'],
       },
       colors: {
         brand: {

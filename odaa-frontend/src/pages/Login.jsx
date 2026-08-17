@@ -47,7 +47,7 @@ export default function Login() {
           backgroundSize: '28px 28px',
         }} />
         <div className="relative flex items-center gap-1">
-          <img src="/odaa-logo.png" alt="Odaa" className="h-12 w-12 object-contain" />
+          <img src="/odaa-logo.png" alt="Odaa" className="h-14 w-14 object-contain" />
           <span className="font-display font-bold text-xl">daa</span>
         </div>
 
@@ -74,7 +74,7 @@ export default function Login() {
       <div className="flex items-center justify-center px-6 py-12 bg-white">
         <div className="w-full max-w-sm animate-fade-up">
           <div className="lg:hidden flex items-center gap-1 mb-8">
-            <img src="/odaa-logo.png" alt="Odaa" className="h-10 w-10 object-contain" />
+            <img src="/odaa-logo.png" alt="Odaa" className="h-12 w-12 object-contain" />
             <span className="font-display font-bold text-lg text-ink-900">daa</span>
           </div>
 

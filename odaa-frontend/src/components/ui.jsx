@@ -346,7 +346,7 @@ export function Modal({ open, onClose, title, children, wide, dismissible = true
           the explicit X (or a Cancel button in the form) does, so an
           accidental click outside a half-filled form never discards it. */}
       <div className="absolute inset-0 bg-ink-900/40 backdrop-blur-sm" />
-      <div className={`relative w-full ${wide ? 'max-w-2xl' : 'max-w-[30rem]'} card p-6 animate-fade-up max-h-[90vh] overflow-y-auto`}>
+      <div className={`relative w-full ${wide ? 'max-w-2xl' : 'max-w-md'} card p-6 animate-fade-up max-h-[90vh] overflow-y-auto`}>
         <div className="flex items-center justify-between mb-5">
           <h3 className="text-lg font-bold text-ink-900">{title}</h3>
           {dismissible && (
