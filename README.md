@@ -1,7 +1,7 @@
-# CFMS — Community Fund Management System
+# ODAA — Community Fund Management System
 
-Full stack: **cfms-backend** (Node/Express/Prisma/PostgreSQL, JWT auth) +
-**cfms-frontend** (React 18 + Vite + Tailwind). This package is the result
+Full stack: **odaa-backend** (Node/Express/Prisma/PostgreSQL, JWT auth) +
+**odaa-frontend** (React 18 + Vite + Tailwind). This package is the result
 of wiring the two together — the frontend now talks to the real API instead
 of its original localStorage mock.
 
@@ -82,7 +82,7 @@ adapting a UI that predates the final schema, not missing functionality.
 ## Verification performed in this environment
 
 - `node -c` syntax-checked every backend source file — clean.
-- `npm install` succeeded for both `frontend` and `backend/cfms-backend`.
+- `npm install` succeeded for both `frontend` and `backend/odaa-backend`.
 - `npm run build` (Vite) succeeded for the frontend with zero errors.
 - Backend `src/app.js` was booted with a stubbed `@prisma/client` (this
   sandbox can't reach `binaries.prisma.sh` to download the real Prisma
@@ -103,7 +103,7 @@ adapting a UI that predates the final schema, not missing functionality.
 
 ```bash
 # 1. Backend
-cd cfms-backend
+cd odaa-backend
 npm install
 cp .env.example .env          # fill in DATABASE_URL + JWT secrets
 npx prisma generate
@@ -112,7 +112,7 @@ npm run seed                  # optional demo data
 npm run dev                   # http://localhost:4000
 
 # 2. Frontend (new terminal)
-cd cfms-frontend
+cd odaa-frontend
 npm install
 npm run dev                   # http://localhost:5173, proxies /api -> :4000
 ```
@@ -146,7 +146,7 @@ Frontend: http://localhost:5173 · Backend: http://localhost:4000
   (Vercel, Netlify, S3+CloudFront, nginx). Set `VITE_API_URL` at build time
   to your deployed backend's base URL, e.g.
   `https://api.yourdomain.com/api/v1`.
-- Uploaded receipts are written to `cfms-backend/uploads/` on local disk —
+- Uploaded receipts are written to `odaa-backend/uploads/` on local disk —
   for a real deployment behind multiple instances or an ephemeral
   filesystem (most PaaS), swap `config/upload.js` for S3-compatible object
   storage.
