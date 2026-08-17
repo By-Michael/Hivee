@@ -637,11 +637,11 @@ function Brand({ collapsed = false, onToggle }) {
   // it crossfades the logo into the expand icon in place - clicking it
   // (in either state) toggles the sidebar.
   const LogoMark = (
-    <span className="relative h-11 w-11 shrink-0 grid place-items-center">
+    <span className="relative h-11 w-11 shrink-0 grid place-items-center rounded-full bg-white shadow-sm ring-1 ring-black/5">
       <img
         src="/odaa-logo.png"
         alt="Odaa"
-        className={`h-11 w-11 object-contain transition-opacity duration-200 ease-in-out ${collapsed && onToggle ? 'group-hover:opacity-0' : ''}`}
+        className={`h-8 w-8 object-contain transition-opacity duration-200 ease-in-out ${collapsed && onToggle ? 'group-hover:opacity-0' : ''}`}
       />
       {collapsed && onToggle && (
         <PanelLeftOpen className="h-[19px] w-[19px] text-ink-400 absolute inset-0 m-auto opacity-0 group-hover:opacity-100 transition-opacity duration-200 ease-in-out" />

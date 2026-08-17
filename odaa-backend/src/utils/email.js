@@ -39,6 +39,27 @@ function getTransporter() {
 }
 
 /**
+ * Verifies the SMTP connection/credentials at boot (login, not send) so a
+ * bad host/port/user/pass shows up immediately in the server logs instead
+ * of silently failing the first time a real user requests a password
+ * reset. Never throws.
+ */
+async function verifyEmailTransport() {
+  if (isStubActive()) return { ok: false, stub: true };
+  try {
+    const transporter = await getTransporter();
+    await transporter.verify();
+    console.log('[email] SMTP connection verified — outbound email is live.');
+    return { ok: true, stub: false };
+  } catch (err) {
+    console.error(
+      `[email] SMTP is configured but the connection/login FAILED — emails will NOT be sent until this is fixed: ${err.message}`,
+    );
+    return { ok: false, stub: false, error: err.message };
+  }
+}
+
+/**
  * Sends an email. Resolves to { sent: boolean, stub: boolean } and never
  * rejects — callers should fire-and-forget or await without try/catch if
  * they don't care about the outcome.
@@ -167,4 +188,5 @@ module.exports = {
   sendPasswordChangedEmail,
   sendNotificationEmail,
   isStubActive,
+  verifyEmailTransport,
 };

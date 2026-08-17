@@ -2,6 +2,7 @@ require('dotenv').config();
 const app = require('./app');
 const prisma = require('./config/prisma');
 const { isStubActive } = require('./utils/bankVerification');
+const { isStubActive: isEmailStubActive, verifyEmailTransport } = require('./utils/email');
 const { isSupabaseConfigured } = require('./config/storage');
 
 const PORT = process.env.PORT || 4000;
@@ -22,6 +23,31 @@ if (isStubActive()) {
   } else {
     console.warn(banner);
   }
+}
+
+if (isEmailStubActive()) {
+  const banner = [
+    '',
+    '#############################################################',
+    '#  WARNING: SMTP_HOST / SMTP_USER / SMTP_PASS not set.       #',
+    '#  Outbound email (password resets, deactivation notices,   #',
+    '#  etc.) is running in STUB MODE — emails are only logged   #',
+    '#  to the console, never actually sent. Password-reset      #',
+    '#  links will NOT reach real users while this is active.    #',
+    '#  Set SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS /       #',
+    '#  SMTP_FROM before relying on email in production.          #',
+    '#############################################################',
+    '',
+  ].join('\n');
+  if (process.env.NODE_ENV === 'production') {
+    console.error(banner);
+  } else {
+    console.warn(banner);
+  }
+} else {
+  // SMTP creds are present — verify they actually authenticate, rather
+  // than waiting for the first real password-reset request to find out.
+  verifyEmailTransport();
 }
 
 if (!isSupabaseConfigured) {
