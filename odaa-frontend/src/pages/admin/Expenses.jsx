@@ -3,7 +3,7 @@ import { Plus, Trash2, FileText, Paperclip, Eye, Download, Upload, CheckCircle2,
 import { useData } from '../../context/DataContext'
 import { useAuth } from '../../context/AuthContext'
 import { PageHeader, Modal, EmptyState, currency, formatDate, ConfirmDialog, notify, usePagedList, Pager } from '../../components/ui'
-import { fileUrl } from '../../lib/api'
+import { fileUrl, downloadFile } from '../../lib/api'
 
 const empty = { projectId: '', description: '', amount: '', vendor: '', date: '', bankName: '', transactionReference: '', file: null }
 
@@ -285,6 +285,13 @@ export default function Expenses() {
 
 function ExpenseDetail({ expense, project, receipt, onAttach, uploading, onToggleVerified, onReverse }) {
   const url = receipt ? fileUrl(receipt.fileUrl) : null
+  const handleDownload = async () => {
+    try {
+      await downloadFile(url, receipt.fileName)
+    } catch (err) {
+      notify(err.message || 'Failed to download receipt.', 'error')
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -313,7 +320,7 @@ function ExpenseDetail({ expense, project, receipt, onAttach, uploading, onToggl
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <a href={url} target="_blank" rel="noopener noreferrer" className="btn-secondary"><Eye className="h-4 w-4" /> View</a>
-              <a href={url} download className="btn-secondary"><Download className="h-4 w-4" /> Download</a>
+              <button type="button" onClick={handleDownload} className="btn-secondary"><Download className="h-4 w-4" /> Download</button>
               <button
                 onClick={() => onToggleVerified(receipt)}
                 className={`badge cursor-pointer ${receipt.verified ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200' : 'bg-amber-50 text-amber-700 ring-1 ring-amber-200'}`}

@@ -160,4 +160,25 @@ export function fileUrl(path) {
   return `${API_ROOT}${path.startsWith('/') ? '' : '/'}${path}`
 }
 
+// A plain `<a href={url} download>` only forces a download when the URL is
+// same-origin — browsers silently ignore the `download` attribute for
+// cross-origin links, which is exactly what receipt/avatar URLs are once
+// they're served from Supabase Storage instead of this app's own origin.
+// Clicking "Download" then just opens/shows the file instead of saving it.
+// Fetching the bytes ourselves and downloading from a local blob: URL
+// works regardless of where the file is actually hosted.
+export async function downloadFile(url, suggestedName) {
+  const response = await fetch(url)
+  if (!response.ok) throw new Error(`Download failed (${response.status})`)
+  const blob = await response.blob()
+  const blobUrl = window.URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = blobUrl
+  a.download = suggestedName || url.split('/').pop() || 'download'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  window.URL.revokeObjectURL(blobUrl)
+}
+
 export default api

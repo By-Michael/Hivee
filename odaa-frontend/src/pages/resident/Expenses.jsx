@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { Paperclip, Eye, Download, CheckCircle2, CircleDashed } from 'lucide-react'
 import { useData } from '../../context/DataContext'
-import { PageHeader, Modal, currency, formatDate, usePagedList, Pager } from '../../components/ui'
-import { fileUrl } from '../../lib/api'
+import { PageHeader, Modal, currency, formatDate, usePagedList, Pager, notify } from '../../components/ui'
+import { fileUrl, downloadFile } from '../../lib/api'
 
 export default function ResidentExpenses() {
   const { expenses, projects, receipts } = useData()
@@ -17,6 +17,13 @@ export default function ResidentExpenses() {
 
   const rc = detail ? receiptOf(detail.receiptId) : null
   const url = rc ? fileUrl(rc.fileUrl) : null
+  const handleDownload = async () => {
+    try {
+      await downloadFile(url, rc.fileName)
+    } catch (err) {
+      notify(err.message || 'Failed to download receipt.', 'error')
+    }
+  }
 
   return (
     <div>
@@ -68,7 +75,7 @@ export default function ResidentExpenses() {
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
                     <a href={url} target="_blank" rel="noopener noreferrer" className="btn-secondary"><Eye className="h-4 w-4" /> View</a>
-                    <a href={url} download className="btn-secondary"><Download className="h-4 w-4" /> Download</a>
+                    <button type="button" onClick={handleDownload} className="btn-secondary"><Download className="h-4 w-4" /> Download</button>
                     <span className={`badge ${rc.verified ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200' : 'bg-amber-50 text-amber-700 ring-1 ring-amber-200'}`}>
                       {rc.verified ? <CheckCircle2 className="h-3.5 w-3.5" /> : <CircleDashed className="h-3.5 w-3.5" />}
                       {rc.verified ? 'Verified' : 'Pending verification'}
