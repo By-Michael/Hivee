@@ -95,6 +95,32 @@
 }
 
 /* =============================================================
+   HEX HIVE — animated, blurred hex-grid backdrop for the login
+   brand panel. Kept intentionally soft (blurred + low opacity) so
+   the overlaid heading/feature text stays the clear focal point.
+   ============================================================= */
+.hex-hive-drift {
+  animation: hexDrift 26s ease-in-out infinite;
+  transform-origin: center;
+}
+.hex-cell {
+  fill: rgba(255, 255, 255, 0.06);
+  stroke: rgba(255, 255, 255, 0.22);
+  stroke-width: 1.25;
+  animation-name: hexPulse;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+}
+@keyframes hexPulse {
+  0%, 100% { fill: rgba(255, 255, 255, 0.06); stroke: rgba(255, 255, 255, 0.22); }
+  50% { fill: rgba(255, 214, 130, var(--peak, 0.28)); stroke: rgba(255, 224, 160, 0.7); }
+}
+@keyframes hexDrift {
+  0%, 100% { transform: scale(1) translate(0, 0); }
+  50% { transform: scale(1.04) translate(-1.2%, -1.2%); }
+}
+
+/* =============================================================
    DARK MODE
    Scope: the toggle sets `.dark` on <html>, so it covers the whole
    document (needed because the header's global search dropdown is

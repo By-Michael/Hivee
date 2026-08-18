@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate, useLocation, Link } from 'react-router-dom'
 import { Landmark, Mail, Phone, Lock, Eye, EyeOff, ShieldCheck, TrendingUp, Users } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
+import HexHive from '../components/HexHive'
 
 export default function Login() {
   const { login, loading, error, demoLogins } = useAuth()
@@ -42,22 +43,37 @@ export default function Login() {
     <div className="min-h-screen grid lg:grid-cols-2 login-page">
       {/* Left - brand panel */}
       <div className="hidden lg:flex flex-col justify-between bg-brand-gradient relative overflow-hidden px-12 py-10 text-white">
-        <div className="absolute inset-0 opacity-[0.15]" style={{
-          backgroundImage: 'radial-gradient(circle at 1px 1px, white 1px, transparent 0)',
-          backgroundSize: '28px 28px',
-        }} />
-        <div className="relative flex items-center gap-1">
-          <span className="h-14 w-14 rounded-full bg-white shadow-sm grid place-items-center shrink-0">
+        <HexHive />
+        <div
+          className="absolute inset-0"
+          style={{
+            background:
+              'linear-gradient(to right, rgba(6,20,58,0.55) 0%, rgba(8,28,77,0.30) 45%, rgba(8,28,77,0.10) 75%)',
+          }}
+        />
+        <div className="relative z-10 flex items-center gap-1">
+          <span className="brand-mark h-14 w-14 rounded-full shadow-sm grid place-items-center shrink-0">
             <img src="/hivee-h-mark.png" alt="Hivee" className="h-10 w-10 object-contain" />
           </span>
-          <span className="font-display font-bold text-xl"><span className="text-amber-300">i</span>vee</span>
+          <span
+            className="font-display font-extrabold text-xl"
+            style={{ textShadow: '0 2px 10px rgba(0,0,0,0.35)' }}
+          >
+            <span className="text-amber-300">i</span>vee
+          </span>
         </div>
 
-        <div className="relative max-w-md">
-          <h1 className="font-display text-4xl font-bold leading-tight">
+        <div className="relative z-10 max-w-md">
+          <h1
+            className="font-display text-4xl font-extrabold leading-tight tracking-tight"
+            style={{ textShadow: '0 2px 14px rgba(0,0,0,0.45)' }}
+          >
             Every birr accounted for. Every resident in the loop.
           </h1>
-          <p className="mt-4 text-brand-100 text-base leading-relaxed">
+          <p
+            className="mt-4 text-white/95 text-base font-medium leading-relaxed"
+            style={{ textShadow: '0 1px 8px rgba(0,0,0,0.35)' }}
+          >
             A single, transparent home for contributions, community funds, projects, and receipts —
             built for committees and residents to trust the same numbers.
           </p>
@@ -69,7 +85,7 @@ export default function Login() {
           </div>
         </div>
 
-        <p className="relative text-xs text-brand-100/80">© {new Date().getFullYear()} Community Fund Management System · v1.0</p>
+        <p className="relative z-10 text-xs font-semibold text-white/85">© {new Date().getFullYear()} Community Fund Management System · v1.0</p>
       </div>
 
       {/* Right - form */}
@@ -194,7 +210,9 @@ function Feature({ icon: Icon, text }) {
       <div className="h-8 w-8 rounded-xl bg-white/15 backdrop-blur flex items-center justify-center ring-1 ring-white/30 shrink-0">
         <Icon className="h-4 w-4" />
       </div>
-      <p className="text-sm text-brand-50">{text}</p>
+      <p className="text-sm font-semibold text-white" style={{ textShadow: '0 1px 6px rgba(0,0,0,0.3)' }}>
+        {text}
+      </p>
     </div>
   )
 }
