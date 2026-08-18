@@ -31,6 +31,9 @@ export default function Residents() {
   const { residents, addResident, updateResident, removeResident, fetchResidentSummary, residentsMeta, deactivateResident, reactivateResident, exportResidentPayments } = useData()
   const { user } = useAuth()
   const [query, setQuery] = useState('')
+  const [statusFilter, setStatusFilter] = useState('all') // all | active | inactive
+  const [typeFilter, setTypeFilter] = useState('all') // all | owner | tenant
+  const [committeeOnly, setCommitteeOnly] = useState(false)
   const [modal, setModal] = useState(false)
   const [editing, setEditing] = useState(null)
   const [form, setForm] = useState(empty)
@@ -64,8 +67,19 @@ export default function Residents() {
 
   const filtered = useMemo(() => {
     const q = query.toLowerCase()
-    return residents.filter((r) => [r.name, r.unit, r.phone, r.email, r.idNumber].join(' ').toLowerCase().includes(q))
-  }, [residents, query])
+    return residents
+      .filter((r) => [r.name, r.unit, r.phone, r.email, r.idNumber].join(' ').toLowerCase().includes(q))
+      .filter((r) => statusFilter === 'all' || r.status === statusFilter)
+      .filter((r) => typeFilter === 'all' || (r.ownerType || 'owner') === typeFilter)
+      .filter((r) => !committeeOnly || r.isCommittee)
+  }, [residents, query, statusFilter, typeFilter, committeeOnly])
+
+  const filtersActive = statusFilter !== 'all' || typeFilter !== 'all' || committeeOnly
+  function clearFilters() {
+    setStatusFilter('all')
+    setTypeFilter('all')
+    setCommitteeOnly(false)
+  }
 
   // Only render 50 rows into the DOM at a time — with thousands of
   // residents, rendering the whole filtered list on every keystroke/render
@@ -245,15 +259,37 @@ export default function Residents() {
       />
 
       <div className="card p-4 mb-5">
-        <div className="relative max-w-sm">
-          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-400" />
-          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by name, house number, phone, ID…" className="input pl-10" />
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="relative max-w-sm flex-1 min-w-[220px]">
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-400" />
+            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by name, house number, phone, ID…" className="input pl-10" />
+          </div>
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="input w-auto">
+            <option value="all">All statuses</option>
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+          </select>
+          <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className="input w-auto">
+            <option value="all">All types</option>
+            <option value="owner">Owner</option>
+            <option value="tenant">Tenant</option>
+          </select>
+          <label className="flex items-center gap-2 text-sm text-ink-600 cursor-pointer select-none">
+            <input type="checkbox" checked={committeeOnly} onChange={(e) => setCommitteeOnly(e.target.checked)} className="h-4 w-4 rounded border-ink-300 text-brand-600 focus:ring-brand-500" />
+            Committee only
+          </label>
+          {filtersActive && (
+            <button onClick={clearFilters} className="text-sm text-brand-600 hover:text-brand-700 font-medium">Clear filters</button>
+          )}
         </div>
+        {(query || filtersActive) && (
+          <p className="text-xs text-ink-400 mt-3">{filtered.length} of {residents.length} residents match{filtersActive || query ? ' the current filters' : ''}.</p>
+        )}
       </div>
 
       <div className="card overflow-hidden">
         {filtered.length === 0 ? (
-          <EmptyState icon={Users} title="No residents found" subtitle="Try a different search, or add a new resident to get started." action={<button onClick={openAdd} className="btn-primary"><Plus className="h-4 w-4" /> Add resident</button>} />
+          <EmptyState icon={Users} title="No residents found" subtitle={filtersActive || query ? 'Try a different search or clear the filters.' : 'Add a new resident to get started.'} action={<button onClick={openAdd} className="btn-primary"><Plus className="h-4 w-4" /> Add resident</button>} />
         ) : (
           <div className="table-wrap !border-0">
             <table className="data-table">
