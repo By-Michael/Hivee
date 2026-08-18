@@ -31,7 +31,7 @@ const REFRESH_COOKIE_OPTS = {
   // logged out the moment their access token expired. 'none' (paired with
   // secure, required by spec) fixes that and is harmless same-site too.
   sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-  maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+  maxAge: 14 * 24 * 60 * 60 * 1000, // 14 days (matches JWT_REFRESH_EXPIRES_IN default)
   path: '/api/v1/auth',
 };
 
@@ -43,7 +43,7 @@ async function issueTokenPair(res, user) {
     data: {
       userId: user.id,
       tokenHash: hashToken(refreshToken),
-      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      expiresAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
     },
   });
 

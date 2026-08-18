@@ -683,13 +683,16 @@ export function DataProvider({ children }) {
     // ---- expenses ----
     addExpense: async (form) => {
       const { data: created } = await api.post(endpoints.expenses(), expenseToAPI(form))
+      let newExpense = expenseToUI(created.data)
       if (form.file) {
         const body = new FormData()
         body.append('expenseId', created.data.id)
         body.append('receipt', form.file)
-        await api.post('/expenses/receipts', body, { headers: { 'Content-Type': 'multipart/form-data' } })
+        const { data: rc } = await api.post('/expenses/receipts', body, { headers: { 'Content-Type': 'multipart/form-data' } })
+        patchList('receipts')((list) => [receiptToUI(rc.data), ...list])
+        newExpense = { ...newExpense, receiptId: rc.data.id }
       }
-      patchList('expenses')((list) => [expenseToUI(created.data), ...list])
+      patchList('expenses')((list) => [newExpense, ...list])
       // Spending a fund's money changes its balance, which lives in fund
       // summaries — reconciled in the background, not blocking this call.
       refresh({ silent: true })
@@ -723,6 +726,12 @@ export function DataProvider({ children }) {
       body.append('receipt', form.file)
       const { data } = await api.post('/expenses/receipts', body, { headers: { 'Content-Type': 'multipart/form-data' } })
       patchList('receipts')((list) => [receiptToUI(data.data), ...list])
+      // Link the new receipt onto its expense in local state too — without
+      // this, `receiptOf(expense.receiptId)` keeps resolving to nothing
+      // (expense.receiptId only gets set from the nested `receipts[0]` the
+      // backend returns on expense GET/list) and the row/detail view keeps
+      // showing "no receipt" until a full refetch happens.
+      patchList('expenses')((list) => list.map((e) => (e.id === form.expenseId ? { ...e, receiptId: data.data.id } : e)))
     },
     updateReceipt: async (id, patch) => {
       // SCHEMA GAP: "verified" isn't a real column — stored client-side.

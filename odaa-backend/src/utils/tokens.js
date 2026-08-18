@@ -9,7 +9,7 @@ function signAccessToken(user) {
       communityId: user.communityId,
     },
     process.env.JWT_ACCESS_SECRET,
-    { expiresIn: process.env.JWT_ACCESS_EXPIRES_IN || '15m' }
+    { expiresIn: process.env.JWT_ACCESS_EXPIRES_IN || '30m' }
   );
 }
 
@@ -17,7 +17,7 @@ function signRefreshToken(user) {
   return jwt.sign(
     { sub: user.id, type: 'refresh' },
     process.env.JWT_REFRESH_SECRET,
-    { expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d' }
+    { expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '14d' }
   );
 }
 
