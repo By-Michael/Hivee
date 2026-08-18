@@ -18,7 +18,7 @@ const PASSWORD_RESET_EXPIRES_MINUTES = 30;
 // CORS_ORIGIN pattern used elsewhere in this file for cross-service URLs.
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
 
-const REFRESH_COOKIE_NAME = 'odaa_refresh_token';
+const REFRESH_COOKIE_NAME = 'hivee_refresh_token';
 const REFRESH_COOKIE_OPTS = {
   httpOnly: true,
   secure: process.env.NODE_ENV === 'production',

@@ -5,15 +5,15 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: odaa_user
-      POSTGRES_PASSWORD: odaa_password
-      POSTGRES_DB: odaa_db
+      POSTGRES_USER: hivee_user
+      POSTGRES_PASSWORD: hivee_password
+      POSTGRES_DB: hivee_db
     ports:
       - "5432:5432"
     volumes:
-      - odaa_pgdata:/var/lib/postgresql/data
+      - hivee_pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U odaa_user -d odaa_db"]
+      test: ["CMD-SHELL", "pg_isready -U hivee_user -d hivee_db"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -28,7 +28,7 @@ services:
     environment:
       NODE_ENV: production
       PORT: 4000
-      DATABASE_URL: postgresql://odaa_user:odaa_password@postgres:5432/odaa_db
+      DATABASE_URL: postgresql://hivee_user:hivee_password@postgres:5432/hivee_db
       JWT_ACCESS_SECRET: change_me_access_secret
       JWT_REFRESH_SECRET: change_me_refresh_secret
       JWT_ACCESS_EXPIRES_IN: 15m
@@ -37,7 +37,7 @@ services:
     ports:
       - "4000:4000"
     volumes:
-      - odaa_uploads:/app/uploads
+      - hivee_uploads:/app/uploads
 
   frontend:
     build:
@@ -51,5 +51,5 @@ services:
       - "5173:80"
 
 volumes:
-  odaa_pgdata:
-  odaa_uploads:
+  hivee_pgdata:
+  hivee_uploads:

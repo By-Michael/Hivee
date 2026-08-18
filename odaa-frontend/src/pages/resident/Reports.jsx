@@ -228,7 +228,7 @@ export default function ResidentReports() {
                   return
                 }
                 exportToExcel({
-                filename: 'my-odaa-payments',
+                filename: 'my-hivee-payments',
                 sheetName: 'My Payments',
                 meta: [
                   { label: 'Resident', value: me?.name || '—' },

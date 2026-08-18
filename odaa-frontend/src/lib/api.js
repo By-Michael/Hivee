@@ -10,7 +10,7 @@ export const api = axios.create({
 })
 
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('odaa_token')
+  const token = localStorage.getItem('hivee_token')
   if (token) config.headers.Authorization = `Bearer ${token}`
   return config
 })
@@ -31,7 +31,7 @@ function doRefresh() {
       .post(endpoints.refresh())
       .then(({ data }) => {
         const newToken = data.data.accessToken
-        localStorage.setItem('odaa_token', newToken)
+        localStorage.setItem('hivee_token', newToken)
         return newToken
       })
       .finally(() => {
@@ -42,11 +42,11 @@ function doRefresh() {
 }
 
 function clearSession() {
-  localStorage.removeItem('odaa_token')
-  localStorage.removeItem('odaa_user')
+  localStorage.removeItem('hivee_token')
+  localStorage.removeItem('hivee_user')
   // Let AuthContext (and anything else listening) know the session is
   // really gone, so it can update UI state / redirect to login.
-  window.dispatchEvent(new Event('odaa:session-expired'))
+  window.dispatchEvent(new Event('hivee:session-expired'))
 }
 
 api.interceptors.response.use(
@@ -75,7 +75,7 @@ api.interceptors.response.use(
   }
 )
 
-// REST endpoint map — matches the Core Modules from the ODAA spec.
+// REST endpoint map — matches the Core Modules from the Hivee spec.
 export const endpoints = {
   login: () => '/auth/login',
   // Note: login body uses { identifier, password } — identifier can be an

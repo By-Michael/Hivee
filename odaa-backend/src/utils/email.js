@@ -15,7 +15,7 @@ const SMTP_HOST = process.env.SMTP_HOST || '';
 const SMTP_PORT = Number(process.env.SMTP_PORT) || 587;
 const SMTP_USER = process.env.SMTP_USER || '';
 const SMTP_PASS = process.env.SMTP_PASS || '';
-const SMTP_FROM = process.env.SMTP_FROM || 'ODAA <no-reply@odaa.local>';
+const SMTP_FROM = process.env.SMTP_FROM || 'Hivee <no-reply@hivee.local>';
 
 function isStubActive() {
   return !SMTP_HOST || !SMTP_USER || !SMTP_PASS;
@@ -97,14 +97,14 @@ async function sendResidentDeactivatedEmail({ to, fullName, reason, communityNam
     '',
     'You will not be able to log in while your account is inactive. If you believe this is a mistake or would like more information, please contact the committee office.',
     '',
-    '— ODAA',
+    '— Hivee',
   ].join('\n');
   const html = `
     <p>Hello ${fullName},</p>
     <p>Your resident account${communityName ? ` for <strong>${communityName}</strong>` : ''} has been deactivated by the committee.</p>
     <p><strong>Reason:</strong> ${reason}</p>
     <p>You will not be able to log in while your account is inactive. If you believe this is a mistake or would like more information, please contact the committee office.</p>
-    <p>— ODAA</p>
+    <p>— Hivee</p>
   `;
   return sendEmail({ to, subject, text, html });
 }
@@ -115,26 +115,26 @@ async function sendResidentDeactivatedEmail({ to, fullName, reason, communityNam
  * knows the frontend's base URL.
  */
 async function sendPasswordResetEmail({ to, fullName, resetUrl, expiresInMinutes }) {
-  const subject = 'Reset your ODAA password';
+  const subject = 'Reset your Hivee password';
   const text = [
     `Hello ${fullName},`,
     '',
-    'We received a request to reset the password on your ODAA account.',
+    'We received a request to reset the password on your Hivee account.',
     `This link is valid for ${expiresInMinutes} minutes and can only be used once:`,
     '',
     resetUrl,
     '',
     "If you didn't request this, you can safely ignore this email — your password won't be changed.",
     '',
-    '— ODAA',
+    '— Hivee',
   ].join('\n');
   const html = `
     <p>Hello ${fullName},</p>
-    <p>We received a request to reset the password on your ODAA account.</p>
+    <p>We received a request to reset the password on your Hivee account.</p>
     <p>This link is valid for ${expiresInMinutes} minutes and can only be used once:</p>
     <p><a href="${resetUrl}">${resetUrl}</a></p>
     <p>If you didn't request this, you can safely ignore this email — your password won't be changed.</p>
-    <p>— ODAA</p>
+    <p>— Hivee</p>
   `;
   return sendEmail({ to, subject, text, html });
 }
@@ -145,21 +145,21 @@ async function sendPasswordResetEmail({ to, fullName, resetUrl, expiresInMinutes
  * account was compromised gets a signal even if they didn't initiate it.
  */
 async function sendPasswordChangedEmail({ to, fullName }) {
-  const subject = 'Your ODAA password was changed';
+  const subject = 'Your Hivee password was changed';
   const text = [
     `Hello ${fullName},`,
     '',
-    'This is a confirmation that the password on your ODAA account was just changed.',
+    'This is a confirmation that the password on your Hivee account was just changed.',
     '',
     "If this wasn't you, please contact your community's committee office immediately.",
     '',
-    '— ODAA',
+    '— Hivee',
   ].join('\n');
   const html = `
     <p>Hello ${fullName},</p>
-    <p>This is a confirmation that the password on your ODAA account was just changed.</p>
+    <p>This is a confirmation that the password on your Hivee account was just changed.</p>
     <p>If this wasn't you, please contact your community's committee office immediately.</p>
-    <p>— ODAA</p>
+    <p>— Hivee</p>
   `;
   return sendEmail({ to, subject, text, html });
 }
@@ -172,11 +172,11 @@ async function sendPasswordChangedEmail({ to, fullName }) {
  */
 async function sendNotificationEmail({ to, fullName, subject, message, communityName }) {
   const greeting = fullName ? `Hello ${fullName},` : 'Hello,';
-  const text = [greeting, '', message, '', '— ' + (communityName || 'ODAA')].join('\n');
+  const text = [greeting, '', message, '', '— ' + (communityName || 'Hivee')].join('\n');
   const html = `
     <p>${greeting}</p>
     <p>${message}</p>
-    <p>— ${communityName || 'ODAA'}</p>
+    <p>— ${communityName || 'Hivee'}</p>
   `;
   return sendEmail({ to, subject, text, html });
 }

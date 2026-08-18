@@ -110,7 +110,7 @@ if (isGroqStubActive()) {
 }
 
 const server = app.listen(PORT, () => {
-  console.log(`ODAA backend listening on port ${PORT} [${process.env.NODE_ENV || 'development'}]`);
+  console.log(`Hivee backend listening on port ${PORT} [${process.env.NODE_ENV || 'development'}]`);
 });
 
 async function shutdown(signal) {

@@ -44,7 +44,7 @@ export const NOTIFICATION_CATEGORIES = [
 ]
 
 const DEFAULTS = Object.fromEntries(NOTIFICATION_CATEGORIES.map((c) => [c.id, true]))
-const EVENT_NAME = 'odaa:notif-prefs-changed'
+const EVENT_NAME = 'hivee:notif-prefs-changed'
 
 // `userPreferences` is the user object's `preferences` field (from
 // AuthContext / /auth/me) — the caller already has it in hand, so this

@@ -13,7 +13,7 @@ import { useNavigate } from 'react-router-dom'
 let toastId = 0
 export function notify(message, type = 'error') {
   if (!message) return
-  window.dispatchEvent(new CustomEvent('odaa:toast', { detail: { id: ++toastId, message, type } }))
+  window.dispatchEvent(new CustomEvent('hivee:toast', { detail: { id: ++toastId, message, type } }))
 }
 
 const TOAST_STYLES = {
@@ -31,8 +31,8 @@ export function Toaster() {
       setToasts((prev) => [...prev, t])
       setTimeout(() => setToasts((prev) => prev.filter((x) => x.id !== t.id)), 5000)
     }
-    window.addEventListener('odaa:toast', onToast)
-    return () => window.removeEventListener('odaa:toast', onToast)
+    window.addEventListener('hivee:toast', onToast)
+    return () => window.removeEventListener('hivee:toast', onToast)
   }, [])
 
   function dismiss(id) {

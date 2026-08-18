@@ -247,14 +247,14 @@ export default function Reports() {
     { label: 'Total members', value: filteredResidents.length },
   ]
   const exportResidentsExcel = () => exportToExcel({
-    filename: 'odaa-residents-report',
+    filename: 'hivee-residents-report',
     sheetName: 'Residents',
     meta: residentMeta,
     columns: residentColumns,
     rows: filteredResidents,
   })
   const exportResidentsPdf = () => exportToPdf({
-    filename: 'odaa-residents-report', title: 'Residence Members Report', subtitle: 'Community membership roster', meta: residentMeta, columns: residentColumns, rows: filteredResidents,
+    filename: 'hivee-residents-report', title: 'Residence Members Report', subtitle: 'Community membership roster', meta: residentMeta, columns: residentColumns, rows: filteredResidents,
   })
 
   const paymentColumns = [
@@ -278,14 +278,14 @@ export default function Reports() {
     { label: 'Total amount', value: currency(filteredPayments.filter((p) => p.status === 'paid').reduce((s, p) => s + p.amount, 0)) },
   ]
   const exportPaymentsExcel = () => exportToExcel({
-    filename: 'odaa-collections-report',
+    filename: 'hivee-collections-report',
     sheetName: 'Collections',
     meta: paymentMeta,
     columns: paymentColumns,
     rows: filteredPayments,
   })
   const exportPaymentsPdf = () => exportToPdf({
-    filename: 'odaa-collections-report', title: 'Collections Report', subtitle: 'Verified & pending resident payments', meta: paymentMeta, columns: paymentColumns, rows: filteredPayments,
+    filename: 'hivee-collections-report', title: 'Collections Report', subtitle: 'Verified & pending resident payments', meta: paymentMeta, columns: paymentColumns, rows: filteredPayments,
   })
 
   const expenseColumns = [
@@ -306,9 +306,9 @@ export default function Reports() {
     { label: 'Filter · Search', value: expSearch || 'none' },
     { label: 'Total spent', value: currency(filteredExpenses.reduce((s, e) => s + e.amount, 0)) },
   ]
-  const exportExpensesExcel = () => exportToExcel({ filename: 'odaa-expenses-report', sheetName: 'Expenses', meta: expenseMeta, columns: expenseColumns, rows: filteredExpenses })
+  const exportExpensesExcel = () => exportToExcel({ filename: 'hivee-expenses-report', sheetName: 'Expenses', meta: expenseMeta, columns: expenseColumns, rows: filteredExpenses })
   const exportExpensesPdf = () => exportToPdf({
-    filename: 'odaa-expenses-report', title: 'Expenses Report', subtitle: 'Community fund expenditure', meta: expenseMeta, columns: expenseColumns, rows: filteredExpenses,
+    filename: 'hivee-expenses-report', title: 'Expenses Report', subtitle: 'Community fund expenditure', meta: expenseMeta, columns: expenseColumns, rows: filteredExpenses,
   })
 
   const projectColumns = [
@@ -331,9 +331,9 @@ export default function Reports() {
     { label: 'Total budget', value: currency(filteredProjects.reduce((s, p) => s + p.budget, 0)) },
     { label: 'Total spent', value: currency(filteredProjects.reduce((s, p) => s + p.spent, 0)) },
   ]
-  const exportProjectsExcel = () => exportToExcel({ filename: 'odaa-projects-report', sheetName: 'Projects', meta: projectMeta, columns: projectColumns, rows: filteredProjects })
+  const exportProjectsExcel = () => exportToExcel({ filename: 'hivee-projects-report', sheetName: 'Projects', meta: projectMeta, columns: projectColumns, rows: filteredProjects })
   const exportProjectsPdf = () => exportToPdf({
-    filename: 'odaa-projects-report', title: 'Projects Report', subtitle: 'Budget vs. spend by project', meta: projectMeta, columns: projectColumns, rows: filteredProjects,
+    filename: 'hivee-projects-report', title: 'Projects Report', subtitle: 'Budget vs. spend by project', meta: projectMeta, columns: projectColumns, rows: filteredProjects,
   })
 
   async function captureAllCharts() {
@@ -365,7 +365,7 @@ export default function Reports() {
     try {
       const charts = await captureAllCharts()
       exportRichPdf({
-        filename: 'odaa-financial-summary',
+        filename: 'hivee-financial-summary',
         title: 'Financial Summary Report',
         subtitle: 'Community-wide overview for committee review',
         kpis: summaryKpis,
@@ -392,8 +392,8 @@ export default function Reports() {
     try {
       const charts = await captureAllCharts()
       exportRichPdf({
-        filename: 'odaa-full-report',
-        title: 'Complete ODAA Report',
+        filename: 'hivee-full-report',
+        title: 'Complete Hivee Report',
         subtitle: 'Summary, residents, payments, expenses & projects — full dataset',
         kpis: summaryKpis,
         charts,

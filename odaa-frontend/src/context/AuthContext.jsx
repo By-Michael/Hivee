@@ -47,7 +47,7 @@ const DEMO_LOGINS = [
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(() => {
-    const raw = localStorage.getItem('odaa_user')
+    const raw = localStorage.getItem('hivee_user')
     return raw ? JSON.parse(raw) : null
   })
   const [loading, setLoading] = useState(false)
@@ -55,8 +55,8 @@ export function AuthProvider({ children }) {
   const [bootstrapped, setBootstrapped] = useState(false)
 
   useEffect(() => {
-    if (user) localStorage.setItem('odaa_user', JSON.stringify(user))
-    else localStorage.removeItem('odaa_user')
+    if (user) localStorage.setItem('hivee_user', JSON.stringify(user))
+    else localStorage.removeItem('hivee_user')
   }, [user])
 
   // Fired by the api client when a 401 survives a refresh attempt (refresh
@@ -71,14 +71,14 @@ export function AuthProvider({ children }) {
         return null
       })
     }
-    window.addEventListener('odaa:session-expired', handleExpired)
-    return () => window.removeEventListener('odaa:session-expired', handleExpired)
+    window.addEventListener('hivee:session-expired', handleExpired)
+    return () => window.removeEventListener('hivee:session-expired', handleExpired)
   }, [])
 
   // On first load, if we already have an access token, re-validate it
   // against /auth/me instead of trusting the cached profile forever.
   useEffect(() => {
-    const token = localStorage.getItem('odaa_token')
+    const token = localStorage.getItem('hivee_token')
     if (!token) {
       setBootstrapped(true)
       return
@@ -87,8 +87,8 @@ export function AuthProvider({ children }) {
       .get(endpoints.me())
       .then(({ data }) => setUser(normalizeUser(data.data)))
       .catch(() => {
-        localStorage.removeItem('odaa_token')
-        localStorage.removeItem('odaa_user')
+        localStorage.removeItem('hivee_token')
+        localStorage.removeItem('hivee_user')
         setUser(null)
       })
       .finally(() => setBootstrapped(true))
@@ -99,7 +99,7 @@ export function AuthProvider({ children }) {
     setError('')
     try {
       const { data } = await api.post(endpoints.login(), { identifier, password })
-      localStorage.setItem('odaa_token', data.data.accessToken)
+      localStorage.setItem('hivee_token', data.data.accessToken)
       // The login response already includes resident/community relations
       // (see authController.login), so no follow-up /auth/me round trip
       // is needed before the data-loading batch can start.
@@ -120,8 +120,8 @@ export function AuthProvider({ children }) {
     // wait on the network round trip. The server call is best-effort
     // (revokes the refresh cookie) and its result is ignored either way,
     // so there's nothing gained by blocking the sign-out on it.
-    localStorage.removeItem('odaa_token')
-    localStorage.removeItem('odaa_user')
+    localStorage.removeItem('hivee_token')
+    localStorage.removeItem('hivee_user')
     setUser(null)
     api.post(endpoints.logout()).catch(() => {})
   }

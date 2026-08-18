@@ -48,7 +48,7 @@ describe('POST /auth/register-community', () => {
   it('sets a refresh token cookie', async () => {
     const res = await request(app).post(`${BASE}/register-community`).send(validPayload);
     const cookies = res.headers['set-cookie'] || [];
-    expect(cookies.some((c) => c.startsWith('odaa_refresh_token='))).toBe(true);
+    expect(cookies.some((c) => c.startsWith('hivee_refresh_token='))).toBe(true);
   });
 
   it('rejects a duplicate email with 409', async () => {
@@ -154,7 +154,7 @@ describe('POST /auth/refresh', () => {
     // must fail. Because `agent` already swapped in the new cookie, we
     // simulate reuse of the old one by calling refresh with the previous
     // cookie explicitly.
-    const oldCookie = login.headers['set-cookie'].find((c) => c.startsWith('odaa_refresh_token='));
+    const oldCookie = login.headers['set-cookie'].find((c) => c.startsWith('hivee_refresh_token='));
     const reuseRes = await request(app).post(`${BASE}/refresh`).set('Cookie', oldCookie).send({});
     expect(reuseRes.status).toBe(401);
   });
@@ -178,7 +178,7 @@ describe('POST /auth/logout', () => {
     expect(logoutRes.status).toBe(200);
 
     // The refresh token that was valid before logout must no longer work.
-    const oldCookie = login.headers['set-cookie'].find((c) => c.startsWith('odaa_refresh_token='));
+    const oldCookie = login.headers['set-cookie'].find((c) => c.startsWith('hivee_refresh_token='));
     const reuseRes = await request(app).post(`${BASE}/refresh`).set('Cookie', oldCookie).send({});
     expect(reuseRes.status).toBe(401);
   });

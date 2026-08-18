@@ -14,7 +14,7 @@
 #   Source: /*   Destination: /index.html   Action: Rewrite
 services:
   - type: web
-    name: odaa-frontend
+    name: hivee-frontend
     runtime: static
     buildCommand: npm install && npm run build
     staticPublishPath: ./dist

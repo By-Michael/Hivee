@@ -115,7 +115,7 @@ export default function AuditLog() {
   ]
 
   const exportExcel = () => exportToExcel({
-    filename: 'odaa-audit-log',
+    filename: 'hivee-audit-log',
     sheetName: 'Audit log',
     meta: auditMeta,
     columns: logColumns,
@@ -123,7 +123,7 @@ export default function AuditLog() {
   })
 
   const exportPdf = () => exportToPdf({
-    filename: 'odaa-audit-log',
+    filename: 'hivee-audit-log',
     title: 'System Audit Log',
     subtitle: 'Every committee member\'s actions — read-only record',
     orientation: 'landscape',

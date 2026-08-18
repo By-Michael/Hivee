@@ -1,6 +1,6 @@
-# Odaa — Community Fund Management System (Frontend)
+# Hivee — Community Fund Management System (Frontend)
 
-A React + Tailwind frontend for the Odaa Community Fund Management System:
+A React + Tailwind frontend for the Hivee Community Fund Management System:
 residents, fees, payments, funds, projects, expenses, receipts, dashboards,
 and reports — with role-based views for **Admin (committee)** and
 **Resident**.
@@ -32,7 +32,7 @@ root README.)
   (`/residents`, `/fees`, `/payments`, `/funds`, `/projects`, `/expenses`,
   `/receipts`, `/reports/*`, `/auth/login`, `/auth/register`, `/auth/me`,
   `/auth/refresh`). It attaches the JWT automatically from
-  `localStorage['odaa_token']` and transparently refreshes it on a 401
+  `localStorage['hivee_token']` and transparently refreshes it on a 401
   using the backend's httpOnly refresh cookie.
 - Set `VITE_API_URL` in a `.env` file if the API isn't reachable through
   the `/api` dev proxy — e.g. when pointing at a deployed backend, set it
@@ -44,7 +44,7 @@ root README.)
 src/
   components/ui.jsx        Shared UI: StatCard, Badge, Modal, EmptyState, formatters
   context/AuthContext.jsx  Login/logout, role handling, session refresh
-  context/DataContext.jsx  All Odaa entities + CRUD actions, calling the real API
+  context/DataContext.jsx  All Hivee entities + CRUD actions, calling the real API
   layouts/AppLayout.jsx    Sidebar + topbar shell, role-aware nav
   lib/api.js               Axios instance + REST endpoint map
   lib/adapters.js          Translates between UI field names and the backend's schema

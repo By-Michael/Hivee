@@ -395,7 +395,7 @@ const exportResidentPayments = catchAsync(async (req, res) => {
   if (!resident) throw new AppError('Resident not found', 404);
 
   const workbook = new ExcelJS.Workbook();
-  workbook.creator = 'ODAA';
+  workbook.creator = 'Hivee';
   workbook.created = new Date();
 
   const infoSheet = workbook.addWorksheet('Resident Info');

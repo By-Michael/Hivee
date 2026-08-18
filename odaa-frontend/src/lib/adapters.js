@@ -1,6 +1,6 @@
 // -----------------------------------------------------------------------
 // Adapter layer between the UI's simple data shapes (used by every page in
-// src/pages/**) and the real ODAA backend's Prisma/REST contract.
+// src/pages/**) and the real Hivee backend's Prisma/REST contract.
 //
 // Why this file exists:
 // The UI was originally built against a mock, denormalized data model

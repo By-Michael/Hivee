@@ -1,6 +1,6 @@
-# Odaa — Community Fund Management System
+# Hivee — Community Fund Management System
 
-Odaa is a full-stack app for managing a residential community's shared
+Hivee is a full-stack app for managing a residential community's shared
 funds: resident registration, fee schedules, payments, funds, projects,
 expenses, receipts, dashboards, and reports. It supports role-based access
 for **Admin (committee)** and **Resident** users.
