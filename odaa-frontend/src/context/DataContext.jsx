@@ -245,6 +245,20 @@ export function DataProvider({ children }) {
         const expensesUI = expensesRes === null
           ? prev.expenses
           : (expensesRes?.__failed ? prev.expenses : (expensesRes.items || []).map(expenseToUI))
+        // expenseToUI() strips the raw `receipts` array down to just
+        // receiptId/receiptCount, so the merged/converted expensesUI list
+        // below never has `.receipts` on it. Deriving the `receipts` list
+        // from that (as this used to do) meant `e.receipts` was always
+        // undefined and every refresh — the 60s poll, tab-focus refresh,
+        // or the silent refresh addExpense fires right after an upload —
+        // silently collapsed the receipts list back down, which is why an
+        // uploaded receipt would flash and then vanish. Derive it from the
+        // RAW backend payload (still carrying the full nested receipts)
+        // instead, same "first load vs merge" shape as expenses itself.
+        const rawExpensesBatch = expensesRes === null ? null : (expensesRes?.__failed ? [] : (expensesRes.items || []))
+        const receiptsUI = rawExpensesBatch === null
+          ? prev.receipts
+          : rawExpensesBatch.flatMap((e) => (e.receipts || []).map(receiptToUI))
 
         const isFirstLoad = !opts.silent
         return {
@@ -260,7 +274,11 @@ export function DataProvider({ children }) {
           funds: fundsRes?.__failed ? prev.funds : fundsRaw.map((f) => fundToUI(f, summariesById.get(f.id) || null)),
           projects: projectsRes?.__failed ? prev.projects : projectsRes.data.data.map(projectToUI),
           expenses: isFirstLoad || expensesRes === null ? expensesUI : mergeById(prev.expenses, expensesUI),
-          receipts: (isFirstLoad || expensesRes === null ? expensesUI : mergeById(prev.expenses, expensesUI)).flatMap((e) => (e.receipts || []).map(receiptToUI)),
+          // Same first-load-vs-merge shape as expenses/residents/payments:
+          // a silent refresh only re-fetches page 1, so merge it into
+          // whatever's cached instead of truncating receipts that belong
+          // to expenses outside that page.
+          receipts: isFirstLoad || rawExpensesBatch === null ? receiptsUI : mergeById(prev.receipts, receiptsUI),
           pendingChanges: {
             asApprover: (pendingChangesRaw.asApprover || []).map(pendingChangeToUI),
             asProposer: (pendingChangesRaw.asProposer || []).map(pendingChangeToUI),
