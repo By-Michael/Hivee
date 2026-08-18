@@ -1,4 +1,6 @@
 import { createContext, useContext, useEffect, useState } from 'react'
+import api, { endpoints } from '../lib/api'
+import { useAuth } from './AuthContext'
 
 const ThemeContext = createContext(null)
 
@@ -24,23 +26,36 @@ function applyTheme(theme) {
 }
 
 export function ThemeProvider({ children }) {
+  const { user, patchUser } = useAuth()
   // White/light is the default unless the user has explicitly chosen dark.
-  const [theme, setTheme] = useState(() => {
-    const saved = localStorage.getItem('odaa_theme')
-    return saved === 'dark' ? 'dark' : 'light'
-  })
+  // Sourced from the user's database-backed preferences (see
+  // PATCH /users/me/preferences) so the choice follows them to any
+  // device/browser, not just the one that set it.
+  const [theme, setTheme] = useState(() => (user?.preferences?.theme === 'dark' ? 'dark' : 'light'))
+
+  // Re-sync if the logged-in user changes (e.g. login/logout, or /auth/me
+  // resolving after page load with a different cached value).
+  useEffect(() => {
+    setTheme(user?.preferences?.theme === 'dark' ? 'dark' : 'light')
+  }, [user?.id, user?.preferences?.theme])
 
   useEffect(() => {
     applyTheme(theme)
-    localStorage.setItem('odaa_theme', theme)
   }, [theme])
 
+  function persistTheme(next) {
+    setTheme(next)
+    if (!user) return
+    patchUser({ preferences: { ...(user.preferences || {}), theme: next } })
+    api.patch(endpoints.myPreferences(), { theme: next }).catch(() => {})
+  }
+
   function toggleTheme() {
-    setTheme((t) => (t === 'dark' ? 'light' : 'dark'))
+    persistTheme(theme === 'dark' ? 'light' : 'dark')
   }
 
   return (
-    <ThemeContext.Provider value={{ theme, toggleTheme, setTheme }}>
+    <ThemeContext.Provider value={{ theme, toggleTheme, setTheme: persistTheme }}>
       {children}
     </ThemeContext.Provider>
   )

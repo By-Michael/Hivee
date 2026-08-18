@@ -88,6 +88,9 @@ export const endpoints = {
   forgotPassword: () => '/auth/forgot-password',
   resetPassword: () => '/auth/reset-password',
 
+  myPreferences: () => '/users/me/preferences',
+  myAvatar: () => '/users/me/avatar',
+
   residents: () => '/residents',
   resident: (id) => `/residents/${id}`,
   residentSummary: (id) => `/residents/${id}/summary`,
@@ -128,6 +131,7 @@ export const endpoints = {
 
   receipts: () => '/receipts',
   receipt: (id) => `/receipts/${id}`,
+  receiptVerify: (id) => `/receipts/${id}/verify`,
 
   committeeTransfers: () => '/committee-transfers',
   committeeTransferMine: () => '/committee-transfers/mine',

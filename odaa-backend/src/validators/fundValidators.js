@@ -7,6 +7,9 @@ const createFundSchema = z.object({
     // Optional free-text reason/note for this fund — no length floor since
     // it's fine to leave blank, but capped so nobody pastes a novel in.
     description: z.string().max(1000).optional(),
+    // Optional fundraising target — a real column now (see schema.prisma),
+    // no longer the client-only `fundGoal` localStorage overlay.
+    goal: z.number().positive().optional().nullable(),
   }),
 });
 
@@ -16,6 +19,7 @@ const updateFundSchema = z.object({
     name: z.string().min(2).optional(),
     category: z.string().min(1).max(40).optional(),
     description: z.string().max(1000).optional(),
+    goal: z.number().positive().optional().nullable(),
   }),
 });
 

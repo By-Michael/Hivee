@@ -36,6 +36,24 @@ const listReceiptsForExpense = catchAsync(async (req, res) => {
   res.json({ success: true, data: receipts });
 });
 
+// Toggle whether a committee member has confirmed this receipt matches its
+// expense. Was previously a client-only flag (localStorage, keyed by
+// receipt id) — now a real column, so the verification status is visible
+// to every admin/device instead of resetting per-browser.
+const setReceiptVerified = catchAsync(async (req, res) => {
+  const receipt = await prisma.receipt.findFirst({
+    where: { id: req.params.id, expense: { communityId: req.communityId } },
+  });
+  if (!receipt) throw new AppError('Receipt not found', 404);
+
+  const updated = await prisma.receipt.update({
+    where: { id: receipt.id },
+    data: { verified: !!req.body.verified },
+  });
+
+  res.json({ success: true, data: updated });
+});
+
 const deleteReceipt = catchAsync(async (req, res) => {
   const receipt = await prisma.receipt.findFirst({
     where: { id: req.params.id, expense: { communityId: req.communityId } },
@@ -47,4 +65,4 @@ const deleteReceipt = catchAsync(async (req, res) => {
   res.json({ success: true, message: 'Receipt deleted' });
 });
 
-module.exports = { uploadReceipt, listReceiptsForExpense, deleteReceipt };
+module.exports = { uploadReceipt, listReceiptsForExpense, setReceiptVerified, deleteReceipt };

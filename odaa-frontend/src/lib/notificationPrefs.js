@@ -1,7 +1,9 @@
-// Notification categories a person can mute individually. There's no
-// backend table for this yet (no NotificationPreference model), so — same
-// pattern already used for the profile-picture cache (`odaa_avatar_${id}`)
-// — preferences live in localStorage, per user, on this device.
+import api, { endpoints } from './api'
+
+// Notification categories a person can mute individually. Preferences live
+// in the `notifications` key of the user's database-backed preferences
+// (see PATCH /users/me/preferences), so mutes follow the user to any
+// device/browser instead of resetting per-browser.
 //
 // `roles` controls which tab sees the toggle: committee members get the
 // admin-flavoured categories (approvals, verification queue, receipts),
@@ -43,27 +45,27 @@ export const NOTIFICATION_CATEGORIES = [
 
 const DEFAULTS = Object.fromEntries(NOTIFICATION_CATEGORIES.map((c) => [c.id, true]))
 const EVENT_NAME = 'odaa:notif-prefs-changed'
-const key = (userId) => `odaa_notif_prefs_${userId}`
 
-export function getNotificationPrefs(userId) {
-  if (!userId) return { ...DEFAULTS }
-  try {
-    const raw = localStorage.getItem(key(userId))
-    if (!raw) return { ...DEFAULTS }
-    return { ...DEFAULTS, ...JSON.parse(raw) }
-  } catch {
-    return { ...DEFAULTS }
-  }
+// `userPreferences` is the user object's `preferences` field (from
+// AuthContext / /auth/me) — the caller already has it in hand, so this
+// stays a pure function rather than fetching on its own.
+export function getNotificationPrefs(userPreferences) {
+  return { ...DEFAULTS, ...(userPreferences?.notifications || {}) }
 }
 
-export function setNotificationPref(userId, categoryId, enabled) {
-  if (!userId) return
-  const next = { ...getNotificationPrefs(userId), [categoryId]: enabled }
-  localStorage.setItem(key(userId), JSON.stringify(next))
+// Persists the change to the database (via the shared preferences PATCH,
+// merged under the `notifications` key) and updates the caller's cached
+// user via `patchUser` so the UI reflects it immediately.
+export function setNotificationPref(user, patchUser, categoryId, enabled) {
+  if (!user) return
+  const next = { ...getNotificationPrefs(user.preferences), [categoryId]: enabled }
+  const nextPreferences = { ...(user.preferences || {}), notifications: next }
+  patchUser({ preferences: nextPreferences })
+  api.patch(endpoints.myPreferences(), { notifications: next }).catch(() => {})
   // Same-tab listeners (the bell in AppLayout) don't get a native `storage`
   // event since that only fires in *other* tabs — dispatch our own so the
   // bell updates instantly after a toggle without a page reload.
-  window.dispatchEvent(new CustomEvent(EVENT_NAME, { detail: { userId, prefs: next } }))
+  window.dispatchEvent(new CustomEvent(EVENT_NAME, { detail: { userId: user.id, prefs: next } }))
   return next
 }
 

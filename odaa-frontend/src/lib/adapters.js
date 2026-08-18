@@ -10,36 +10,13 @@
 // this module translates cleanly in both directions so pages keep working
 // unmodified while every read/write goes through the real API.
 //
-// A few UI fields have no column in the Prisma schema at all (resident
-// phone number, fund "balance"/"category" as a single stored figure,
-// receipt "verified" flag, receipt display file name). Those are called
-// out below with SCHEMA GAP comments — see README "Known limitations" for
-// the recommended follow-up migration.
+// Every UI field the pages rely on now has a real column behind it — fund
+// goal and receipt verified used to be kept in a localStorage-only overlay
+// (device-specific, gone if storage was cleared), but both are now real
+// Fund/Receipt columns, so they're written and read through the API like
+// everything else.
 // -----------------------------------------------------------------------
 
-// ---- tiny localStorage-backed overlay for fields the schema can't hold ----
-const META_KEY = 'odaa_client_meta_v1'
-
-function loadMeta() {
-  try {
-    return JSON.parse(localStorage.getItem(META_KEY)) || {}
-  } catch {
-    return {}
-  }
-}
-function saveMeta(meta) {
-  localStorage.setItem(META_KEY, JSON.stringify(meta))
-}
-export function getMeta(bucket, id, fallback) {
-  const meta = loadMeta()
-  return meta?.[bucket]?.[id] ?? fallback
-}
-export function setMeta(bucket, id, value) {
-  const meta = loadMeta()
-  meta[bucket] = meta[bucket] || {}
-  meta[bucket][id] = value
-  saveMeta(meta)
-}
 
 // ------------------------------- enums ---------------------------------
 const RESIDENT_STATUS_TO_UI = { ACTIVE: 'active', INACTIVE: 'inactive', MOVED_OUT: 'inactive' }
@@ -248,6 +225,7 @@ export function fundToUI(f, summary) {
     name: f.name,
     category: f.category || 'Security',
     reason: f.description || '',
+    goal: f.goal !== undefined && f.goal !== null ? Number(f.goal) : null,
     balance: summary ? summary.actualBalance : 0, // alias, prefer actualBalance below
     actualBalance: summary ? summary.actualBalance : 0,
     verifiedCollected: summary ? summary.verifiedCollected : 0,
@@ -263,6 +241,7 @@ export function fundToAPI(form) {
     name: form.name,
     category: form.category,
     description: form.reason || undefined,
+    goal: form.goal === '' || form.goal === undefined || form.goal === null ? null : Number(form.goal),
   }
 }
 
@@ -414,9 +393,9 @@ export function pendingChangeToUI(pc) {
 }
 
 // ------------------------------- receipts -------------------------------------
-// SCHEMA GAP: Receipt only stores { expenseId, fileUrl, uploadedAt } — no
-// display file name (derived from fileUrl) and no verified flag (kept in
-// the local meta overlay, keyed by receipt id).
+// fileName is derived from fileUrl (no separate display-name column, but
+// that's cosmetic and doesn't need persisting). `verified` is a real
+// Receipt column now — see PATCH /receipts/:id/verify.
 export function receiptToUI(r) {
   const fileName = (r.fileUrl || '').split('/').pop() || 'receipt'
   return {
@@ -425,6 +404,6 @@ export function receiptToUI(r) {
     fileName,
     fileUrl: r.fileUrl,
     uploadedAt: r.uploadedAt,
-    verified: getMeta('receiptVerified', r.id, false),
+    verified: !!r.verified,
   }
 }

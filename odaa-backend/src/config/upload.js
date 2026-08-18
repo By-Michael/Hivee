@@ -34,4 +34,16 @@ const screenshotUpload = multer({
   limits: { fileSize: 5 * 1024 * 1024 },
 });
 
-module.exports = { upload, screenshotUpload };
+// Profile picture uploads — images only, no PDFs.
+const avatarUpload = multer({
+  storage: multer.memoryStorage(),
+  fileFilter: (req, file, cb) => {
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.mimetype)) {
+      return cb(new AppError('Only JPEG, PNG or WEBP images are allowed', 400));
+    }
+    cb(null, true);
+  },
+  limits: { fileSize: 5 * 1024 * 1024 },
+});
+
+module.exports = { upload, screenshotUpload, avatarUpload };

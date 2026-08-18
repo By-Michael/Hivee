@@ -11,6 +11,7 @@ const errorHandler = require('./middleware/errorHandler');
 const AppError = require('./utils/AppError');
 
 const authRoutes = require('./routes/authRoutes');
+const userRoutes = require('./routes/userRoutes');
 const communityRoutes = require('./routes/communityRoutes');
 const residentRoutes = require('./routes/residentRoutes');
 const feeRoutes = require('./routes/feeRoutes');
@@ -119,6 +120,7 @@ app.get('/health', (req, res) => res.json({ success: true, status: 'ok', time: n
 
 const API_PREFIX = '/api/v1';
 app.use(`${API_PREFIX}/auth`, authRoutes);
+app.use(`${API_PREFIX}/users`, userRoutes);
 app.use(`${API_PREFIX}/communities`, communityRoutes);
 app.use(`${API_PREFIX}/residents`, residentRoutes);
 app.use(`${API_PREFIX}/fees`, feeRoutes);

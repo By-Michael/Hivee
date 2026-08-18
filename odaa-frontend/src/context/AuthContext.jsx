@@ -28,6 +28,11 @@ function normalizeUser(u) {
     residentId: u.resident?.id,
     unitNumber: u.resident?.unitNumber,
     avatarColor: avatarColorFor(u.id),
+    // Real database fields now — profile picture and cross-device
+    // preferences (theme, sidebar state, notification mutes, default
+    // export format) instead of per-browser localStorage.
+    avatarUrl: u.avatarUrl || null,
+    preferences: u.preferences || {},
   }
 }
 
@@ -121,8 +126,17 @@ export function AuthProvider({ children }) {
     api.post(endpoints.logout()).catch(() => {})
   }
 
+  // Merges a partial patch (e.g. { avatarUrl } or { preferences }) into the
+  // cached user after a successful API call, so the UI reflects the change
+  // immediately without a full /auth/me round trip. The database row is
+  // always the source of truth — this just keeps the in-memory/localStorage
+  // copy of it in sync.
+  function patchUser(patch) {
+    setUser((prev) => (prev ? { ...prev, ...patch } : prev))
+  }
+
   return (
-    <AuthContext.Provider value={{ user, login, logout, loading, error, bootstrapped, demoLogins: DEMO_LOGINS }}>
+    <AuthContext.Provider value={{ user, login, logout, loading, error, bootstrapped, demoLogins: DEMO_LOGINS, patchUser }}>
       {children}
     </AuthContext.Provider>
   )

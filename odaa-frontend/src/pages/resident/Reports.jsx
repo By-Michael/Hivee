@@ -4,7 +4,6 @@ import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContai
 import { useAuth } from '../../context/AuthContext'
 import { useData } from '../../context/DataContext'
 import { PageHeader, StatCard, currency, formatDate, ChartPlaceholder, notify, usePagedList, Pager } from '../../components/ui'
-import { getMeta } from '../../lib/adapters'
 import { exportToExcel } from '../../lib/exportUtils'
 
 const COLORS = ['#1554d6', '#2570f5', '#5aa4ff', '#a9caff', '#0c1c44']
@@ -143,7 +142,7 @@ export default function ResidentReports() {
     const verified = payments.filter((p) => feeIds.has(p.feeId) && p.status === 'paid')
     const collected = verified.reduce((s, p) => s + p.amount, 0)
     const contributorIds = new Set(verified.map((p) => p.residentId))
-    const goal = Number(getMeta('fundGoal', f.id, 0)) || null
+    const goal = f.goal || null
     return {
       name: f.name,
       category: f.category,

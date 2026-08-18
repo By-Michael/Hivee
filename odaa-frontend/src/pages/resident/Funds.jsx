@@ -3,7 +3,6 @@ import { Landmark, Target, Users, TrendingUp, HandCoins, Copy, Check, Camera, Lo
 import { useAuth } from '../../context/AuthContext'
 import { useData } from '../../context/DataContext'
 import { PageHeader, Modal, Badge, currency, currencyBalance, usePagedList, Pager, formatDate } from '../../components/ui'
-import { getMeta } from '../../lib/adapters'
 
 const catColors = {
   Security: 'from-brand-500 to-brand-600',
@@ -81,7 +80,7 @@ export default function ResidentFunds() {
     const contributorIds = new Set(
       payments.filter((p) => p.status === 'paid' && (p.fundId === f.id || projectIdsInFund.has(p.projectId))).map((p) => p.residentId)
     )
-    const goal = Number(getMeta('fundGoal', f.id, 0)) || null
+    const goal = f.goal || null
     const collected = f.verifiedCollected
     return {
       ...f,

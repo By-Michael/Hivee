@@ -11,7 +11,6 @@ import {
   receiptToUI,
   communityToUI, communityToUpdateAPI,
   pendingChangeToUI,
-  setMeta,
 } from '../lib/adapters'
 
 const EMPTY_DATA = {
@@ -246,17 +245,6 @@ export function DataProvider({ children }) {
         const expensesUI = expensesRes === null
           ? prev.expenses
           : (expensesRes?.__failed ? prev.expenses : (expensesRes.items || []).map(expenseToUI))
-        // Receipts must come from the RAW backend expense objects (which
-        // still have the nested `receipts` array from the API's `include`)
-        // — not from `expensesUI` above, which is already run through
-        // expenseToUI() and only keeps a flattened `receiptId`/`receiptCount`.
-        // Using expensesUI here silently wiped `receipts` to [] on almost
-        // every refresh (including the 60s background poll), which is why
-        // a just-uploaded receipt would show correctly for a few seconds
-        // and then disappear again.
-        const receiptsUI = expensesRes === null
-          ? prev.receipts
-          : (expensesRes?.__failed ? prev.receipts : (expensesRes.items || []).flatMap((e) => (e.receipts || []).map(receiptToUI)))
 
         const isFirstLoad = !opts.silent
         return {
@@ -272,7 +260,7 @@ export function DataProvider({ children }) {
           funds: fundsRes?.__failed ? prev.funds : fundsRaw.map((f) => fundToUI(f, summariesById.get(f.id) || null)),
           projects: projectsRes?.__failed ? prev.projects : projectsRes.data.data.map(projectToUI),
           expenses: isFirstLoad || expensesRes === null ? expensesUI : mergeById(prev.expenses, expensesUI),
-          receipts: isFirstLoad || expensesRes === null ? receiptsUI : mergeById(prev.receipts, receiptsUI),
+          receipts: (isFirstLoad || expensesRes === null ? expensesUI : mergeById(prev.expenses, expensesUI)).flatMap((e) => (e.receipts || []).map(receiptToUI)),
           pendingChanges: {
             asApprover: (pendingChangesRaw.asApprover || []).map(pendingChangeToUI),
             asProposer: (pendingChangesRaw.asProposer || []).map(pendingChangeToUI),
@@ -745,8 +733,11 @@ export function DataProvider({ children }) {
       patchList('expenses')((list) => list.map((e) => (e.id === form.expenseId ? { ...e, receiptId: data.data.id } : e)))
     },
     updateReceipt: async (id, patch) => {
-      // SCHEMA GAP: "verified" isn't a real column — stored client-side.
-      if (typeof patch.verified === 'boolean') setMeta('receiptVerified', id, patch.verified)
+      // "verified" is a real Receipt column now — see PATCH
+      // /receipts/:id/verify — rather than a client-only flag.
+      if (typeof patch.verified === 'boolean') {
+        await api.patch(endpoints.receiptVerify(id), { verified: patch.verified })
+      }
       patchList('receipts')((list) => list.map((r) => (r.id === id ? { ...r, ...patch } : r)))
     },
     removeReceipt: async (id) => {

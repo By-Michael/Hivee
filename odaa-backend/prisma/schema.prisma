@@ -156,6 +156,20 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
+  // Profile picture — stored in object storage (Supabase Storage, same
+  // pattern as Receipt.fileUrl/storageKey), not on the client. Lets the
+  // avatar follow the user across devices instead of living only in one
+  // browser's localStorage.
+  avatarUrl     String?
+  avatarStorageKey String?
+  // Cross-device user preferences (theme, sidebar-collapsed, default
+  // export format, per-category notification mutes, etc). A single JSON
+  // column rather than a table per preference — these are small, loosely
+  // structured, per-user settings with no query/reporting need of their
+  // own, so a dedicated relational table per setting would be pure
+  // overhead. Read/written as a shallow merge via PATCH /users/me/preferences.
+  preferences   Json?          @default("{}")
+
   community     Community?     @relation(fields: [communityId], references: [id], onDelete: Cascade)
   resident      Resident?
   refreshTokens RefreshToken[]
@@ -393,6 +407,11 @@ model Fund {
   // for beyond what the name says (e.g. "Set up after the March 2026
   // flooding to cover future drainage work"). Purely informational.
   description String?
+  // Optional fundraising target the committee sets for this fund, shown as
+  // progress-toward-goal in the UI. Previously kept client-side only
+  // (localStorage `fundGoal` overlay) — now a real column so it's visible
+  // to every device/admin instead of only the browser that set it.
+  goal        Decimal? @db.Decimal(12, 2)
   createdAt   DateTime @default(now())
 
   community Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
@@ -515,6 +534,12 @@ model Receipt {
   // have fileUrl; deleteReceiptFile() no-ops gracefully when it's null.
   storageKey String?
   uploadedAt DateTime @default(now())
+  // Whether a committee member has confirmed this receipt matches the
+  // expense it's attached to. Previously tracked client-side only
+  // (localStorage, keyed by receipt id) — now a real column so the
+  // verification status is shared across every admin/device instead of
+  // resetting per-browser.
+  verified   Boolean  @default(false)
 
   expense Expense @relation(fields: [expenseId], references: [id], onDelete: Cascade)
 

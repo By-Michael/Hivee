@@ -8,6 +8,7 @@ const router = express.Router();
 
 router.use(authenticate, tenantScope);
 
+router.patch('/:id/verify', authorize('ADMIN'), ctrl.setReceiptVerified);
 router.delete('/:id', authorize('ADMIN'), ctrl.deleteReceipt);
 
 module.exports = router;

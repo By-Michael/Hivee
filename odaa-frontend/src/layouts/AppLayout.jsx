@@ -10,6 +10,7 @@ import {
 import { useAuth } from '../context/AuthContext'
 import { useData } from '../context/DataContext'
 import { useTheme } from '../context/ThemeContext'
+import api, { endpoints, fileUrl } from '../lib/api'
 import { currency, formatDate, Modal, PageSkeleton, notify } from '../components/ui'
 import { getNotificationPrefs, onNotificationPrefsChanged } from '../lib/notificationPrefs'
 
@@ -51,20 +52,20 @@ export default function AppLayout({ role }) {
   const [open, setOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [notifOpen, setNotifOpen] = useState(false)
-  const [collapsed, setCollapsed] = useState(() => localStorage.getItem('odaa_sidebar_collapsed') === '1')
+  const { user, logout, patchUser } = useAuth()
+  const [collapsed, setCollapsedState] = useState(() => user?.preferences?.sidebarCollapsed === true)
   const [navCollapsed, setNavCollapsed] = useState(collapsed)
   const [query, setQuery] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
-  const { user, logout } = useAuth()
   const { theme, toggleTheme } = useTheme()
   const data = useData()
   const { residents, payments, projects, fees, expenses, funds, fetchMyTransferItems, respondAsCommitteeMember, respondAsTransferRecipient, respondToPendingChange, pendingChanges, loading, hasLoadedOnce } = data
   const navigate = useNavigate()
 
   // ---- notification mute preferences (Settings > Notifications) ----
-  const [notifPrefs, setNotifPrefs] = useState(() => getNotificationPrefs(user?.id))
+  const [notifPrefs, setNotifPrefs] = useState(() => getNotificationPrefs(user?.preferences))
   useEffect(() => {
-    setNotifPrefs(getNotificationPrefs(user?.id))
+    setNotifPrefs(getNotificationPrefs(user?.preferences))
     return onNotificationPrefsChanged((e) => {
       if (e.detail?.userId === user?.id) setNotifPrefs(e.detail.prefs)
     })
@@ -110,13 +111,26 @@ export default function AppLayout({ role }) {
   }
 
   useEffect(() => {
-    localStorage.setItem('odaa_sidebar_collapsed', collapsed ? '1' : '0')
     if (collapsed) {
       const t = setTimeout(() => setNavCollapsed(true), 300)
       return () => clearTimeout(t)
     }
     setNavCollapsed(false)
   }, [collapsed])
+
+  // Persists to the database (see PATCH /users/me/preferences) instead of
+  // localStorage, so the collapsed/expanded choice follows the user to
+  // other devices/browsers.
+  function setCollapsed(updater) {
+    setCollapsedState((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater
+      if (user) {
+        patchUser({ preferences: { ...(user.preferences || {}), sidebarCollapsed: next } })
+        api.patch(endpoints.myPreferences(), { sidebarCollapsed: next }).catch(() => {})
+      }
+      return next
+    })
+  }
 
   // Close dropdowns on outside click.
   useEffect(() => {
@@ -612,7 +626,7 @@ export default function AppLayout({ role }) {
 }
 
 function Avatar({ user }) {
-  const pic = user?.id ? localStorage.getItem(`odaa_avatar_${user.id}`) : null
+  const pic = user?.avatarUrl ? fileUrl(user.avatarUrl) : null
   if (pic) {
     return <img src={pic} alt="" className="h-9 w-9 rounded-full object-cover shrink-0 ring-1 ring-ink-100" />
   }

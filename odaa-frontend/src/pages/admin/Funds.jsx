@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { Plus, Pencil, Trash2, Landmark, TrendingUp, Target, Users, Lock } from 'lucide-react'
 import { useData } from '../../context/DataContext'
 import { PageHeader, Modal, currency, currencyBalance, ConfirmDialog, notify } from '../../components/ui'
-import { getMeta, setMeta, FUND_CATEGORIES } from '../../lib/adapters'
+import { FUND_CATEGORIES } from '../../lib/adapters'
 
 const empty = { name: '', category: 'Security', goal: '', reason: '' }
 const catColors = {
@@ -40,7 +40,7 @@ export default function Funds() {
     const verifiedPayments = payments.filter((p) => p.status === 'paid' && (p.fundId === f.id || projectIdsInFund.has(p.projectId)))
     const collected = f.verifiedCollected // trust the backend total, not a client re-derivation
     const contributorIds = new Set(verifiedPayments.map((p) => p.residentId))
-    const goal = Number(getMeta('fundGoal', f.id, 0)) || null
+    const goal = f.goal || null
     // Mirror the server's deletion rule (fundController.js deleteFund) so
     // the button/lock icon reflects reality instead of letting the admin
     // hit a 403: deletable once the fund's real balance is exactly zero
@@ -69,7 +69,7 @@ export default function Funds() {
   }), [funds, projects, payments, residents])
 
   function openAdd() { setEditing(null); setForm(empty); setModal(true) }
-  function openEdit(f) { setEditing(f); setForm({ ...f, goal: getMeta('fundGoal', f.id, ''), reason: f.reason || '' }); setModal(true) }
+  function openEdit(f) { setEditing(f); setForm({ ...f, goal: f.goal ?? '', reason: f.reason || '' }); setModal(true) }
 
   function confirmDelete() {
     if (!deleteTarget) return
@@ -83,12 +83,15 @@ export default function Funds() {
   function submit(e) {
     e.preventDefault()
     setSaving(true)
-    const payload = { name: form.name, category: form.category, reason: form.reason || undefined }
+    const payload = {
+      name: form.name,
+      category: form.category,
+      reason: form.reason || undefined,
+      goal: form.goal === '' ? null : Number(form.goal),
+    }
     const wasEditing = !!editing
     const action = wasEditing ? updateFund(editing.id, payload) : addFund(payload)
-    action.then((idMaybe) => {
-      const targetId = wasEditing ? editing.id : idMaybe
-      if (targetId && form.goal !== '') setMeta('fundGoal', targetId, Number(form.goal))
+    action.then(() => {
       setModal(false)
       notify(wasEditing ? 'Fund updated.' : 'Fund added.', 'success')
     }).catch((err) => notify(err?.response?.data?.message || err.message))

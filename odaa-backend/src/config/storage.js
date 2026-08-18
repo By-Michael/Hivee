@@ -23,6 +23,12 @@ const { createClient } = require('@supabase/supabase-js');
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const SUPABASE_RECEIPTS_BUCKET = process.env.SUPABASE_RECEIPTS_BUCKET || 'receipts';
+// Same object-storage pattern as receipts, separate bucket — profile
+// pictures used to be cached as base64 data URLs in the browser's
+// localStorage (device-only, gone if the user cleared storage or opened
+// the app on a different device). Storing them here instead makes the
+// avatar part of the user's actual account data.
+const SUPABASE_AVATARS_BUCKET = process.env.SUPABASE_AVATARS_BUCKET || 'avatars';
 
 const isSupabaseConfigured = !!(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY);
 
@@ -35,8 +41,10 @@ const supabase = isSupabaseConfigured
   : null;
 
 const LOCAL_UPLOAD_DIR = path.join(__dirname, '..', '..', 'uploads', 'receipts');
+const LOCAL_AVATAR_DIR = path.join(__dirname, '..', '..', 'uploads', 'avatars');
 if (!isSupabaseConfigured) {
   fs.mkdirSync(LOCAL_UPLOAD_DIR, { recursive: true });
+  fs.mkdirSync(LOCAL_AVATAR_DIR, { recursive: true });
 }
 
 function randomName(originalName) {
@@ -82,4 +90,45 @@ async function deleteReceiptFile(storageKey) {
   }
 }
 
-module.exports = { saveReceiptFile, deleteReceiptFile, isSupabaseConfigured, LOCAL_UPLOAD_DIR };
+// Saves a user's profile picture (multer memoryStorage buffer), same
+// upload/delete-on-replace shape as saveReceiptFile above.
+async function saveAvatarFile(file) {
+  const filename = randomName(file.originalname);
+
+  if (isSupabaseConfigured) {
+    const { error } = await supabase.storage
+      .from(SUPABASE_AVATARS_BUCKET)
+      .upload(filename, file.buffer, { contentType: file.mimetype, upsert: false });
+    if (error) throw new Error(`Supabase upload failed: ${error.message}`);
+
+    const { data } = supabase.storage.from(SUPABASE_AVATARS_BUCKET).getPublicUrl(filename);
+    return { avatarUrl: data.publicUrl, storageKey: filename };
+  }
+
+  fs.writeFileSync(path.join(LOCAL_AVATAR_DIR, filename), file.buffer);
+  return { avatarUrl: `/uploads/avatars/${filename}`, storageKey: filename };
+}
+
+async function deleteAvatarFile(storageKey) {
+  if (!storageKey) return;
+  try {
+    if (isSupabaseConfigured) {
+      await supabase.storage.from(SUPABASE_AVATARS_BUCKET).remove([storageKey]);
+    } else {
+      fs.unlinkSync(path.join(LOCAL_AVATAR_DIR, storageKey));
+    }
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('Failed to delete avatar file from storage:', err.message);
+  }
+}
+
+module.exports = {
+  saveReceiptFile,
+  deleteReceiptFile,
+  saveAvatarFile,
+  deleteAvatarFile,
+  isSupabaseConfigured,
+  LOCAL_UPLOAD_DIR,
+  LOCAL_AVATAR_DIR,
+};

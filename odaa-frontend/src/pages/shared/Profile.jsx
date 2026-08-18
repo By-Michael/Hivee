@@ -8,7 +8,7 @@ import { useAuth } from '../../context/AuthContext'
 import { useData } from '../../context/DataContext'
 import { useTheme } from '../../context/ThemeContext'
 import { PageHeader, Modal, notify } from '../../components/ui'
-import api, { endpoints } from '../../lib/api'
+import api, { endpoints, fileUrl } from '../../lib/api'
 import { NOTIFICATION_CATEGORIES, getNotificationPrefs, setNotificationPref } from '../../lib/notificationPrefs'
 
 // Every sensitive profile change (password, phone, picture) goes through a
@@ -113,6 +113,7 @@ export default function Profile() {
 // ===========================================================================
 function ProfileTab({ user, isCommittee }) {
   const { residents, refresh } = useData()
+  const { patchUser } = useAuth()
   const me = residents.find((r) => r.userId === user?.id || r.id === user?.residentId)
 
   const [pendingAction, setPendingAction] = useState(null) // { type, payload, otp }
@@ -120,10 +121,15 @@ function ProfileTab({ user, isCommittee }) {
   const [otpError, setOtpError] = useState('')
   const [sentNotice, setSentNotice] = useState('')
   const [banner, setBanner] = useState('')
+  const [avatarUploading, setAvatarUploading] = useState(false)
   const fileRef = useRef(null)
 
   const [phone, setPhone] = useState(me?.phone || '')
-  const [avatar, setAvatar] = useState(() => (user?.id ? localStorage.getItem(`odaa_avatar_${user.id}`) : null))
+  // Profile picture is a real database field now (User.avatarUrl, stored
+  // in object storage — see storage.js) instead of a base64 data URL
+  // cached in this browser's localStorage, so it follows the user to any
+  // device they sign into.
+  const avatar = user?.avatarUrl ? fileUrl(user.avatarUrl) : null
 
   function beginVerifiedChange(type, payload) {
     const otp = generateOtp()
@@ -149,8 +155,11 @@ function ProfileTab({ user, isCommittee }) {
         return
       }
     } else if (pendingAction.type === 'avatar') {
-      localStorage.setItem(`odaa_avatar_${user.id}`, pendingAction.payload.dataUrl)
-      setAvatar(pendingAction.payload.dataUrl)
+      const ok = await uploadAvatar(pendingAction.payload.file)
+      if (!ok) {
+        setOtpError('Could not upload your profile picture. Please try again.')
+        return
+      }
       setBanner('Profile picture updated.')
     }
     setPendingAction(null)
@@ -158,24 +167,40 @@ function ProfileTab({ user, isCommittee }) {
     setTimeout(() => setBanner(''), 4000)
   }
 
-  function applyAvatar(dataUrl) {
-    localStorage.setItem(`odaa_avatar_${user.id}`, dataUrl)
-    setAvatar(dataUrl)
-    setBanner('Profile picture updated.')
-    setTimeout(() => setBanner(''), 4000)
+  async function uploadAvatar(file) {
+    const form = new FormData()
+    form.append('avatar', file)
+    setAvatarUploading(true)
+    try {
+      const { data } = await api.post(endpoints.myAvatar(), form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
+      patchUser({ avatarUrl: data.data.avatarUrl })
+      return true
+    } catch {
+      return false
+    } finally {
+      setAvatarUploading(false)
+    }
   }
 
-  function onPickFile(e) {
+  async function onPickFile(e) {
     const file = e.target.files?.[0]
     if (!file) return
-    const reader = new FileReader()
-    reader.onload = () => {
-      // Committee members can change their photo without email verification;
-      // it's only required for password and phone number changes.
-      if (isCommittee) applyAvatar(reader.result)
-      else beginVerifiedChange('avatar', { dataUrl: reader.result })
+    // Committee members can change their photo without email verification;
+    // it's only required for password and phone number changes.
+    if (isCommittee) {
+      const ok = await uploadAvatar(file)
+      if (ok) {
+        setBanner('Profile picture updated.')
+        setTimeout(() => setBanner(''), 4000)
+      } else {
+        notify('Could not upload your profile picture.')
+      }
+    } else {
+      beginVerifiedChange('avatar', { file })
     }
-    reader.readAsDataURL(file)
+    e.target.value = ''
   }
 
   function submitPhone(e) {
@@ -201,12 +226,13 @@ function ProfileTab({ user, isCommittee }) {
             )}
             <button
               onClick={() => fileRef.current?.click()}
-              className="absolute -bottom-1 -right-1 h-7 w-7 rounded-full bg-brand-gradient text-white flex items-center justify-center shadow-glow"
+              disabled={avatarUploading}
+              className="absolute -bottom-1 -right-1 h-7 w-7 rounded-full bg-brand-gradient text-white flex items-center justify-center shadow-glow disabled:opacity-60"
               title="Change profile picture"
             >
-              <Camera className="h-3.5 w-3.5" />
+              {avatarUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Camera className="h-3.5 w-3.5" />}
             </button>
-            <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={onPickFile} />
+            <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={onPickFile} disabled={avatarUploading} />
           </div>
           <div>
             <p className="font-semibold text-ink-800">{user?.name}</p>
@@ -335,17 +361,17 @@ function SecurityTab() {
 }
 
 // ===========================================================================
-// Notifications — mute individual categories in the bell. Backed by
-// localStorage today (there's no NotificationPreference table yet), but the
-// toggle genuinely filters what shows up — see lib/notificationPrefs.js and
-// AppLayout's notification bell.
+// Notifications — mute individual categories in the bell. Backed by the
+// user's database preferences (User.preferences.notifications — see
+// lib/notificationPrefs.js), so mutes follow the account to any device.
 // ===========================================================================
 function NotificationsTab({ user, roleKey }) {
-  const [prefs, setPrefs] = useState(() => getNotificationPrefs(user?.id))
+  const { patchUser } = useAuth()
+  const [prefs, setPrefs] = useState(() => getNotificationPrefs(user?.preferences))
   const categories = NOTIFICATION_CATEGORIES.filter((c) => c.roles.includes(roleKey))
 
   function toggle(id) {
-    const next = setNotificationPref(user?.id, id, !prefs[id])
+    const next = setNotificationPref(user, patchUser, id, !prefs[id])
     setPrefs(next)
   }
 
@@ -354,7 +380,7 @@ function NotificationsTab({ user, roleKey }) {
       <div className="card p-5">
         <h3 className="font-semibold text-ink-800 flex items-center gap-2 mb-1"><Bell className="h-4 w-4 text-brand-600" /> What shows up in your notification bell</h3>
         <p className="text-xs text-ink-400 mb-4">
-          Turn off any category you don’t want to see. Stored on this device — if you sign in elsewhere, defaults are on again there.
+          Turn off any category you don\u2019t want to see. Saved to your account, so it applies wherever you sign in.
         </p>
         <div className="divide-y divide-ink-100">
           {categories.map((c) => (
@@ -378,8 +404,8 @@ function NotificationsTab({ user, roleKey }) {
 }
 
 // ===========================================================================
-// Preferences — cosmetic/behavioural defaults that only affect how the app
-// looks and behaves for this person on this device.
+// Preferences — cosmetic/behavioural defaults for this person, saved to
+// their account so they apply on any device they sign into.
 // ===========================================================================
 const THEME_OPTIONS = [
   { id: 'light', label: 'Light', icon: Sun },
@@ -387,19 +413,26 @@ const THEME_OPTIONS = [
 ]
 
 function PreferencesTab() {
+  const { user, patchUser } = useAuth()
   const { theme, setTheme } = useTheme()
-  const [defaultExportFormat, setDefaultExportFormat] = useState(() => localStorage.getItem('odaa_default_export_format') || 'excel')
+  // Saved to the account's database preferences (see PATCH
+  // /users/me/preferences) instead of localStorage, so it applies on any
+  // device instead of resetting every time you sign in somewhere new.
+  const [defaultExportFormat, setDefaultExportFormat] = useState(() => user?.preferences?.defaultExportFormat || 'excel')
 
   function chooseExportFormat(v) {
     setDefaultExportFormat(v)
-    localStorage.setItem('odaa_default_export_format', v)
+    if (user) {
+      patchUser({ preferences: { ...(user.preferences || {}), defaultExportFormat: v } })
+      api.patch(endpoints.myPreferences(), { defaultExportFormat: v }).catch(() => {})
+    }
   }
 
   return (
     <div className="max-w-2xl space-y-5">
       <div className="card p-5">
         <h3 className="font-semibold text-ink-800 flex items-center gap-2 mb-1"><Palette className="h-4 w-4 text-brand-600" /> Appearance</h3>
-        <p className="text-xs text-ink-400 mb-4">Switch between light and dark. This is saved on this device — same as the sun/moon icon in the header.</p>
+        <p className="text-xs text-ink-400 mb-4">Switch between light and dark. Saved to your account, so it follows you to other devices too.</p>
         <div className="flex gap-2">
           {THEME_OPTIONS.map((o) => (
             <button
