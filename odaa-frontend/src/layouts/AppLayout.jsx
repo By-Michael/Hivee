@@ -653,7 +653,7 @@ function Brand({ collapsed = false, onToggle }) {
   // crossfades the mark into the expand icon in place - clicking it (in
   // either state) toggles the sidebar.
   const LogoMark = (
-    <span className="relative h-11 w-11 shrink-0 grid place-items-center rounded-full bg-white shadow-sm ring-1 ring-black/5">
+    <span className="brand-mark relative h-11 w-11 shrink-0 grid place-items-center rounded-full shadow-sm ring-1 ring-black/5">
       <img
         src="/hivee-h-mark.png"
         alt="Hivee"
@@ -679,7 +679,7 @@ function Brand({ collapsed = false, onToggle }) {
       ) : (
         LogoMark
       )}
-      <div className={`overflow-hidden flex items-center transition-all duration-300 ease-in-out ${collapsed ? 'max-w-0 opacity-0' : 'max-w-[70px] opacity-100 ml-1.5'}`}>
+      <div className={`overflow-hidden flex items-center transition-all duration-300 ease-in-out ${collapsed ? 'max-w-0 opacity-0' : 'max-w-[70px] opacity-100 ml-0.5'}`}>
         <p className="font-display font-bold text-xl text-ink-900 whitespace-nowrap mt-1">
           <span className="text-amber-500">i</span>vee
         </p>
@@ -689,9 +689,9 @@ function Brand({ collapsed = false, onToggle }) {
           type="button"
           onClick={onToggle}
           title="Collapse sidebar"
-          className={`ml-auto p-2 rounded-lg text-ink-400 hover:bg-ink-100 hover:text-ink-600 shrink-0 transition-all duration-300 ease-in-out ${collapsed ? 'opacity-0 max-w-0 pointer-events-none overflow-hidden p-0' : 'opacity-100 max-w-[40px]'}`}
+          className={`ml-auto p-2.5 rounded-lg text-ink-400 hover:bg-ink-100 hover:text-ink-600 shrink-0 transition-all duration-300 ease-in-out ${collapsed ? 'opacity-0 max-w-0 pointer-events-none overflow-hidden p-0' : 'opacity-100 max-w-[44px]'}`}
         >
-          <PanelLeftClose className="h-5 w-5" />
+          <PanelLeftClose className="h-6 w-6" />
         </button>
       )}
     </div>

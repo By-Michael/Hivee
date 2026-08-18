@@ -60,7 +60,7 @@ export default function ResetPassword() {
     <div className="min-h-screen flex items-center justify-center px-6 py-12 bg-white">
       <div className="w-full max-w-sm animate-fade-up">
         <div className="flex items-center gap-1 mb-8">
-          <span className="h-12 w-12 rounded-full bg-white shadow-sm ring-1 ring-black/5 grid place-items-center shrink-0">
+          <span className="brand-mark h-12 w-12 rounded-full shadow-sm ring-1 ring-black/5 grid place-items-center shrink-0">
             <img src="/hivee-h-mark.png" alt="Hivee" className="h-9 w-9 object-contain" />
           </span>
           <span className="font-display font-bold text-lg text-ink-900"><span className="text-amber-500">i</span>vee</span>

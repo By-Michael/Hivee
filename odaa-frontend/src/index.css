@@ -167,6 +167,16 @@
 /* Sidebar active link keeps the brand gradient, just softer edges */
 .dark .sidebar-link.active { box-shadow: 0 0 0 1px rgba(37,112,245,0.35), 0 12px 32px -8px rgba(37,112,245,0.4); }
 
+/* Brand mark (the H badge in the sidebar/topbar/auth screens) always
+   stays a solid white circle, in both themes — it isn't a generic
+   `.bg-white` surface, it's the backdrop the gold "H" is designed
+   against. Letting the generic dark-mode surface remap apply to it
+   (like every other `.bg-white` in the app) made the circle blend
+   straight into the dark sidebar background, so the logo looked like
+   it was floating with no visible badge behind it. */
+.brand-mark { background-color: #ffffff; }
+.dark .brand-mark { background-color: #ffffff; }
+
 /* =============================================================
    LOGIN PAGE — always the bright default, never affected by `.dark`
    ============================================================= */
