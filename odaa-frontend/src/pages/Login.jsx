@@ -40,7 +40,7 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-screen grid lg:grid-cols-2 login-page">
+    <div className="min-h-screen grid lg:grid-cols-2 login-page bg-[#f4f6fb]">
       {/* Left - brand panel */}
       <div
         className="hidden lg:flex flex-col justify-between relative overflow-hidden px-12 py-10 text-white"
@@ -51,18 +51,29 @@ export default function Login() {
       >
         <HexHive />
         <div
-          className="absolute inset-0"
+          className="absolute inset-0 z-0"
           style={{
             background:
               'linear-gradient(to right, rgba(6,20,58,0.55) 0%, rgba(8,28,77,0.30) 45%, rgba(8,28,77,0.10) 75%)',
           }}
         />
-        <div className="relative z-10 flex items-center gap-1">
-          <span className="brand-mark h-14 w-14 rounded-full shadow-sm grid place-items-center shrink-0">
-            <img src="/hivee-h-mark.png" alt="Hivee" className="h-10 w-10 object-contain" />
+        <div className="relative z-10 flex items-center gap-2">
+          {/* Updated Logo: Golden H, no background, bold */}
+          <span
+            className="shrink-0"
+            style={{
+              color: '#FFD700',
+              fontWeight: 900,
+              fontSize: '44px',
+              lineHeight: 1,
+              textShadow: '0 2px 6px rgba(0,0,0,0.45)',
+              background: 'transparent'
+            }}
+          >
+            H
           </span>
           <span
-            className="font-display font-extrabold text-xl"
+            className="font-display font-extrabold text-2xl"
             style={{ textShadow: '0 2px 10px rgba(0,0,0,0.35)' }}
           >
             <span className="text-amber-300">i</span>vee
@@ -97,11 +108,22 @@ export default function Login() {
       {/* Right - form */}
       <div className="flex items-center justify-center px-6 py-12 bg-white">
         <div className="w-full max-w-sm animate-fade-up">
-          <div className="lg:hidden flex items-center gap-1 mb-8">
-            <span className="h-12 w-12 rounded-full bg-white shadow-sm ring-1 ring-black/5 grid place-items-center shrink-0">
-              <img src="/hivee-h-mark.png" alt="Hivee" className="h-9 w-9 object-contain" />
+          <div className="lg:hidden flex items-center gap-2 mb-8">
+            {/* Updated Logo for mobile: Golden H, no background, bold */}
+            <span
+              className="shrink-0"
+              style={{
+                color: '#FFD700',
+                fontWeight: 900,
+                fontSize: '36px',
+                lineHeight: 1,
+                textShadow: '0 1px 4px rgba(0,0,0,0.2)',
+                background: 'transparent'
+              }}
+            >
+              H
             </span>
-            <span className="font-display font-bold text-lg text-ink-900"><span className="text-amber-500">i</span>vee</span>
+            <span className="font-display font-bold text-xl text-ink-900"><span className="text-amber-500">i</span>vee</span>
           </div>
 
           <h2 className="text-2xl font-bold text-ink-900">Welcome back</h2>
