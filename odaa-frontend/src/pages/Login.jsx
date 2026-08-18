@@ -113,26 +113,39 @@ export default function Login() {
               'linear-gradient(to right, rgba(6,20,58,0.55) 0%, rgba(8,28,77,0.30) 45%, rgba(8,28,77,0.10) 75%)',
           }}
         />
-        {/* Brand */}
+        
+        {/* Brand Logo Area */}
         <div className="relative z-10 flex items-center gap-2">
-          <span
-            className="shrink-0"
-            style={{
-              color: '#FFD700',
-              fontWeight: 900,
-              fontSize: '44px',
-              lineHeight: 1,
-              textShadow: '0 2px 6px rgba(0,0,0,0.45)',
-              background: 'transparent',
-            }}
-          >
-            H
-          </span>
-          <span
-            className="font-display font-extrabold text-2xl"
-            style={{ textShadow: '0 2px 10px rgba(0,0,0,0.35)' }}
-          >
-            <span className="text-amber-300">i</span>vee
+          {/* Custom SVG Golden H Logo */}
+          <svg width="44" height="44" viewBox="0 0 100 100" className="shrink-0" style={{ filter: 'drop-shadow(0 2px 6px rgba(0,0,0,0.45))' }}>
+            <defs>
+              <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#FCE79D" />
+                <stop offset="30%" stop-color="#D4AF37" />
+                <stop offset="70%" stop-color="#B8860B" />
+                <stop offset="100%" stop-color="#8B6914" />
+              </linearGradient>
+              <linearGradient id="goldLight" x1="0%" y1="0%" x2="0%" y2="100%">
+                <stop offset="0%" stop-color="#FFFFFF" />
+                <stop offset="40%" stop-color="#E3C25B" />
+                <stop offset="100%" stop-color="#C59B27" />
+              </linearGradient>
+              <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+                <feDropShadow dx="0" dy="3" stdDeviation="3" flood-color="rgba(0,0,0,0.4)"/>
+              </filter>
+            </defs>
+            {/* Left Pillar */}
+            <rect x="22" y="15" width="14" height="70" rx="7" fill="url(#goldGrad)" filter="url(#shadow)"/>
+            {/* Right Pillar */}
+            <rect x="64" y="15" width="14" height="70" rx="7" fill="url(#goldGrad)" filter="url(#shadow)"/>
+            {/* Middle Ribbon */}
+            <path d="M 28,35 Q 50,15 70,35 Q 50,55 28,75 Z" fill="url(#goldLight)" filter="url(#shadow)"/>
+            <path d="M 28,35 Q 50,15 70,35 Q 50,55 28,75 Z" fill="none" stroke="#AF8C2A" stroke-width="1.5" opacity="0.5"/>
+          </svg>
+
+          {/* "ivee" Text */}
+          <span className="font-display font-extrabold text-2xl" style={{ textShadow: '0 2px 10px rgba(0,0,0,0.35)' }}>
+            <span className="text-[#E3C25B]">i</span><span className="text-white">vee</span>
           </span>
         </div>
 
@@ -169,21 +182,28 @@ export default function Login() {
         <div className="w-full max-w-sm">
           {/* Mobile brand */}
           <div className="lg:hidden flex items-center gap-2 mb-8">
-            <span
-              className="shrink-0"
-              style={{
-                color: '#FFD700',
-                fontWeight: 900,
-                fontSize: '36px',
-                lineHeight: 1,
-                textShadow: '0 1px 4px rgba(0,0,0,0.2)',
-                background: 'transparent',
-              }}
-            >
-              H
-            </span>
+            {/* Custom SVG Golden H Logo (Scaled down for Mobile) */}
+            <svg width="36" height="36" viewBox="0 0 100 100" className="shrink-0" style={{ filter: 'drop-shadow(0 1px 4px rgba(0,0,0,0.2))' }}>
+              <defs>
+                <linearGradient id="goldGradMobile" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#FCE79D" />
+                  <stop offset="30%" stop-color="#D4AF37" />
+                  <stop offset="70%" stop-color="#B8860B" />
+                  <stop offset="100%" stop-color="#8B6914" />
+                </linearGradient>
+                <linearGradient id="goldLightMobile" x1="0%" y1="0%" x2="0%" y2="100%">
+                  <stop offset="0%" stop-color="#FFFFFF" />
+                  <stop offset="40%" stop-color="#E3C25B" />
+                  <stop offset="100%" stop-color="#C59B27" />
+                </linearGradient>
+              </defs>
+              <rect x="22" y="15" width="14" height="70" rx="7" fill="url(#goldGradMobile)" />
+              <rect x="64" y="15" width="14" height="70" rx="7" fill="url(#goldGradMobile)" />
+              <path d="M 28,35 Q 50,15 70,35 Q 50,55 28,75 Z" fill="url(#goldLightMobile)" />
+            </svg>
+
             <span className="font-display font-bold text-xl text-ink-900">
-              <span className="text-amber-500">i</span>vee
+              <span className="text-[#E3C25B]">i</span><span className="text-ink-900">vee</span>
             </span>
           </div>
 
