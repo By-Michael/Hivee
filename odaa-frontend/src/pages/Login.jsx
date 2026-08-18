@@ -42,7 +42,13 @@ export default function Login() {
   return (
     <div className="min-h-screen grid lg:grid-cols-2 login-page">
       {/* Left - brand panel */}
-      <div className="hidden lg:flex flex-col justify-between bg-brand-gradient relative overflow-hidden px-12 py-10 text-white">
+      <div
+        className="hidden lg:flex flex-col justify-between relative overflow-hidden px-12 py-10 text-white"
+        style={{
+          background:
+            'linear-gradient(135deg, #0b2b6b 0%, #1554d6 42%, #2570f5 75%, #4f94ff 100%)',
+        }}
+      >
         <HexHive />
         <div
           className="absolute inset-0"
@@ -112,14 +118,14 @@ export default function Login() {
                 <button
                   type="button"
                   onClick={() => setMethod('email')}
-                  className={`relative z-10 flex-1 flex items-center justify-center gap-1.5 rounded-lg py-1.5 text-sm font-medium transition-colors duration-200 ${method === 'email' ? 'text-brand-700' : 'text-ink-400 hover:text-ink-600'}`}
+                  className={`relative z-10 flex-1 flex items-center justify-center gap-1.5 rounded-lg py-1.5 text-sm font-medium transition-colors duration-200 ${method === 'email' ? 'text-brand-600' : 'text-ink-400 hover:text-ink-600'}`}
                 >
                   <Mail className="h-3.5 w-3.5" /> Email
                 </button>
                 <button
                   type="button"
                   onClick={() => setMethod('phone')}
-                  className={`relative z-10 flex-1 flex items-center justify-center gap-1.5 rounded-lg py-1.5 text-sm font-medium transition-colors duration-200 ${method === 'phone' ? 'text-brand-700' : 'text-ink-400 hover:text-ink-600'}`}
+                  className={`relative z-10 flex-1 flex items-center justify-center gap-1.5 rounded-lg py-1.5 text-sm font-medium transition-colors duration-200 ${method === 'phone' ? 'text-brand-600' : 'text-ink-400 hover:text-ink-600'}`}
                 >
                   <Phone className="h-3.5 w-3.5" /> Phone
                 </button>
