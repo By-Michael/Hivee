@@ -133,6 +133,87 @@ const listResidents = catchAsync(async (req, res) => {
   });
 });
 
+// ADMIN: "who hasn't paid" — residents with no non-rejected payment for a
+// given fee within a given period (year/month, either optional — omitting
+// both means "ever"). Used by the Reports payments table's non-payers
+// toggle so the committee can pull this list (and export it) the same
+// server-side-filtered/paginated way as every other Reports table, instead
+// of the old approach of paging in every resident + every payment and
+// cross-referencing them in the browser.
+const listNonPayers = catchAsync(async (req, res) => {
+  const { feeId, year, month, search, includeInactive } = req.query;
+  if (!feeId) throw new AppError('feeId is required', 422);
+
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(1000, Math.max(1, parseInt(req.query.limit, 10) || 300));
+
+  // Period window: if a month is given, that calendar month of `year` (or
+  // any year if year is 'all'/omitted); if only a year is given, that
+  // whole year; if neither, "ever" — any non-rejected payment for this
+  // fee at all counts as having paid.
+  let paidAtFilter;
+  if (year && year !== 'all') {
+    const y = Number(year);
+    if (month !== undefined && month !== '' && month !== 'all') {
+      const m = Number(month); // 0-indexed, matching the frontend's Date#getMonth()
+      paidAtFilter = { gte: new Date(y, m, 1), lt: new Date(y, m + 1, 1) };
+    } else {
+      paidAtFilter = { gte: new Date(y, 0, 1), lt: new Date(y + 1, 0, 1) };
+    }
+  }
+
+  const filters = [
+    { user: { communityId: req.communityId } },
+    // A resident "hasn't paid" if they have NO matching (fee + period +
+    // non-rejected) payment — expressed as a negated `some`, entirely in
+    // SQL, so this scales the same way listPayments/listExpenses do.
+    {
+      NOT: {
+        payments: {
+          some: {
+            feeId,
+            status: { not: 'REJECTED' },
+            ...(paidAtFilter ? { paidAt: paidAtFilter } : {}),
+          },
+        },
+      },
+    },
+  ];
+  if (!(includeInactive === 'true' || includeInactive === '1')) {
+    filters.push({ status: 'ACTIVE' });
+  }
+  if (search) {
+    filters.push({
+      OR: [
+        { user: { fullName: { contains: search, mode: 'insensitive' } } },
+        { unitNumber: { contains: search, mode: 'insensitive' } },
+        { phone: { contains: search, mode: 'insensitive' } },
+      ],
+    });
+  }
+  const where = { AND: filters };
+
+  const fee = await prisma.fee.findFirst({ where: { id: feeId, communityId: req.communityId } });
+  if (!fee) throw new AppError('Fee not found in this community', 404);
+
+  const [residents, total] = await Promise.all([
+    prisma.resident.findMany({
+      where,
+      include: { user: { select: { id: true, fullName: true, email: true } } },
+      orderBy: { user: { fullName: 'asc' } },
+      skip: (page - 1) * limit,
+      take: limit,
+    }),
+    prisma.resident.count({ where }),
+  ]);
+
+  res.json({
+    success: true,
+    data: residents,
+    meta: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)), feeName: fee.name, feeAmount: fee.amount },
+  });
+});
+
 const getResident = catchAsync(async (req, res) => {
   const resident = await prisma.resident.findFirst({
     where: { id: req.params.id, user: { communityId: req.communityId } },
@@ -453,6 +534,7 @@ const exportResidentPayments = catchAsync(async (req, res) => {
 module.exports = {
   createResident,
   listResidents,
+  listNonPayers,
   getResident,
   getResidentSummary,
   updateResident,

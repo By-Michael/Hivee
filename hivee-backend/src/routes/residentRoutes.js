@@ -21,6 +21,7 @@ router.patch('/me', authorize('RESIDENT'), ctrl.updateMyResidentProfile);
 router.post('/', authorize('ADMIN'), validate(createResidentSchema), ctrl.createResident);
 router.get('/', authorize('ADMIN'), ctrl.listResidents);
 router.get('/meta/common-inactive-reasons', authorize('ADMIN'), ctrl.listCommonInactiveReasons);
+router.get('/non-payers', authorize('ADMIN'), ctrl.listNonPayers);
 router.get('/:id', authorize('ADMIN'), validate(idParamSchema), ctrl.getResident);
 router.get('/:id/summary', authorize('ADMIN'), validate(idParamSchema), ctrl.getResidentSummary);
 router.get('/:id/export', authorize('ADMIN'), validate(idParamSchema), ctrl.exportResidentPayments);

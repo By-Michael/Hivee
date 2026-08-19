@@ -36,9 +36,15 @@ const PAYMENT_METHOD_TO_API = {
 // cross-check, or above the auto-verify threshold) flagged it for an admin
 // to confirm — distinct from a plain PENDING (no bank match attempted yet).
 const PAYMENT_STATUS_TO_UI = { PENDING: 'pending', PENDING_REVIEW: 'pending_review', VERIFIED: 'paid', REJECTED: 'rejected' }
+// Reverse of the above — used when sending a UI status filter (e.g. from
+// the Reports page's payment-status dropdown) back to the API as a query
+// param, since the server only knows the PaymentStatus enum values.
+export const PAYMENT_STATUS_TO_API = { pending: 'PENDING', pending_review: 'PENDING_REVIEW', paid: 'VERIFIED', rejected: 'REJECTED' }
+export { PAYMENT_METHOD_TO_API, PAYMENT_STATUS_TO_UI }
 
 const PROJECT_STATUS_TO_UI = { PLANNED: 'planned', ONGOING: 'in-progress', COMPLETED: 'completed', CANCELLED: 'cancelled' }
 const PROJECT_STATUS_TO_API = { planned: 'PLANNED', 'in-progress': 'ONGOING', completed: 'COMPLETED', cancelled: 'CANCELLED' }
+export { PROJECT_STATUS_TO_API, PROJECT_STATUS_TO_UI }
 
 // Broadened from the original 4 to cover more of what communities actually
 // collect for — still a suggested list (see Funds.jsx: the select allows

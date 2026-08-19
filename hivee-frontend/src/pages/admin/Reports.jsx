@@ -13,8 +13,10 @@ import {
 } from '../../components/ui'
 import { exportToExcel, exportToPdf, exportRichPdf, captureChartImage } from '../../lib/exportUtils'
 import api, { endpoints } from '../../lib/api'
+import { PAYMENT_METHOD_TO_API, PAYMENT_STATUS_TO_API, PAYMENT_STATUS_TO_UI, PROJECT_STATUS_TO_API, PROJECT_STATUS_TO_UI } from '../../lib/adapters'
 
 const PAYMENT_METHODS = ['CASH', 'BANK_TRANSFER', 'MOBILE_MONEY', 'CARD', 'OTHER']
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
 function methodLabel(m) { return m === 'OTHER' ? 'Other' : m.replace('_', ' ').replace(/\b\w/g, (c) => c.toUpperCase()) }
 
 // Distinct, purposeful palettes so each chart signals something different at a glance.
@@ -107,11 +109,140 @@ export default function Reports() {
   const [payStatus, setPayStatus] = useState('all')
   const [payMethod, setPayMethod] = useState('all')
   const [payPage, setPayPage] = useState(1)
+  // "Who hasn't paid" — same idea as the non-payers toggle on the
+  // Payments page, surfaced here too so the committee can filter/export
+  // a broader picture: not just who *did* pay, but who's missing a
+  // payment for a given fee/period. Requires a specific fee (there's no
+  // meaningful "hasn't paid anything" query) plus an optional year/month
+  // window; defaults to active residents only.
+  const [payNonPayersOnly, setPayNonPayersOnly] = useState(false)
+  const [payYear, setPayYear] = useState('all')
+  const [payMonth, setPayMonth] = useState('all')
+  const [payIncludeInactive, setPayIncludeInactive] = useState(false)
   const PAYMENTS_PAGE_SIZE = 8
   const payActiveCount = [
     !!paySearch, payFee !== 'all', payStatus !== 'all', payMethod !== 'all', !!(payFrom || payTo),
+    payNonPayersOnly, payYear !== 'all', payMonth !== 'all', payIncludeInactive,
   ].filter(Boolean).length
-  const clearPayFilters = () => { setPaySearch(''); setPayFee('all'); setPayStatus('all'); setPayMethod('all'); setPayFrom(''); setPayTo('') }
+  const clearPayFilters = () => {
+    setPaySearch(''); setPayFee('all'); setPayStatus('all'); setPayMethod('all'); setPayFrom(''); setPayTo('')
+    setPayNonPayersOnly(false); setPayYear('all'); setPayMonth('all'); setPayIncludeInactive(false)
+  }
+  const payYearOptions = useMemo(() => {
+    const years = new Set()
+    const now = new Date().getFullYear()
+    for (let y = now; y >= now - 6; y--) years.add(y)
+    for (const p of payments) { if (p.date) years.add(new Date(p.date).getFullYear()) }
+    return Array.from(years).sort((a, b) => b - a)
+  }, [payments])
+
+  // ---- payments table: server-side filtered + paginated (see backend
+  // listPayments) instead of downloading the full payments table and
+  // filtering with Array.filter() in the browser. Independent of
+  // DataContext/dataFullyLoaded entirely — this table can show and page
+  // through results as soon as its own (small, filtered) request comes
+  // back, regardless of whether the full background load has finished.
+  const [payItems, setPayItems] = useState([])
+  const [payMeta, setPayMeta] = useState({ total: 0, totalPages: 1 })
+  const [payLoading, setPayLoading] = useState(true)
+
+  // ---- non-payers table: separate server-side filtered + paginated
+  // request against the dedicated /residents/non-payers endpoint (see
+  // backend listNonPayers) — kept as its own state rather than reusing
+  // payItems, since the row shape (a resident with no matching payment)
+  // is completely different from a payment row.
+  const [payNPItems, setPayNPItems] = useState([])
+  const [payNPMeta, setPayNPMeta] = useState({ total: 0, totalPages: 1 })
+  const [payNPLoading, setPayNPLoading] = useState(false)
+
+  useEffect(() => {
+    if (!payNonPayersOnly) return
+    if (payFee === 'all') { setPayNPItems([]); setPayNPMeta({ total: 0, totalPages: 1 }); return }
+    let cancelled = false
+    const timer = setTimeout(async () => {
+      setPayNPLoading(true)
+      try {
+        const { data } = await api.get(endpoints.residentsNonPayers(), {
+          params: {
+            page: payPage,
+            limit: PAYMENTS_PAGE_SIZE,
+            feeId: payFee,
+            year: payYear !== 'all' ? payYear : undefined,
+            month: payMonth !== 'all' ? payMonth : undefined,
+            search: paySearch || undefined,
+            includeInactive: payIncludeInactive ? 'true' : undefined,
+          },
+        })
+        if (cancelled) return
+        setPayNPItems((data.data || []).map((r) => ({
+          id: r.id,
+          name: r.user?.fullName || '—',
+          unit: r.unitNumber || '',
+          phone: r.phone || '',
+          email: r.user?.email || '',
+          status: r.status,
+        })))
+        setPayNPMeta(data.meta || { total: 0, totalPages: 1 })
+      } catch (err) {
+        console.error('[Reports] Failed to load non-payers:', err?.response?.data || err.message)
+      } finally {
+        if (!cancelled) setPayNPLoading(false)
+      }
+    }, 300)
+    return () => { cancelled = true; clearTimeout(timer) }
+  }, [payNonPayersOnly, payPage, payFee, payYear, payMonth, paySearch, payIncludeInactive])
+
+  useEffect(() => {
+    if (payNonPayersOnly) return
+    let cancelled = false
+    const timer = setTimeout(async () => {
+      setPayLoading(true)
+      try {
+        const { data } = await api.get(endpoints.payments(), {
+          params: {
+            page: payPage,
+            limit: PAYMENTS_PAGE_SIZE,
+            status: payStatus !== 'all' ? PAYMENT_STATUS_TO_API[payStatus] : undefined,
+            method: payMethod !== 'all' ? PAYMENT_METHOD_TO_API[payMethod] : undefined,
+            feeId: payFee !== 'all' ? payFee : undefined,
+            from: payFrom || undefined,
+            to: payTo || undefined,
+            search: paySearch || undefined,
+          },
+        })
+        if (cancelled) return
+        setPayItems((data.data || []).map((p) => ({
+          id: p.id,
+          residentName: p.resident?.user?.fullName || '—',
+          unitNumber: p.resident?.unitNumber || '',
+          feeName: p.fee?.name || '—',
+          amount: Number(p.amount),
+          method: methodLabel(p.paymentMethod),
+          status: PAYMENT_STATUS_TO_UI[p.status] || 'pending',
+          date: p.paidAt,
+        })))
+        setPayMeta(data.meta || { total: 0, totalPages: 1 })
+      } catch (err) {
+        console.error('[Reports] Failed to load payments:', err?.response?.data || err.message)
+      } finally {
+        if (!cancelled) setPayLoading(false)
+      }
+    }, 300) // debounce so typing in the search box doesn't fire a request per keystroke
+    return () => { cancelled = true; clearTimeout(timer) }
+  }, [payNonPayersOnly, payPage, payStatus, payMethod, payFee, payFrom, payTo, paySearch])
+
+  // ---- expenses table: server-side filtered + paginated (see backend
+  // listExpenses), same pattern as payments above — independent of
+  // dataFullyLoaded, shows/pages as soon as its own small request returns.
+  const [expItems, setExpItems] = useState([])
+  const [expMeta, setExpMeta] = useState({ total: 0, totalPages: 1 })
+  const [expLoading, setExpLoading] = useState(true)
+
+  // ---- projects table: server-side filtered + paginated (see backend
+  // listProjects), same pattern as payments/expenses above.
+  const [projItems, setProjItems] = useState([])
+  const [projMeta, setProjMeta] = useState({ total: 0, totalPages: 1 })
+  const [projLoading, setProjLoading] = useState(true)
 
   // ---- expense filters ----
   const [expSearch, setExpSearch] = useState('')
@@ -128,6 +259,45 @@ export default function Reports() {
   ].filter(Boolean).length
   const clearExpFilters = () => { setExpSearch(''); setExpCategory('all'); setExpProject('all'); setExpFrom(''); setExpTo(''); setExpMinAmount(''); setExpMaxAmount('') }
 
+  useEffect(() => {
+    let cancelled = false
+    const timer = setTimeout(async () => {
+      setExpLoading(true)
+      try {
+        const { data } = await api.get(endpoints.expenses(), {
+          params: {
+            page: expPage,
+            limit: EXPENSES_PAGE_SIZE,
+            category: expCategory !== 'all' ? expCategory : undefined,
+            projectId: expProject !== 'all' ? expProject : undefined,
+            from: expFrom || undefined,
+            to: expTo || undefined,
+            minAmount: expMinAmount || undefined,
+            maxAmount: expMaxAmount || undefined,
+            search: expSearch || undefined,
+          },
+        })
+        if (cancelled) return
+        setExpItems((data.data || []).map((e) => ({
+          id: e.id,
+          description: e.description,
+          vendor: e.vendor,
+          category: e.category,
+          projectId: e.projectId,
+          projectName: e.project?.name || '—',
+          amount: Number(e.amount),
+          date: e.spentAt,
+        })))
+        setExpMeta(data.meta || { total: 0, totalPages: 1 })
+      } catch (err) {
+        console.error('[Reports] Failed to load expenses:', err?.response?.data || err.message)
+      } finally {
+        if (!cancelled) setExpLoading(false)
+      }
+    }, 300)
+    return () => { cancelled = true; clearTimeout(timer) }
+  }, [expPage, expCategory, expProject, expFrom, expTo, expMinAmount, expMaxAmount, expSearch])
+
   // ---- project filters ----
   const [projSearch, setProjSearch] = useState('')
   const [projStatus, setProjStatus] = useState('all')
@@ -140,6 +310,43 @@ export default function Reports() {
     !!projSearch, projStatus !== 'all', projFund !== 'all', !!(projStartFrom || projStartTo),
   ].filter(Boolean).length
   const clearProjFilters = () => { setProjSearch(''); setProjStatus('all'); setProjFund('all'); setProjStartFrom(''); setProjStartTo('') }
+
+  useEffect(() => {
+    let cancelled = false
+    const timer = setTimeout(async () => {
+      setProjLoading(true)
+      try {
+        const { data } = await api.get(endpoints.projects(), {
+          params: {
+            page: projPage,
+            limit: PROJECTS_PAGE_SIZE,
+            status: projStatus !== 'all' ? PROJECT_STATUS_TO_API[projStatus] : undefined,
+            fundId: projFund !== 'all' ? projFund : undefined,
+            from: projStartFrom || undefined,
+            to: projStartTo || undefined,
+            search: projSearch || undefined,
+          },
+        })
+        if (cancelled) return
+        setProjItems((data.data || []).map((p) => ({
+          id: p.id,
+          name: p.name,
+          fundId: p.fundId,
+          fundName: p.fund?.name || '—',
+          budget: Number(p.budget),
+          spent: Number(p.spent || 0),
+          status: PROJECT_STATUS_TO_UI[p.status] || 'planned',
+          startDate: p.startDate,
+        })))
+        setProjMeta(data.meta || { total: 0, totalPages: 1 })
+      } catch (err) {
+        console.error('[Reports] Failed to load projects:', err?.response?.data || err.message)
+      } finally {
+        if (!cancelled) setProjLoading(false)
+      }
+    }, 300)
+    return () => { cancelled = true; clearTimeout(timer) }
+  }, [projPage, projStatus, projFund, projStartFrom, projStartTo, projSearch])
 
   // ---- chart DOM refs, used to screenshot charts into rich PDF exports ----
   const byFeeChartRef = useRef(null)
@@ -175,12 +382,13 @@ export default function Reports() {
   const residentPageCount = Math.max(1, Math.ceil(filteredResidents.length / RESIDENTS_PAGE_SIZE))
   const pagedResidents = filteredResidents.slice((residentPage - 1) * RESIDENTS_PAGE_SIZE, residentPage * RESIDENTS_PAGE_SIZE)
 
-  const payPageCount = Math.max(1, Math.ceil(filteredPayments.length / PAYMENTS_PAGE_SIZE))
-  const pagedPayments = filteredPayments.slice((payPage - 1) * PAYMENTS_PAGE_SIZE, payPage * PAYMENTS_PAGE_SIZE)
+  // (payPageCount/pagedPayments removed — the on-screen table now uses
+  // the server-paginated payItems/payMeta state defined below; filteredPayments
+  // above is still used, unpaginated, by the Excel/PDF export functions.)
 
   // Reset to page 1 whenever the underlying filter criteria change.
   useEffect(() => { setResidentPage(1) }, [residentSearch, residentStatus, residentJoinedFrom, residentJoinedTo])
-  useEffect(() => { setPayPage(1) }, [paySearch, payFee, payStatus, payMethod, payFrom, payTo])
+  useEffect(() => { setPayPage(1) }, [paySearch, payFee, payStatus, payMethod, payFrom, payTo, payNonPayersOnly, payYear, payMonth, payIncludeInactive])
 
   const filteredExpenses = useMemo(() => expenses.filter((e) => {
     if (expCategory !== 'all' && e.category !== expCategory) return false
@@ -203,11 +411,10 @@ export default function Reports() {
     return true
   }), [projects, projStatus, projFund, projStartFrom, projStartTo, projSearch])
 
-  const expPageCount = Math.max(1, Math.ceil(filteredExpenses.length / EXPENSES_PAGE_SIZE))
-  const pagedExpenses = filteredExpenses.slice((expPage - 1) * EXPENSES_PAGE_SIZE, expPage * EXPENSES_PAGE_SIZE)
-
-  const projPageCount = Math.max(1, Math.ceil(filteredProjects.length / PROJECTS_PAGE_SIZE))
-  const pagedProjects = filteredProjects.slice((projPage - 1) * PROJECTS_PAGE_SIZE, projPage * PROJECTS_PAGE_SIZE)
+  // (expPageCount/pagedExpenses and projPageCount/pagedProjects removed —
+  // the on-screen tables now use the server-paginated expItems/expMeta and
+  // projItems/projMeta state defined above; filteredExpenses/filteredProjects
+  // above are still used, unpaginated, by the Excel/PDF export functions.)
 
   useEffect(() => { setExpPage(1) }, [expCategory, expProject, expFrom, expTo, expMinAmount, expMaxAmount, expSearch])
   useEffect(() => { setProjPage(1) }, [projStatus, projFund, projStartFrom, projStartTo, projSearch])
@@ -303,6 +510,64 @@ export default function Reports() {
   const exportPaymentsPdf = () => exportToPdf({
     filename: 'hivee-collections-report', title: 'Collections Report', subtitle: 'Verified & pending resident payments', meta: paymentMeta, columns: paymentColumns, rows: filteredPayments,
   })
+
+  // ---- non-payers export: pulls every matching page from the same
+  // /residents/non-payers endpoint the on-screen table uses (not just
+  // the current page), so the export is the complete list, not a
+  // snapshot of whatever happened to be on screen.
+  async function fetchAllNonPayers() {
+    const limit = 1000
+    let page = 1
+    let all = []
+    for (let i = 0; i < 50; i++) {
+      const { data } = await api.get(endpoints.residentsNonPayers(), {
+        params: {
+          page, limit, feeId: payFee, year: payYear !== 'all' ? payYear : undefined,
+          month: payMonth !== 'all' ? payMonth : undefined, search: paySearch || undefined,
+          includeInactive: payIncludeInactive ? 'true' : undefined,
+        },
+      })
+      all = all.concat((data.data || []).map((r) => ({
+        id: r.id, name: r.user?.fullName || '—', unit: r.unitNumber || '', phone: r.phone || '',
+        email: r.user?.email || '', status: r.status,
+      })))
+      if (!data.meta || page >= data.meta.totalPages) break
+      page += 1
+    }
+    return all
+  }
+  const nonPayersColumns = [
+    { header: 'Resident', key: 'name', width: 24 },
+    { header: 'Unit', key: 'unit', width: 12 },
+    { header: 'Phone', key: 'phone', width: 16 },
+    { header: 'Email', key: 'email', width: 26 },
+    { header: 'Status', key: 'status', width: 12 },
+  ]
+  const nonPayersPeriodLabel = () => {
+    if (payYear === 'all') return 'ever'
+    if (payMonth === 'all') return payYear
+    return `${MONTH_NAMES[Number(payMonth)]} ${payYear}`
+  }
+  const nonPayersMeta = () => [
+    { label: 'Report', value: 'Non-payers' },
+    { label: 'Generated', value: new Date().toLocaleString('en-GB') },
+    { label: 'Fee', value: fees.find((f) => f.id === payFee)?.name || payFee },
+    { label: 'Period', value: nonPayersPeriodLabel() },
+    { label: 'Includes inactive residents', value: payIncludeInactive ? 'yes' : 'no' },
+    { label: 'Filter · Search', value: paySearch || 'none' },
+  ]
+  const exportNonPayersExcel = async () => {
+    const rows = await fetchAllNonPayers()
+    exportToExcel({ filename: 'hivee-non-payers-report', sheetName: 'Non-payers', meta: nonPayersMeta(), columns: nonPayersColumns, rows })
+  }
+  const exportNonPayersPdf = async () => {
+    const rows = await fetchAllNonPayers()
+    exportToPdf({
+      filename: 'hivee-non-payers-report', title: 'Non-payers Report',
+      subtitle: `Residents with no payment recorded for "${fees.find((f) => f.id === payFee)?.name || payFee}" (${nonPayersPeriodLabel()})`,
+      meta: nonPayersMeta(), columns: nonPayersColumns, rows,
+    })
+  }
 
   const expenseColumns = [
     { header: 'Description', key: 'description', width: 28 },
@@ -668,13 +933,160 @@ export default function Reports() {
         </div>
       </div>
 
+      {/* ---------------- Payments report ----------------
+          Server-side filtered + paginated (see the payLoading effect
+          above) — independent of dataFullyLoaded, so this table shows
+          and pages through results as soon as its own small request
+          comes back, without waiting for the rest of the dataset.
+          Also doubles as "who hasn't paid": toggling Non-payers only
+          switches the whole section (filters, table, export) over to
+          the /residents/non-payers endpoint instead of /payments, so
+          the committee can pull and export either side of the picture —
+          who paid, or who's missing a payment — from the same panel. */}
+      <SectionCard
+        icon={Wallet}
+        title="Collections / payments"
+        subtitle={
+          payNonPayersOnly
+            ? (payFee === 'all'
+              ? 'Pick a fee below to see who hasn\'t paid it'
+              : `${payNPMeta.total} resident${payNPMeta.total === 1 ? '' : 's'} haven't paid "${fees.find((f) => f.id === payFee)?.name || ''}" (${nonPayersPeriodLabel()})`)
+            : `${payMeta.total} payment${payMeta.total === 1 ? '' : 's'} match the current filters`
+        }
+        exportActions={
+          payNonPayersOnly
+            ? [
+              { label: 'Excel', icon: FileSpreadsheet, onClick: runExport(exportNonPayersExcel) },
+              { label: 'PDF', icon: FileText, onClick: runExport(exportNonPayersPdf) },
+            ]
+            : [
+              { label: 'Excel', icon: FileSpreadsheet, onClick: runExport(exportPaymentsExcel) },
+              { label: 'PDF', icon: FileText, onClick: runExport(exportPaymentsPdf) },
+            ]
+        }
+      >
+        <div className="flex flex-wrap items-center gap-3 mb-4">
+          <button
+            type="button"
+            onClick={() => setPayNonPayersOnly((v) => !v)}
+            className={`btn-secondary text-xs ${payNonPayersOnly ? '!bg-brand-600 !text-white !border-brand-600' : ''}`}
+            title="Switch between payments made and residents who haven't paid"
+          >
+            {payNonPayersOnly ? 'Showing: non-payers' : 'Show non-payers instead'}
+          </button>
+          <FilterPopover active={payActiveCount} onClear={clearPayFilters}>
+            <FilterGrid>
+              <FilterField label="Search" full>
+                <FilterTextInput
+                  placeholder={payNonPayersOnly ? 'Search resident, unit, phone…' : 'Search resident, unit, reference…'}
+                  value={paySearch}
+                  onChange={setPaySearch}
+                />
+              </FilterField>
+              <FilterField label={payNonPayersOnly ? 'Fee (required)' : 'Fee'}>
+                <FilterSelectInput value={payFee} onChange={setPayFee} options={[['all', 'All fees'], ...fees.map((f) => [f.id, f.name])]} />
+              </FilterField>
+              {payNonPayersOnly ? (
+                <>
+                  <FilterField label="Year">
+                    <FilterSelectInput value={payYear} onChange={setPayYear} options={[['all', 'Any year'], ...payYearOptions.map((y) => [String(y), String(y)])]} />
+                  </FilterField>
+                  <FilterField label="Month">
+                    <FilterSelectInput value={payMonth} onChange={setPayMonth} options={[['all', 'Any month'], ...MONTH_NAMES.map((m, i) => [String(i), m])]} />
+                  </FilterField>
+                  <FilterField label="Inactive residents">
+                    <FilterSelectInput
+                      value={payIncludeInactive ? 'yes' : 'no'}
+                      onChange={(v) => setPayIncludeInactive(v === 'yes')}
+                      options={[['no', 'Active only'], ['yes', 'Include inactive']]}
+                    />
+                  </FilterField>
+                </>
+              ) : (
+                <>
+                  <FilterField label="Status">
+                    <FilterSelectInput value={payStatus} onChange={setPayStatus} options={[['all', 'All statuses'], ['paid', 'Paid'], ['pending', 'Pending'], ['rejected', 'Rejected']]} />
+                  </FilterField>
+                  <FilterField label="Method">
+                    <FilterSelectInput value={payMethod} onChange={setPayMethod} options={[['all', 'All methods'], ...PAYMENT_METHODS.map((m) => [m, methodLabel(m)])]} />
+                  </FilterField>
+                  <FilterField label="From">
+                    <FilterDateInput value={payFrom} onChange={setPayFrom} />
+                  </FilterField>
+                  <FilterField label="To">
+                    <FilterDateInput value={payTo} onChange={setPayTo} />
+                  </FilterField>
+                </>
+              )}
+            </FilterGrid>
+          </FilterPopover>
+        </div>
+        {payNonPayersOnly ? (
+          payFee === 'all' ? (
+            <div className="text-center text-ink-400 py-10 text-sm">Pick a fee from the filters above to see who hasn't paid it.</div>
+          ) : payNPLoading && payNPItems.length === 0 ? (
+            <ChartPlaceholder height={180} label="Loading non-payers…" />
+          ) : (
+          <>
+          <TableScroll>
+            <table className="report-table">
+              <thead><tr><th>Resident</th><th>Unit</th><th>Phone</th><th>Email</th><th>Status</th></tr></thead>
+              <tbody>
+                {payNPItems.map((r) => (
+                  <tr key={r.id} style={{ opacity: payNPLoading ? 0.5 : 1 }}>
+                    <td className="font-medium text-ink-800">{r.name}</td>
+                    <td>{r.unit}</td>
+                    <td className="text-ink-500">{r.phone}</td>
+                    <td className="text-ink-500">{r.email}</td>
+                    <td><Badge status={r.status?.toLowerCase() === 'active' ? 'active' : 'inactive'} /></td>
+                  </tr>
+                ))}
+                {payNPItems.length === 0 && (
+                  <tr><td colSpan={5} className="text-center text-ink-400 py-6">Everyone's paid — no non-payers match these filters.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </TableScroll>
+          <Pagination page={payPage} pageCount={payNPMeta.totalPages} onChange={setPayPage} total={payNPMeta.total} pageSize={PAYMENTS_PAGE_SIZE} label="residents" />
+          </>
+          )
+        ) : payLoading && payItems.length === 0 ? (
+          <ChartPlaceholder height={180} label="Loading payments…" />
+        ) : (
+        <>
+        <TableScroll>
+          <table className="report-table">
+            <thead><tr><th>Resident</th><th>Fee</th><th>Amount</th><th>Method</th><th>Status</th><th>Date</th></tr></thead>
+            <tbody>
+              {payItems.map((p) => (
+                <tr key={p.id} style={{ opacity: payLoading ? 0.5 : 1 }}>
+                  <td className="font-medium text-ink-800">{p.residentName}{p.unitNumber ? ` (${p.unitNumber})` : ''}</td>
+                  <td>{p.feeName}</td>
+                  <td className="font-semibold">{currency(p.amount)}</td>
+                  <td className="text-ink-500">{p.method}</td>
+                  <td><Badge status={p.status} /></td>
+                  <td className="text-ink-500">{formatDate(p.date)}</td>
+                </tr>
+              ))}
+              {payItems.length === 0 && (
+                <tr><td colSpan={6} className="text-center text-ink-400 py-6">No payments match these filters.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </TableScroll>
+        <Pagination page={payPage} pageCount={payMeta.totalPages} onChange={setPayPage} total={payMeta.total} pageSize={PAYMENTS_PAGE_SIZE} label="payments" />
+        </>
+        )}
+      </SectionCard>
+
       {!dataFullyLoaded ? (
-        // The ledger tables below (residents/payments/expenses/projects)
-        // show and filter raw rows, so — unlike the KPI cards/charts
-        // above — they do need the full dataset paged in first. This no
-        // longer blocks the summary numbers above, just these tables.
+        // Residents is the only remaining table that still filters/shows
+        // raw rows client-side, so it's the only one still gated on the
+        // full dataset being paged in. Payments/expenses/projects are all
+        // server-side filtered + paginated now (see their effects above)
+        // and render independently of dataFullyLoaded.
         <div className="card p-10">
-          <ChartPlaceholder height={220} label="Loading the full dataset for the tables below…" />
+          <ChartPlaceholder height={220} label="Loading the full dataset for the members table…" />
         </div>
       ) : (
       <>
@@ -727,69 +1139,16 @@ export default function Reports() {
         </TableScroll>
         <Pagination page={residentPage} pageCount={residentPageCount} onChange={setResidentPage} total={filteredResidents.length} pageSize={RESIDENTS_PAGE_SIZE} label="members" />
       </SectionCard>
+      </>
+      )}
 
-      {/* ---------------- Payments report ---------------- */}
-      <SectionCard
-        icon={Wallet}
-        title="Collections / payments"
-        subtitle={`${filteredPayments.length} of ${payments.length} payments match the current filters`}
-        exportActions={[
-          { label: 'Excel', icon: FileSpreadsheet, onClick: runExport(exportPaymentsExcel) },
-          { label: 'PDF', icon: FileText, onClick: runExport(exportPaymentsPdf) },
-        ]}
-      >
-        <div className="flex flex-wrap items-center gap-3 mb-4">
-          <FilterPopover active={payActiveCount} onClear={clearPayFilters}>
-            <FilterGrid>
-              <FilterField label="Search" full>
-                <FilterTextInput placeholder="Search resident, unit, reference…" value={paySearch} onChange={setPaySearch} />
-              </FilterField>
-              <FilterField label="Fee">
-                <FilterSelectInput value={payFee} onChange={setPayFee} options={[['all', 'All fees'], ...fees.map((f) => [f.id, f.name])]} />
-              </FilterField>
-              <FilterField label="Status">
-                <FilterSelectInput value={payStatus} onChange={setPayStatus} options={[['all', 'All statuses'], ['paid', 'Paid'], ['pending', 'Pending'], ['rejected', 'Rejected']]} />
-              </FilterField>
-              <FilterField label="Method">
-                <FilterSelectInput value={payMethod} onChange={setPayMethod} options={[['all', 'All methods'], ...PAYMENT_METHODS.map((m) => [m, methodLabel(m)])]} />
-              </FilterField>
-              <FilterField label="From">
-                <FilterDateInput value={payFrom} onChange={setPayFrom} />
-              </FilterField>
-              <FilterField label="To">
-                <FilterDateInput value={payTo} onChange={setPayTo} />
-              </FilterField>
-            </FilterGrid>
-          </FilterPopover>
-        </div>
-        <TableScroll>
-          <table className="report-table">
-            <thead><tr><th>Resident</th><th>Fee</th><th>Amount</th><th>Method</th><th>Status</th><th>Date</th></tr></thead>
-            <tbody>
-              {pagedPayments.map((p) => (
-                <tr key={p.id}>
-                  <td className="font-medium text-ink-800">{residents.find((r) => r.id === p.residentId)?.name || '—'}</td>
-                  <td>{fees.find((f) => f.id === p.feeId)?.name || '—'}</td>
-                  <td className="font-semibold">{currency(p.amount)}</td>
-                  <td className="text-ink-500">{p.method}</td>
-                  <td><Badge status={p.status} /></td>
-                  <td className="text-ink-500">{formatDate(p.date)}</td>
-                </tr>
-              ))}
-              {pagedPayments.length === 0 && (
-                <tr><td colSpan={6} className="text-center text-ink-400 py-6">No payments match these filters.</td></tr>
-              )}
-            </tbody>
-          </table>
-        </TableScroll>
-        <Pagination page={payPage} pageCount={payPageCount} onChange={setPayPage} total={filteredPayments.length} pageSize={PAYMENTS_PAGE_SIZE} label="payments" />
-      </SectionCard>
-
-      {/* ---------------- Expenses report ---------------- */}
+      {/* ---------------- Expenses report ----------------
+          Server-side filtered + paginated (see the expLoading effect
+          above) — independent of dataFullyLoaded, same as payments. */}
       <SectionCard
         icon={Receipt}
         title="Expenses"
-        subtitle={`${filteredExpenses.length} of ${expenses.length} expenses · ${currency(filteredExpenses.reduce((s, e) => s + e.amount, 0))} total`}
+        subtitle={`${expMeta.total} expense${expMeta.total === 1 ? '' : 's'} match the current filters`}
         exportActions={[
           { label: 'Excel', icon: FileSpreadsheet, onClick: runExport(exportExpensesExcel) },
           { label: 'PDF', icon: FileText, onClick: runExport(exportExpensesPdf) },
@@ -822,34 +1181,42 @@ export default function Reports() {
             </FilterGrid>
           </FilterPopover>
         </div>
+        {expLoading && expItems.length === 0 ? (
+          <ChartPlaceholder height={180} label="Loading expenses…" />
+        ) : (
+        <>
         <TableScroll>
           <table className="report-table">
             <thead><tr><th>Description</th><th>Category</th><th>Project</th><th>Vendor</th><th>Amount</th><th>Date</th></tr></thead>
             <tbody>
-              {pagedExpenses.map((e) => (
-                <tr key={e.id}>
+              {expItems.map((e) => (
+                <tr key={e.id} style={{ opacity: expLoading ? 0.5 : 1 }}>
                   <td className="font-medium text-ink-800">{e.description || '—'}</td>
                   <td><span className="badge" style={{ background: `${EXPENSE_COLORS[e.category] || '#64748b'}1a`, color: EXPENSE_COLORS[e.category] || '#64748b' }}>{e.category}</span></td>
-                  <td>{projects.find((p) => p.id === e.projectId)?.name || '—'}</td>
+                  <td>{e.projectName}</td>
                   <td className="text-ink-500">{e.vendor || '—'}</td>
                   <td className="font-semibold">{currency(e.amount)}</td>
                   <td className="text-ink-500">{formatDate(e.date)}</td>
                 </tr>
               ))}
-              {pagedExpenses.length === 0 && (
+              {expItems.length === 0 && (
                 <tr><td colSpan={6} className="text-center text-ink-400 py-6">No expenses match these filters.</td></tr>
               )}
             </tbody>
           </table>
         </TableScroll>
-        <Pagination page={expPage} pageCount={expPageCount} onChange={setExpPage} total={filteredExpenses.length} pageSize={EXPENSES_PAGE_SIZE} label="expenses" />
+        <Pagination page={expPage} pageCount={expMeta.totalPages} onChange={setExpPage} total={expMeta.total} pageSize={EXPENSES_PAGE_SIZE} label="expenses" />
+        </>
+        )}
       </SectionCard>
 
-      {/* ---------------- Projects report ---------------- */}
+      {/* ---------------- Projects report ----------------
+          Server-side filtered + paginated (see the projLoading effect
+          above) — independent of dataFullyLoaded, same as payments. */}
       <SectionCard
         icon={FolderKanban}
         title="Projects"
-        subtitle={`${filteredProjects.length} of ${projects.length} projects match the current filters`}
+        subtitle={`${projMeta.total} project${projMeta.total === 1 ? '' : 's'} match the current filters`}
         exportActions={[
           { label: 'Excel', icon: FileSpreadsheet, onClick: runExport(exportProjectsExcel) },
           { label: 'PDF', icon: FileText, onClick: runExport(exportProjectsPdf) },
@@ -877,30 +1244,34 @@ export default function Reports() {
             </FilterGrid>
           </FilterPopover>
         </div>
+        {projLoading && projItems.length === 0 ? (
+          <ChartPlaceholder height={180} label="Loading projects…" />
+        ) : (
+        <>
         <TableScroll>
           <table className="report-table">
             <thead><tr><th>Project</th><th>Fund</th><th>Budget</th><th>Spent</th><th>Remaining</th><th>Status</th></tr></thead>
             <tbody>
-              {pagedProjects.map((p) => (
-                <tr key={p.id}>
+              {projItems.map((p) => (
+                <tr key={p.id} style={{ opacity: projLoading ? 0.5 : 1 }}>
                   <td className="font-medium text-ink-800">{p.name}</td>
-                  <td className="text-ink-500">{funds.find((f) => f.id === p.fundId)?.name || '—'}</td>
+                  <td className="text-ink-500">{p.fundName}</td>
                   <td>{currency(p.budget)}</td>
                   <td>{currency(p.spent)}</td>
                   <td className={p.budget - p.spent < 0 ? 'text-rose-500 font-semibold' : ''}>{currency(p.budget - p.spent)}</td>
                   <td><Badge status={p.status} /></td>
                 </tr>
               ))}
-              {pagedProjects.length === 0 && (
+              {projItems.length === 0 && (
                 <tr><td colSpan={6} className="text-center text-ink-400 py-6">No projects match these filters.</td></tr>
               )}
             </tbody>
           </table>
         </TableScroll>
-        <Pagination page={projPage} pageCount={projPageCount} onChange={setProjPage} total={filteredProjects.length} pageSize={PROJECTS_PAGE_SIZE} label="projects" />
+        <Pagination page={projPage} pageCount={projMeta.totalPages} onChange={setProjPage} total={projMeta.total} pageSize={PROJECTS_PAGE_SIZE} label="projects" />
+        </>
+        )}
       </SectionCard>
-      </>
-      )}
       </>
       )}
 
