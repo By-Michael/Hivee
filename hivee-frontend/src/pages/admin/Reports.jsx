@@ -12,6 +12,7 @@ import {
   FilterPopover, FilterGrid, FilterField, FilterTextInput, FilterSelectInput, FilterDateInput, FilterNumberInput,
 } from '../../components/ui'
 import { exportToExcel, exportToPdf, exportRichPdf, captureChartImage } from '../../lib/exportUtils'
+import api, { endpoints } from '../../lib/api'
 
 const PAYMENT_METHODS = ['CASH', 'BANK_TRANSFER', 'MOBILE_MONEY', 'CARD', 'OTHER']
 function methodLabel(m) { return m === 'OTHER' ? 'Other' : m.replace('_', ' ').replace(/\b\w/g, (c) => c.toUpperCase()) }
@@ -42,6 +43,34 @@ function inRange(dateStr, from, to) {
 
 export default function Reports() {
   const { payments, expenses, fees, funds, projects, residents, dataFullyLoaded } = useData()
+
+  // KPI cards + charts are driven by a dedicated DB-aggregate endpoint
+  // (SUM/COUNT/GROUP BY) instead of reducing the full payments/expenses
+  // arrays in the browser — that reduce-over-everything was what made
+  // this whole page wait 10+ seconds before showing anything, since it
+  // was gated on `dataFullyLoaded` (every payment/expense row paged in).
+  // The raw ledger tables further down still need the full row-level
+  // data (and stay gated on dataFullyLoaded), but the summary numbers
+  // and charts no longer have to wait for that.
+  const [summary, setSummary] = useState(null)
+  const [summaryLoading, setSummaryLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      setSummaryLoading(true)
+      try {
+        const { data } = await api.get(endpoints.reports.dashboardSummary())
+        if (!cancelled) setSummary(data.data)
+      } catch (err) {
+        console.error('[Reports] Failed to load summary stats:', err?.response?.data || err.message)
+      } finally {
+        if (!cancelled) setSummaryLoading(false)
+      }
+    }
+    load()
+    return () => { cancelled = true }
+  }, [])
 
   // Belt-and-braces guard: the export buttons are disabled (and, for the
   // per-table sections, not even rendered) until dataFullyLoaded — but if
@@ -183,51 +212,38 @@ export default function Reports() {
   useEffect(() => { setExpPage(1) }, [expCategory, expProject, expFrom, expTo, expMinAmount, expMaxAmount, expSearch])
   useEffect(() => { setProjPage(1) }, [projStatus, projFund, projStartFrom, projStartTo, projSearch])
 
-  // ---- chart data ----
-  const byFee = fees.map((f, i) => ({
+  // ---- chart data (from the fast summary endpoint, not client reduces) ----
+  const byFee = useMemo(() => (summary?.byFee || []).map((f, i) => ({
     name: f.name,
-    total: payments.filter((p) => p.feeId === f.id && p.status === 'paid').reduce((s, p) => s + p.amount, 0),
+    total: f.total,
     fill: FEE_COLORS[i % FEE_COLORS.length],
-  }))
+  })), [summary])
 
   const byFundCategory = funds.map((f) => ({ name: f.category, value: f.balance }))
 
-  const byExpenseCategory = useMemo(() => {
-    const totals = {}
-    for (const e of expenses) totals[e.category] = (totals[e.category] || 0) + e.amount
-    return Object.entries(totals).filter(([, v]) => v > 0).map(([name, value]) => ({ name, value, fill: EXPENSE_COLORS[name] || '#64748b' }))
-  }, [expenses])
+  const byExpenseCategory = useMemo(() => (
+    (summary?.byExpenseCategory || []).filter((e) => e.total > 0)
+      .map((e) => ({ name: e.category, value: e.total, fill: EXPENSE_COLORS[e.category] || '#64748b' }))
+  ), [summary])
 
-  const monthlyTrend = useMemo(() => {
-    const map = {}
-    for (const p of payments.filter((p) => p.status === 'paid')) {
-      const k = monthKey(p.date)
-      map[k] = map[k] || { income: 0, expense: 0 }
-      map[k].income += p.amount
-    }
-    for (const e of expenses) {
-      const k = monthKey(e.date)
-      map[k] = map[k] || { income: 0, expense: 0 }
-      map[k].expense += e.amount
-    }
-    return Object.entries(map).sort(([a], [b]) => (a > b ? 1 : -1)).slice(-9)
-      .map(([k, v]) => ({ month: monthLabel(k), Income: v.income, Expenses: v.expense }))
-  }, [payments, expenses])
+  const monthlyTrend = useMemo(() => (
+    (summary?.monthlyTrend || []).slice(-9).map((m) => ({ month: monthLabel(m.month), Income: m.collected, Expenses: m.spent }))
+  ), [summary])
 
   const residentStatusBreakdown = useMemo(() => {
-    const active = residents.filter((r) => r.status === 'active').length
-    const inactive = residents.length - active
+    const active = summary?.activeResidentCount ?? 0
+    const inactive = (summary?.residentCount ?? 0) - active
     return [{ name: 'Active', value: active, fill: STATUS_COLORS.active }, { name: 'Inactive', value: inactive, fill: STATUS_COLORS.inactive }]
-  }, [residents])
+  }, [summary])
 
   const projectRadar = useMemo(() => projects.slice(0, 8).map((p) => ({
     name: p.name.length > 12 ? `${p.name.slice(0, 12)}…` : p.name,
     utilisation: p.budget > 0 ? Math.min(200, Math.round((p.spent / p.budget) * 100)) : 0,
   })), [projects])
 
-  const totalCollected = payments.filter((p) => p.status === 'paid').reduce((s, p) => s + p.amount, 0)
-  const totalExpenses = expenses.reduce((s, e) => s + e.amount, 0)
-  const collectionRate = Math.round((payments.filter((p) => p.status === 'paid').length / Math.max(payments.length, 1)) * 100)
+  const totalCollected = summary?.totalCollected ?? 0
+  const totalExpenses = summary?.totalExpenses ?? 0
+  const collectionRate = summary?.collectionRate ?? 0
 
   // ---- export handlers ----
   const residentColumns = [
@@ -460,14 +476,13 @@ export default function Reports() {
         }
       />
 
-      {!dataFullyLoaded ? (
-        // Reports summarizes the WHOLE dataset (every resident/payment/
-        // expense) — rendering it off the fast first-paint page would show
-        // totals and charts that quietly change once the rest loads. Wait
-        // for the silent background load (see DataContext) to finish
-        // instead of showing numbers that are simply wrong for a moment.
+      {summaryLoading ? (
+        // KPI cards and charts come from the DB-aggregate summary
+        // endpoint (see reportsSummary on the backend) — this only waits
+        // on that one fast request, not on the full payments/expenses
+        // tables paging into the browser.
         <div className="card p-10">
-          <ChartPlaceholder height={320} label="Loading the full dataset before building your reports…" />
+          <ChartPlaceholder height={320} label="Loading report summary…" />
         </div>
       ) : (
       <>
@@ -653,6 +668,16 @@ export default function Reports() {
         </div>
       </div>
 
+      {!dataFullyLoaded ? (
+        // The ledger tables below (residents/payments/expenses/projects)
+        // show and filter raw rows, so — unlike the KPI cards/charts
+        // above — they do need the full dataset paged in first. This no
+        // longer blocks the summary numbers above, just these tables.
+        <div className="card p-10">
+          <ChartPlaceholder height={220} label="Loading the full dataset for the tables below…" />
+        </div>
+      ) : (
+      <>
       {/* ---------------- Residents report ---------------- */}
       <SectionCard
         icon={Users}
@@ -874,6 +899,8 @@ export default function Reports() {
         </TableScroll>
         <Pagination page={projPage} pageCount={projPageCount} onChange={setProjPage} total={filteredProjects.length} pageSize={PROJECTS_PAGE_SIZE} label="projects" />
       </SectionCard>
+      </>
+      )}
       </>
       )}
 

@@ -1,9 +1,22 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Wallet, Landmark, FolderKanban, Users, ArrowUpRight, Clock, Receipt, ShieldCheck, Check, X } from 'lucide-react'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, CartesianGrid, BarChart, Bar } from 'recharts'
 import { useData } from '../../context/DataContext'
 import { useAuth } from '../../context/AuthContext'
+import api, { endpoints } from '../../lib/api'
 import { StatCard, Badge, PageHeader, Modal, currency, currencyBalance, formatDate, notify, ChartPlaceholder } from '../../components/ui'
+
+// Headline stat-card numbers and the 6-month trend chart come from
+// dedicated aggregate endpoints (DB-side SUM/COUNT/GROUP BY) instead of
+// waiting for the full payments/expenses tables to page in and reducing
+// them in the browser — see reportController.reportsSummary and
+// dashboardController.getAdminDashboard on the backend. That's what used
+// to make this page take 10+ seconds to show real numbers on every login,
+// regardless of how fast the network/DB actually was.
+function monthLabel(key) {
+  const [y, m] = key.split('-')
+  return new Date(Number(y), Number(m) - 1, 1).toLocaleDateString('en-US', { month: 'short' })
+}
 
 const CHANGE_TYPE_LABELS = { COMMUNITY_PAYMENT_DETAILS: 'community payment account details', PROJECT_BUDGET: 'a project budget' }
 const DIFF_FIELD_LABELS = { paymentBankName: 'Bank name', paymentAccountName: 'Account holder', paymentAccountNumber: 'Account number', budget: 'Budget' }
@@ -136,44 +149,54 @@ const COLORS = ['#1554d6', '#2570f5', '#5aa4ff', '#a9caff']
 
 // Builds a real 6-month time series (this month + the 5 before it) from the
 // community's actual payment and expense records — no sample data.
-function buildMonthlySeries(payments, expenses) {
-  const now = new Date()
-  const months = []
-  for (let i = 5; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
-    months.push({ key: `${d.getFullYear()}-${d.getMonth()}`, month: d.toLocaleDateString('en-US', { month: 'short' }), collected: 0, expenses: 0 })
-  }
-  const bucketFor = (dateStr) => {
-    if (!dateStr) return undefined
-    const d = new Date(dateStr)
-    return months.find((m) => m.key === `${d.getFullYear()}-${d.getMonth()}`)
-  }
-  payments.filter((p) => p.status === 'paid').forEach((p) => {
-    const b = bucketFor(p.date)
-    if (b) b.collected += p.amount
-  })
-  expenses.forEach((e) => {
-    const b = bucketFor(e.date)
-    if (b) b.expenses += e.amount
-  })
-  return months
-}
-
 export default function AdminDashboard() {
-  const { residents, payments, funds, projects, fees, expenses, pendingChanges, respondToPendingChange, residentsMeta, dataFullyLoaded } = useData()
+  const { residents, payments, funds, projects, fees, expenses, pendingChanges, respondToPendingChange, residentsMeta } = useData()
   const { user } = useAuth()
   // Only ever show one at a time in the slot — the oldest awaiting this
   // admin's approval — so the widget doesn't need to become a list/carousel.
   const slotPendingChange = (pendingChanges?.asApprover || [])[0] || null
 
-  const totalBalance = funds.reduce((s, f) => s + f.balance, 0)
-  const paidThisPeriod = payments.filter((p) => p.status === 'paid').reduce((s, p) => s + p.amount, 0)
-  const pendingOnlyCount = payments.filter((p) => p.status === 'pending').length
-  const overdueOnlyCount = payments.filter((p) => p.status === 'overdue').length
-  const pendingCount = pendingOnlyCount + overdueOnlyCount
-  const activeProjects = projects.filter((p) => p.status === 'in-progress').length
+  // Fast headline numbers — independent of the (still background-loading)
+  // full payments/expenses lists in DataContext, so the stat cards and
+  // trend chart render as soon as these two small requests come back
+  // rather than waiting for every row to page in.
+  const [stats, setStats] = useState(null)
+  const [statsLoading, setStatsLoading] = useState(true)
+  const [monthly, setMonthly] = useState([])
 
-  const monthly = useMemo(() => buildMonthlySeries(payments, expenses), [payments, expenses])
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      setStatsLoading(true)
+      try {
+        const sixMonthsAgo = new Date()
+        sixMonthsAgo.setDate(1)
+        sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 5)
+        const [adminRes, summaryRes] = await Promise.all([
+          api.get(endpoints.dashboardAdmin()),
+          api.get(endpoints.reports.dashboardSummary(), { params: { from: sixMonthsAgo.toISOString() } }),
+        ])
+        if (cancelled) return
+        setStats(adminRes.data.data)
+        const trend = (summaryRes.data.data.monthlyTrend || []).map((m) => ({
+          key: m.month, month: monthLabel(m.month), collected: m.collected, expenses: m.spent,
+        }))
+        setMonthly(trend)
+      } catch (err) {
+        console.error('[Dashboard] Failed to load summary stats:', err?.response?.data || err.message)
+      } finally {
+        if (!cancelled) setStatsLoading(false)
+      }
+    }
+    load()
+    return () => { cancelled = true }
+  }, [])
+
+  const totalBalance = funds.reduce((s, f) => s + f.balance, 0)
+  const paidThisPeriod = stats?.totalCollected ?? 0
+  const pendingCount = stats?.pendingPayments ?? 0
+  const activeProjects = stats?.activeProjects ?? projects.filter((p) => p.status === 'in-progress').length
+
   const collectedTrend = useMemo(() => {
     const last = monthly[monthly.length - 1]
     const prev = monthly[monthly.length - 2]
@@ -217,20 +240,20 @@ export default function AdminDashboard() {
           icon={Wallet}
           label="Collected this month"
           value={currency(paidThisPeriod)}
-          sub={`${payments.filter(p=>p.status==='paid').length} payments recorded`}
+          sub="Verified payments, last 6 months"
           accent="green"
           trend={collectedTrend}
           to="/admin/payments"
-          loading={!dataFullyLoaded}
+          loading={statsLoading}
         />
         <StatCard
           icon={Clock}
-          label="Pending / overdue"
+          label="Pending"
           value={pendingCount}
-          sub={`${pendingOnlyCount} awaiting payment, ${overdueOnlyCount} past due`}
+          sub="Awaiting verification"
           accent="amber"
           to="/admin/payments"
-          loading={!dataFullyLoaded}
+          loading={statsLoading}
         />
         {slotPendingChange ? (
           <PendingChangeSlot pendingChange={slotPendingChange} onDecide={respondToPendingChange} />
@@ -253,7 +276,7 @@ export default function AdminDashboard() {
             <span className="badge bg-brand-50 text-brand-700 ring-1 ring-brand-200">Last 6 months</span>
           </div>
           <p className="text-xs text-ink-400 mb-4">Monthly totals across all fee categories</p>
-          {dataFullyLoaded ? (
+          {!statsLoading && monthly.length > 0 ? (
           <ResponsiveContainer width="100%" height={260}>
             <AreaChart data={monthly} margin={{ left: -14, right: 8 }}>
               <defs>

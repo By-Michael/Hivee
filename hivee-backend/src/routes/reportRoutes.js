@@ -12,5 +12,9 @@ router.use(authenticate, tenantScope);
 router.get('/collections', authorize('ADMIN'), ctrl.collectionsReport);
 router.get('/expenses', authorize('ADMIN'), ctrl.expenseReport);
 router.get('/summary', authorize('ADMIN'), ctrl.financialSummaryReport);
+// Aggregated stats for the Dashboard/Reports pages (totals, by-fee,
+// by-category, monthly trend) — computed as DB aggregates/group-bys
+// instead of the client downloading every payment/expense row.
+router.get('/dashboard-summary', authorize('ADMIN'), ctrl.reportsSummary);
 
 module.exports = router;

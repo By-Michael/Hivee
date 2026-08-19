@@ -147,7 +147,16 @@ export const endpoints = {
     summary: () => '/reports/summary',
     collections: () => '/reports/collections',
     expenses: () => '/reports/expenses',
+    // Pre-aggregated totals/by-fee/by-category/monthly-trend for the
+    // Dashboard and Reports pages — computed as DB aggregates instead of
+    // the client downloading every payment/expense row and summing them.
+    dashboardSummary: () => '/reports/dashboard-summary',
   },
+
+  // Fast, DB-aggregate headline numbers (counts/sums, not full row lists)
+  // for the very first thing an admin/resident sees after login.
+  dashboardAdmin: () => '/dashboard/admin',
+  dashboardResident: () => '/dashboard/resident',
 }
 
 // Uploaded files (receipts) are served from the API host's root
