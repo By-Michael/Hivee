@@ -92,7 +92,6 @@ export const endpoints = {
   myAvatar: () => '/users/me/avatar',
 
   residents: () => '/residents',
-  residentsNonPayers: () => '/residents/non-payers',
   resident: (id) => `/residents/${id}`,
   residentSummary: (id) => `/residents/${id}/summary`,
   residentExport: (id) => `/residents/${id}/export`,

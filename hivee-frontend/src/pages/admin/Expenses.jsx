@@ -24,7 +24,7 @@ const ETHIOPIAN_BANKS = [
 const DELETE_GRACE_WINDOW_MS = 15 * 60 * 1000
 
 export default function Expenses() {
-  const { expenses, projects, receipts, addExpense, reverseExpense, removeExpense, addReceipt, updateReceipt, dataFullyLoaded, expensesMeta } = useData()
+  const { expenses, projects, receipts, addExpense, reverseExpense, removeExpense, addReceipt, updateReceipt } = useData()
   const { user } = useAuth()
   const [modal, setModal] = useState(false)
   const [form, setForm] = useState(empty)
@@ -117,7 +117,7 @@ export default function Expenses() {
     <div>
       <PageHeader
         title="Expenses"
-        subtitle={`${expensesMeta.total} record${expensesMeta.total === 1 ? '' : 's'}${!dataFullyLoaded ? ` (${expenses.length} loaded so far)` : ` · ${currency(total)} net spend`} — tap a row for details — corrections are made by reversing, not editing`}
+        subtitle={`${expenses.length} records · ${currency(total)} net spend · tap a row for details — corrections are made by reversing, not editing`}
         action={<button onClick={() => setModal(true)} className="btn-primary"><Plus className="h-4 w-4" /> Log expense</button>}
       />
 

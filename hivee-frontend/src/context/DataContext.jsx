@@ -22,15 +22,9 @@ const EMPTY_DATA = {
   residentsMeta: { total: 0, activeTotal: 0, page: 1, totalPages: 1, limit: 200 },
   fees: [],
   payments: [],
-  // Exact server-side total, independent of how many payment rows are
-  // currently paged into memory — same idea as residentsMeta above.
-  paymentsMeta: { total: 0, page: 1, totalPages: 1, limit: 200 },
   funds: [],
   projects: [],
   expenses: [],
-  // Exact server-side total, independent of how many expense rows are
-  // currently paged into memory — same idea as residentsMeta above.
-  expensesMeta: { total: 0, page: 1, totalPages: 1, limit: 200 },
   receipts: [],
   pendingChanges: { asApprover: [], asProposer: [] },
 }
@@ -42,15 +36,13 @@ async function fetchAllPages(url, extraParams) {
   const limit = 500
   let page = 1
   let all = []
-  let meta = null
   for (let i = 0; i < 200; i++) {
     const { data } = await api.get(url, { params: { page, limit, ...extraParams } })
     all = all.concat(data.data || [])
-    meta = data.meta || meta
     if (!data.meta || page >= data.meta.totalPages) break
     page += 1
   }
-  return { all, meta }
+  return all
 }
 
 // Fetches just ONE page of a paginated list endpoint — used for the fast
@@ -250,25 +242,9 @@ export function DataProvider({ children }) {
         const paymentsUI = paymentsRes === null
           ? prev.payments
           : (paymentsRes?.__failed ? prev.payments : (paymentsRes.items || []).map(paymentToUI))
-        // The backend returns an exact count (meta.total) on every page
-        // request — independent of FIRST_PAINT_LIMIT — so this is always
-        // the true total, even before the background pass has paged in
-        // every row. Falls back to the in-memory length only if the
-        // request failed and we've never gotten a real meta from the
-        // server (e.g. first load errored).
-        const paymentsMeta = paymentsRes === null
-          ? prev.paymentsMeta
-          : (!paymentsRes?.__failed && paymentsRes?.meta)
-            ? paymentsRes.meta
-            : (prev.paymentsMeta.total ? prev.paymentsMeta : { total: paymentsUI.length, page: 1, totalPages: 1, limit: paymentsUI.length || FIRST_PAINT_LIMIT })
         const expensesUI = expensesRes === null
           ? prev.expenses
           : (expensesRes?.__failed ? prev.expenses : (expensesRes.items || []).map(expenseToUI))
-        const expensesMeta = expensesRes === null
-          ? prev.expensesMeta
-          : (!expensesRes?.__failed && expensesRes?.meta)
-            ? expensesRes.meta
-            : (prev.expensesMeta.total ? prev.expensesMeta : { total: expensesUI.length, page: 1, totalPages: 1, limit: expensesUI.length || FIRST_PAINT_LIMIT })
         // expenseToUI() strips the raw `receipts` array down to just
         // receiptId/receiptCount, so the merged/converted expensesUI list
         // below never has `.receipts` on it. Deriving the `receipts` list
@@ -295,11 +271,9 @@ export function DataProvider({ children }) {
           residentsMeta,
           fees: feesRes?.__failed ? prev.fees : feesRes.data.data.map(feeToUI),
           payments: isFirstLoad || paymentsRes === null ? paymentsUI : mergeById(prev.payments, paymentsUI),
-          paymentsMeta,
           funds: fundsRes?.__failed ? prev.funds : fundsRaw.map((f) => fundToUI(f, summariesById.get(f.id) || null)),
           projects: projectsRes?.__failed ? prev.projects : projectsRes.data.data.map(projectToUI),
           expenses: isFirstLoad || expensesRes === null ? expensesUI : mergeById(prev.expenses, expensesUI),
-          expensesMeta,
           // Same first-load-vs-merge shape as expenses/residents/payments:
           // a silent refresh only re-fetches page 1, so merge it into
           // whatever's cached instead of truncating receipts that belong
@@ -358,16 +332,16 @@ export function DataProvider({ children }) {
       }
       jobs.push(
         fetchAllPages(endpoints.payments())
-          .then(({ all, meta }) => {
-            setData((d) => ({ ...d, payments: all.map(paymentToUI), paymentsMeta: meta || d.paymentsMeta }))
+          .then((all) => {
+            setData((d) => ({ ...d, payments: all.map(paymentToUI) }))
             setFullyLoaded((f) => ({ ...f, payments: true }))
           })
           .catch((err) => console.error('[DataContext] Background payments load failed:', err?.response?.data || err.message))
       )
       jobs.push(
         fetchAllPages(endpoints.expenses())
-          .then(({ all, meta }) => {
-            setData((d) => ({ ...d, expenses: all.map(expenseToUI), expensesMeta: meta || d.expensesMeta, receipts: all.flatMap((e) => (e.receipts || []).map(receiptToUI)) }))
+          .then((all) => {
+            setData((d) => ({ ...d, expenses: all.map(expenseToUI), receipts: all.flatMap((e) => (e.receipts || []).map(receiptToUI)) }))
             setFullyLoaded((f) => ({ ...f, expenses: true }))
           })
           .catch((err) => console.error('[DataContext] Background expenses load failed:', err?.response?.data || err.message))
@@ -560,7 +534,6 @@ export function DataProvider({ children }) {
         await api.post(endpoints.paymentReceipt(created.data.id), body, { headers: { 'Content-Type': 'multipart/form-data' } })
       }
       patchList('payments')((list) => [paymentToUI(created.data), ...list])
-      setData((d) => ({ ...d, paymentsMeta: { ...d.paymentsMeta, total: d.paymentsMeta.total + 1 } }))
       // A payment can move a fund's real cash balance — that figure lives
       // in fund summaries, not on the payment itself, so reconcile it in
       // the background. The payment row above is already visible, so this
@@ -618,7 +591,6 @@ export function DataProvider({ children }) {
     removePayment: async (id) => {
       await api.delete(endpoints.payment(id))
       patchList('payments')((list) => list.filter((p) => p.id !== id))
-      setData((d) => ({ ...d, paymentsMeta: { ...d.paymentsMeta, total: Math.max(0, d.paymentsMeta.total - 1) } }))
       refresh({ silent: true })
     },
     // Resident self-serve flow: submit a bank txn ID and get verified
@@ -627,7 +599,6 @@ export function DataProvider({ children }) {
     submitSelfPayment: async ({ feeId, fundId, txnId, payerName, reason, amount, receiptAmount }) => {
       const { data } = await api.post(endpoints.paymentSelfVerify(), { feeId, fundId, txnId, payerName, reason, amount, receiptAmount })
       patchList('payments')((list) => [paymentToUI(data.data), ...list])
-      setData((d) => ({ ...d, paymentsMeta: { ...d.paymentsMeta, total: d.paymentsMeta.total + 1 } }))
       refresh({ silent: true })
       return paymentToUI(data.data)
     },
@@ -638,7 +609,6 @@ export function DataProvider({ children }) {
     retractPayment: async (id) => {
       await api.delete(endpoints.paymentRetract(id))
       patchList('payments')((list) => list.filter((p) => p.id !== id))
-      setData((d) => ({ ...d, paymentsMeta: { ...d.paymentsMeta, total: Math.max(0, d.paymentsMeta.total - 1) } }))
       refresh({ silent: true })
     },
     // Best-effort autofill from a payment screenshot — never trusted
@@ -740,7 +710,6 @@ export function DataProvider({ children }) {
         newExpense = { ...newExpense, receiptId: rc.data.id }
       }
       patchList('expenses')((list) => [newExpense, ...list])
-      setData((d) => ({ ...d, expensesMeta: { ...d.expensesMeta, total: d.expensesMeta.total + 1 } }))
       // Spending a fund's money changes its balance, which lives in fund
       // summaries — reconciled in the background, not blocking this call.
       refresh({ silent: true })
@@ -752,7 +721,6 @@ export function DataProvider({ children }) {
     reverseExpense: async (id, reason) => {
       const { data } = await api.post(endpoints.reverseExpense(id), reason ? { reason } : {})
       patchList('expenses')((list) => [expenseToUI(data.data), ...list.map((e) => (e.id === id ? { ...e, isVoided: true } : e))])
-      setData((d) => ({ ...d, expensesMeta: { ...d.expensesMeta, total: d.expensesMeta.total + 1 } }))
       refresh({ silent: true })
       return data.data
     },
@@ -762,7 +730,6 @@ export function DataProvider({ children }) {
     removeExpense: async (id) => {
       await api.delete(endpoints.expense(id))
       patchList('expenses')((list) => list.filter((e) => e.id !== id))
-      setData((d) => ({ ...d, expensesMeta: { ...d.expensesMeta, total: Math.max(0, d.expensesMeta.total - 1) } }))
       refresh({ silent: true })
     },
 

@@ -158,31 +158,6 @@ const listPayments = catchAsync(async (req, res) => {
     where = { AND: [where, { residentId: resident.id }] };
   }
 
-  // Server-side filters — same idea as listResidents' `search`: let the
-  // caller (e.g. the Reports page) filter on indexed columns here instead
-  // of paging in every payment and filtering with Array.filter() in the
-  // browser. Every field below is either already indexed (status, feeId,
-  // paidAt) or cheap to scan within an already-narrowed community.
-  const { status, method, feeId, from, to, search } = req.query;
-  const filters = [where];
-  if (status) filters.push({ status });
-  if (method) filters.push({ paymentMethod: method });
-  if (feeId) filters.push({ feeId });
-  if (from || to) {
-    filters.push({ paidAt: { ...(from ? { gte: new Date(from) } : {}), ...(to ? { lte: new Date(new Date(to).getTime() + 86399999) } : {}) } });
-  }
-  if (search) {
-    filters.push({
-      OR: [
-        { payerName: { contains: search, mode: 'insensitive' } },
-        { transactionReference: { contains: search, mode: 'insensitive' } },
-        { resident: { user: { fullName: { contains: search, mode: 'insensitive' } } } },
-        { resident: { unitNumber: { contains: search, mode: 'insensitive' } } },
-      ],
-    });
-  }
-  where = filters.length > 1 ? { AND: filters } : filters[0];
-
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
   const limit = Math.min(1000, Math.max(1, parseInt(req.query.limit, 10) || 300));
 

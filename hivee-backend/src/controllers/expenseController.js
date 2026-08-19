@@ -102,33 +102,9 @@ const listExpenses = catchAsync(async (req, res) => {
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
   const limit = Math.min(1000, Math.max(1, parseInt(req.query.limit, 10) || 300));
 
-  // Server-side filters — same idea as listPayments' filters: let the
-  // caller (e.g. the Reports page) filter on indexed/cheap columns here
-  // instead of paging in every expense and filtering with Array.filter()
-  // in the browser.
-  const { category, projectId, from, to, minAmount, maxAmount, search } = req.query;
-  const filters = [{ communityId: req.communityId }];
-  if (category) filters.push({ category });
-  if (projectId) filters.push({ projectId });
-  if (from || to) {
-    filters.push({ spentAt: { ...(from ? { gte: new Date(from) } : {}), ...(to ? { lte: new Date(new Date(to).getTime() + 86399999) } : {}) } });
-  }
-  if (minAmount || maxAmount) {
-    filters.push({ amount: { ...(minAmount ? { gte: Number(minAmount) } : {}), ...(maxAmount ? { lte: Number(maxAmount) } : {}) } });
-  }
-  if (search) {
-    filters.push({
-      OR: [
-        { description: { contains: search, mode: 'insensitive' } },
-        { vendor: { contains: search, mode: 'insensitive' } },
-      ],
-    });
-  }
-  const where = filters.length > 1 ? { AND: filters } : filters[0];
-
   const [expenses, total] = await Promise.all([
     prisma.expense.findMany({
-      where,
+      where: { communityId: req.communityId },
       include: {
         project: { select: { id: true, name: true } },
         recorder: { select: { id: true, fullName: true } },
@@ -140,7 +116,7 @@ const listExpenses = catchAsync(async (req, res) => {
       skip: (page - 1) * limit,
       take: limit,
     }),
-    prisma.expense.count({ where }),
+    prisma.expense.count({ where: { communityId: req.communityId } }),
   ]);
 
   res.json({

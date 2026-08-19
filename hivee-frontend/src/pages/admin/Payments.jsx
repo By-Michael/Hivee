@@ -215,7 +215,7 @@ function PaymentForm({ form, setForm, fees, projects, residents, showResidentPic
 }
 
 export default function Payments() {
-  const { payments, residents, fees, projects, funds, addPayment, updatePayment, batchVerifyPayments, editPayment, removePayment, dataFullyLoaded, paymentsMeta } = useData()
+  const { payments, residents, fees, projects, funds, addPayment, updatePayment, batchVerifyPayments, editPayment, removePayment, dataFullyLoaded } = useData()
   const [query, setQuery] = useState('')
   // The quick-search box re-filters the whole payments list on every
   // keystroke; debouncing what actually drives that filter (rather than
@@ -480,7 +480,7 @@ export default function Payments() {
         subtitle={
           filters.nonPayersOnly
             ? `${nonPayers.length} residents haven't paid "${selectedFee?.name || '—'}" (${periodLabel()})`
-            : `${paymentsMeta.total} total payment${paymentsMeta.total === 1 ? '' : 's'}${!dataFullyLoaded ? ` (${filtered.length} loaded so far)` : ` · ${filtered.length} in view · ${currency(total)}`}${needsReviewCount > 0 ? ` · ${needsReviewCount} awaiting review` : ''}`
+            : `${filtered.length} records · ${currency(total)} in view${needsReviewCount > 0 ? ` · ${needsReviewCount} awaiting review` : ''}`
         }
         action={<button onClick={() => { setForm(empty); setModal(true) }} className="btn-primary"><Plus className="h-4 w-4" /> Record payment</button>}
       />

@@ -59,41 +59,15 @@ const createProject = catchAsync(async (req, res) => {
 });
 
 const listProjects = catchAsync(async (req, res) => {
-  // Server-side filters + pagination — same idea as listPayments/
-  // listExpenses: let the caller (e.g. the Reports page) filter+page here
-  // instead of paging in every project and filtering with Array.filter()
-  // in the browser. Kept optional/backward-compatible: callers that don't
-  // pass page/limit still get every project back (Projects.jsx's board
-  // view wants the full list, not a page of it).
-  const { status, fundId, from, to, search, page: pageParam, limit: limitParam } = req.query;
-  const filters = [{ communityId: req.communityId }];
-  if (status) filters.push({ status });
-  if (fundId) filters.push({ fundId });
-  if (from || to) {
-    filters.push({ startDate: { ...(from ? { gte: new Date(from) } : {}), ...(to ? { lte: new Date(new Date(to).getTime() + 86399999) } : {}) } });
-  }
-  if (search) {
-    filters.push({ name: { contains: search, mode: 'insensitive' } });
-  }
-  const where = filters.length > 1 ? { AND: filters } : filters[0];
-
-  const paginate = pageParam !== undefined || limitParam !== undefined;
-  const page = Math.max(1, parseInt(pageParam, 10) || 1);
-  const limit = Math.min(1000, Math.max(1, parseInt(limitParam, 10) || 300));
-
-  const [projects, total] = await Promise.all([
-    prisma.project.findMany({
-      where,
-      include: {
-        fund: { select: { id: true, name: true } },
-        fundAllocations: { include: { fund: { select: { id: true, name: true } } } },
-        _count: { select: { expenses: true } },
-      },
-      orderBy: { startDate: 'desc' },
-      ...(paginate ? { skip: (page - 1) * limit, take: limit } : {}),
-    }),
-    prisma.project.count({ where }),
-  ]);
+  const projects = await prisma.project.findMany({
+    where: { communityId: req.communityId },
+    include: {
+      fund: { select: { id: true, name: true } },
+      fundAllocations: { include: { fund: { select: { id: true, name: true } } } },
+      _count: { select: { expenses: true } },
+    },
+    orderBy: { startDate: 'desc' },
+  });
 
   // The list view only needs each project's total spend, not every expense
   // row (that would balloon the payload for communities with a lot of
@@ -111,7 +85,6 @@ const listProjects = catchAsync(async (req, res) => {
   res.json({
     success: true,
     data: projects.map((p) => ({ ...p, spent: spentById.get(p.id) || 0 })),
-    meta: paginate ? { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) } : undefined,
   });
 });
 
