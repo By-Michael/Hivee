@@ -1,28 +1,28 @@
 # ---- Dependencies ----
 node_modules/
-odaa-backend/node_modules/
-odaa-frontend/node_modules/
+hivee-backend/node_modules/
+hivee-frontend/node_modules/
 
 # ---- Env / secrets ----
 .env
 .env.local
 .env.*.local
-odaa-backend/.env
-odaa-frontend/.env
+hivee-backend/.env
+hivee-frontend/.env
 
 # ---- Build output ----
 dist/
 build/
-odaa-frontend/dist/
+hivee-frontend/dist/
 
 # ---- Vite cache ----
 .vite/
-odaa-frontend/.vite/
-odaa-frontend/node_modules/.vite/
+hivee-frontend/.vite/
+hivee-frontend/node_modules/.vite/
 
 # ---- Uploads (receipts etc.) ----
-odaa-backend/uploads/*
-!odaa-backend/uploads/.gitkeep
+hivee-backend/uploads/*
+!hivee-backend/uploads/.gitkeep
 
 # ---- Logs ----
 npm-debug.log*
@@ -31,8 +31,8 @@ yarn-error.log*
 *.log
 
 # ---- Prisma ----
-odaa-backend/prisma/*.db
-odaa-backend/prisma/migrations/dev/
+hivee-backend/prisma/*.db
+hivee-backend/prisma/migrations/dev/
 
 # ---- OS / editor junk ----
 .DS_Store

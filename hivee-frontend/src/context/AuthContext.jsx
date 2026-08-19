@@ -36,7 +36,7 @@ function normalizeUser(u) {
   }
 }
 
-// Credentials for the accounts created by `npm run seed` in odaa-backend —
+// Credentials for the accounts created by `npm run seed` in hivee-backend —
 // used only to prefill the login form's "Try the demo" buttons. Clicking
 // one still authenticates against the real API, same as typing them in by
 // hand; nothing here is a stand-in for real data.

@@ -16,7 +16,7 @@ api.interceptors.request.use((config) => {
 })
 
 // The backend issues short-lived (15m) access tokens plus a long-lived (7d)
-// httpOnly refresh cookie (see odaa-backend auth controller). Previously the
+// httpOnly refresh cookie (see hivee-backend auth controller). Previously the
 // frontend never called /auth/refresh, so every request made ~15 minutes
 // into a session (or after a laptop sleep, tab left open overnight, etc.)
 // failed with "Authentication required" even though the user never logged

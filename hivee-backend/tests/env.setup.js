@@ -9,8 +9,8 @@ process.env.NODE_ENV = 'test';
 // Fail loudly instead of silently testing against the wrong database.
 if (!process.env.DATABASE_URL) {
   throw new Error(
-    'DATABASE_URL is not set for tests. Copy odaa-backend/.env.test.example ' +
-      'to odaa-backend/.env.test and point it at a TEST database (never production).'
+    'DATABASE_URL is not set for tests. Copy hivee-backend/.env.test.example ' +
+      'to hivee-backend/.env.test and point it at a TEST database (never production).'
   );
 }
 if (!process.env.DATABASE_URL.includes('test')) {

@@ -3,11 +3,11 @@
 -- from instead of being tied to one browser.
 --
 --   * users.avatar_url / avatar_storage_key : profile picture, previously
---     a base64 data URL cached under `odaa_avatar_${userId}`.
+--     a base64 data URL cached under `hivee_avatar_${userId}`.
 --   * users.preferences : theme, sidebar-collapsed, default export format,
 --     per-category notification mutes — previously several separate
---     localStorage keys (`odaa_theme`, `odaa_sidebar_collapsed`,
---     `odaa_default_export_format`, `odaa_notif_prefs_${userId}`).
+--     localStorage keys (`hivee_theme`, `hivee_sidebar_collapsed`,
+--     `hivee_default_export_format`, `hivee_notif_prefs_${userId}`).
 --   * funds.goal : fundraising target, previously the client-only
 --     `fundGoal` meta overlay.
 --   * receipts.verified : admin verification flag, previously the

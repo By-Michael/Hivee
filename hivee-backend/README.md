@@ -43,7 +43,7 @@ See `prisma/schema.prisma` — mirrors your ER diagram 1:1:
 ## 2. Setup
 
 ```bash
-cd odaa-backend
+cd hivee-backend
 npm install
 cp .env.example .env       # fill in DATABASE_URL and JWT secrets
 npx prisma generate

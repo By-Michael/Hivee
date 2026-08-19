@@ -11,7 +11,7 @@
  * Configure via env vars (all optional, sane defaults below):
  *   RESIDENTS=5000 FUNDS=20 PROJECTS=300 EXPENSES=8000 node prisma/seed-large.js
  *
- * Run from odaa-backend/:
+ * Run from hivee-backend/:
  *   node prisma/seed-large.js
  *
  * NOTE: this wipes existing data first (same as seed.js) so it's

@@ -5,7 +5,7 @@ residents, fees, payments, funds, projects, expenses, receipts, dashboards,
 and reports — with role-based views for **Admin (committee)** and
 **Resident**.
 
-The app talks to the `odaa-backend` API (Node/Express/Prisma/PostgreSQL)
+The app talks to the `hivee-backend` API (Node/Express/Prisma/PostgreSQL)
 over REST.
 
 ## Quick start
@@ -17,13 +17,13 @@ npm run dev
 
 Open http://localhost:5173. By default the dev server proxies `/api`
 requests to `http://localhost:4000` (see `vite.config.js`), so run
-`odaa-backend` alongside it. Use the demo buttons on the login screen, or
+`hivee-backend` alongside it. Use the demo buttons on the login screen, or
 sign in with a seeded account, password `Password123!` for both:
 
 - **Admin:** `admin@greenwood.example`
 - **Resident:** `bob@greenwood.example`
 
-(Seed these accounts by running `npm run seed` in `odaa-backend` — see the
+(Seed these accounts by running `npm run seed` in `hivee-backend` — see the
 root README.)
 
 ## Configuration
