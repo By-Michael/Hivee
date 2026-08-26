@@ -269,15 +269,16 @@ export default function AdminDashboard() {
         )}
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-5 mb-6 items-start">
-        <div className="card p-5 xl:col-span-2 animate-fade-up">
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-5 mb-6 items-stretch">
+        <div className="card p-5 xl:col-span-2 animate-fade-up h-[430px] flex flex-col">
           <div className="flex items-center justify-between mb-1">
             <h3 className="font-semibold text-ink-800">Collections vs. Expenses</h3>
             <span className="badge bg-brand-50 text-brand-700 ring-1 ring-brand-200">Last 6 months</span>
           </div>
           <p className="text-xs text-ink-400 mb-4">Monthly totals across all fee categories</p>
           {!statsLoading && monthly.length > 0 ? (
-          <ResponsiveContainer width="100%" height={260}>
+          <div className="flex-1 min-h-0">
+          <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={monthly} margin={{ left: -14, right: 8 }}>
               <defs>
                 <linearGradient id="collected" x1="0" y1="0" x2="0" y2="1">
@@ -300,10 +301,11 @@ export default function AdminDashboard() {
               <Area type="monotone" dataKey="expenses" stroke="#f59e0b" strokeWidth={2.5} fill="url(#expenses)" name="Expenses" />
             </AreaChart>
           </ResponsiveContainer>
+          </div>
           ) : <ChartPlaceholder />}
         </div>
 
-        <div className="card p-5 animate-fade-up">
+        <div className="card p-5 animate-fade-up h-[430px] flex flex-col">
           <h3 className="font-semibold text-ink-800 mb-1">Fund Distribution</h3>
           <p className="text-xs text-ink-400 mb-2">
             {hasAnyDeficit ? 'Relative size by fund — some funds are running a deficit' : 'Balance share by fund'}
@@ -334,7 +336,7 @@ export default function AdminDashboard() {
                   <Tooltip formatter={(_, __, item) => currency(item?.payload?.value ?? 0)} contentStyle={{ borderRadius: 12, border: '1px solid #eef1f8' }} />
                 </PieChart>
               </ResponsiveContainer>
-              <div className="space-y-2 mt-1 max-h-64 overflow-y-auto pr-1">
+              <div className="space-y-2 mt-1 flex-1 min-h-0 overflow-y-auto pr-1">
                 {fundSplit.map((f, i) => (
                   <div key={f.name} className="flex items-center justify-between text-xs">
                     <span className="flex items-center gap-2 text-ink-500">
