@@ -75,7 +75,17 @@ const selfVerifyPaymentSchema = z.object({
     // never trusted as proof by itself — but if it disagrees with the
     // amount the resident actually typed/submitted, that's worth flagging
     // for admin review rather than silently ignoring (see selfVerifyPayment).
-    receiptAmount: z.number().positive().optional(),
+    // The frontend always sends this key (initialized as useState(null)),
+    // sending an explicit `null` whenever OCR/Groq extraction didn't find
+    // an amount — which is a valid, expected outcome (blurry receipt,
+    // regex-only fallback, Groq unreachable), not a validation error.
+    // z.optional() alone only tolerates a missing key, not an explicit
+    // null, so without .nullable() every submission where extraction came
+    // up empty was rejected outright with "expected number, received
+    // null". .nullable() accepts null and we normalize it to undefined so
+    // downstream code (controller's `!== undefined && !== null` check)
+    // doesn't need to change.
+    receiptAmount: z.number().positive().nullable().optional().transform((v) => v ?? undefined),
   }).refine((body) => [!!body.feeId, !!body.fundId].filter(Boolean).length === 1, {
     message: 'Provide exactly one of feeId or fundId',
     path: ['feeId'],
