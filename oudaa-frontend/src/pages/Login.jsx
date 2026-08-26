@@ -101,7 +101,7 @@ export default function Login() {
             <span className="h-12 w-12 grid place-items-center shrink-0">
               <img src="/oudaa-h-mark.png" alt="Oudaa" className="h-9 w-9 object-contain" />
             </span>
-            <span className="font-display font-bold text-lg text-ink-900 -ml-1">udaa</span>
+            <span className="font-display font-bold text-lg bg-brand-gradient bg-clip-text text-transparent -ml-1">udaa</span>
           </div>
 
           <h2 className="text-2xl font-bold text-ink-900">Welcome back</h2>
