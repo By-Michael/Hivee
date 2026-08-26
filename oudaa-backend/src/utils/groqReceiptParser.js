@@ -15,16 +15,77 @@
 // -----------------------------------------------------------------------
 
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
-// llama-3.1-8b-instant was retired by Groq — keeping it as the default here
-// silently 400'd on every single call, which is why classification looked
-// "broken" even though OCR.space itself was returning text fine. Groq's
-// migration guidance points text-only traffic at gpt-oss-120b now. Override
-// via env if you want a different model.
-const GROQ_MODEL = process.env.GROQ_MODEL || 'openai/gpt-oss-120b';
+
+// Groq model IDs that are fully shut down (calls 404 with model_not_found).
+// If a deployment's env still points GROQ_MODEL/GROQ_VISION_MODEL at one of
+// these — e.g. a stale Render/hosting env var — we ignore it and fall back
+// to the current default below instead of failing every request.
+const RETIRED_GROQ_MODELS = new Set([
+  'llama-3.1-8b-instant',
+  'llama-3.3-70b-versatile',
+  'qwen/qwen3-32b',
+  'meta-llama/llama-4-scout-17b-16e-instruct',
+  'meta-llama/llama-4-maverick-17b-128e-instruct',
+  'moonshotai/kimi-k2-instruct',
+  'moonshotai/kimi-k2-instruct-0905',
+  'gemma2-9b-it',
+  'llama3-70b-8192',
+  'llama3-8b-8192',
+  'mixtral-8x7b-32768',
+  'gemma-7b-it',
+  'llama-3.2-1b-preview',
+]);
+
+function resolveModel(envValue, fallback, label) {
+  if (envValue && RETIRED_GROQ_MODELS.has(envValue)) {
+    console.warn(
+      `[groqReceiptParser] ${label} env var is set to "${envValue}", which Groq has retired. ` +
+      `Ignoring it and using "${fallback}" instead. Update/remove the env var to silence this warning.`
+    );
+    return fallback;
+  }
+  return envValue || fallback;
+}
+
+// llama-3.1-8b-instant was retired by Groq — silently 404'd on every call,
+// which is why classification looked "broken" even though OCR.space itself
+// was returning text fine. Groq's migration guidance points text-only
+// traffic at gpt-oss-120b now. Override via env if you want a different
+// (currently-active) model.
+const GROQ_MODEL = resolveModel(process.env.GROQ_MODEL, 'openai/gpt-oss-120b', 'GROQ_MODEL');
 // Vision-capable model used to read the receipt image directly (see
 // extractReceiptFieldsFromImage below). Override via env — Groq's
-// multimodal lineup changes fairly often.
-const GROQ_VISION_MODEL = process.env.GROQ_VISION_MODEL || 'qwen/qwen3.6-27b';
+// multimodal lineup changes fairly often. Note qwen/qwen3.6-27b is a
+// preview model per Groq's docs, so treat it as best-effort, not SLA'd.
+const GROQ_VISION_MODEL = resolveModel(process.env.GROQ_VISION_MODEL, 'qwen/qwen3.6-27b', 'GROQ_VISION_MODEL');
+
+// Strict JSON Schema for the extracted fields. Using response_format:
+// { type: 'json_schema', json_schema: { strict: true, ... } } instead of
+// the looser { type: 'json_object' } mode makes Groq constrain generation
+// at the token level, so it can no longer return malformed/incomplete JSON
+// (the "json_validate_failed" 400 we were seeing intermittently from the
+// vision model). Strict mode requires every property to be listed in
+// `required` and `additionalProperties: false`; nullable fields use a
+// ["type", "null"] union instead of a separate `nullable` flag.
+const RECEIPT_FIELDS_SCHEMA = {
+  type: 'json_schema',
+  json_schema: {
+    name: 'receipt_fields',
+    strict: true,
+    schema: {
+      type: 'object',
+      properties: {
+        amount: { type: ['number', 'null'], description: 'The transferred amount, no currency symbol or commas.' },
+        name: { type: ['string', 'null'], description: "The sender's / payer's name (not the recipient/bank staff)." },
+        txnId: { type: ['string', 'null'], description: 'Transaction ID / reference number / FT number.' },
+        bankName: { type: ['string', 'null'], description: 'The bank or mobile money provider name.' },
+        date: { type: ['string', 'null'], description: 'Transaction date, ISO 8601 (YYYY-MM-DD) if determinable.' },
+      },
+      required: ['amount', 'name', 'txnId', 'bankName', 'date'],
+      additionalProperties: false,
+    },
+  },
+};
 
 const SYSTEM_PROMPT = `You extract structured fields from OCR text of a bank payment/transfer receipt or screenshot. The OCR text may be messy, have broken line breaks, or missing spaces.
 
@@ -83,6 +144,36 @@ function normalizeParsedFields(parsed) {
 }
 
 /**
+ * POSTs to the Groq chat completions endpoint, preferring strict JSON
+ * Schema mode but transparently retrying once with looser JSON Object mode
+ * if the model doesn't support schema mode (not all Groq models do — see
+ * RECEIPT_FIELDS_SCHEMA comment above). This keeps us from swapping the
+ * intermittent "json_validate_failed" error for a hard "response_format
+ * not supported" error on models that lack schema support.
+ * @returns {Promise<Response>}
+ */
+async function groqChatCompletion(apiKey, body) {
+  let res = await fetch(GROQ_API_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({ ...body, response_format: RECEIPT_FIELDS_SCHEMA }),
+  });
+
+  if (!res.ok && res.status === 400) {
+    const bodyText = await res.clone().text().catch(() => '');
+    if (/response_format|json_schema|does not support/i.test(bodyText)) {
+      res = await fetch(GROQ_API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({ ...body, response_format: { type: 'json_object' } }),
+      });
+    }
+  }
+
+  return res;
+}
+
+/**
  * @param {string} rawText - OCR-extracted text from the receipt image
  * @param {{txnId: string|null, name: string|null}} regexHints - best-effort
  *   regex matches, passed in as a hint since they're sometimes right and
@@ -105,22 +196,14 @@ async function extractReceiptFields(rawText, regexHints = {}) {
     `Regex already guessed txnId="${regexHints.txnId || ''}" and name="${regexHints.name || ''}" — use these as hints only if they look right; ignore them if you find better matches.`,
   ].join('\n');
 
-  const res = await fetch(GROQ_API_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: GROQ_MODEL,
-      temperature: 0,
-      max_tokens: 300,
-      response_format: { type: 'json_object' },
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: userContent },
-      ],
-    }),
+  const res = await groqChatCompletion(apiKey, {
+    model: GROQ_MODEL,
+    temperature: 0,
+    max_tokens: 300,
+    messages: [
+      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'user', content: userContent },
+    ],
   });
 
   if (!res.ok) {
@@ -165,28 +248,20 @@ async function extractReceiptFieldsFromImage(fileBuffer, mimetype) {
   const base64 = fileBuffer.toString('base64');
   const dataUrl = `data:${mimetype || 'image/jpeg'};base64,${base64}`;
 
-  const res = await fetch(GROQ_API_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: GROQ_VISION_MODEL,
-      temperature: 0,
-      max_tokens: 300,
-      response_format: { type: 'json_object' },
-      messages: [
-        { role: 'system', content: VISION_SYSTEM_PROMPT },
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: 'Extract the fields from this payment receipt image.' },
-            { type: 'image_url', image_url: { url: dataUrl } },
-          ],
-        },
-      ],
-    }),
+  const res = await groqChatCompletion(apiKey, {
+    model: GROQ_VISION_MODEL,
+    temperature: 0,
+    max_tokens: 300,
+    messages: [
+      { role: 'system', content: VISION_SYSTEM_PROMPT },
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Extract the fields from this payment receipt image.' },
+          { type: 'image_url', image_url: { url: dataUrl } },
+        ],
+      },
+    ],
   });
 
   if (!res.ok) {
