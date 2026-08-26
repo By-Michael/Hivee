@@ -17,7 +17,7 @@
 // -----------------------------------------------------------------------
 
 const AppError = require('../utils/AppError');
-const { extractReceiptFields, extractReceiptFieldsFromImage } = require('./groqReceiptParser');
+const { extractReceiptFields } = require('./groqReceiptParser');
 
 const OCR_SPACE_URL = 'https://api.ocr.space/parse/image';
 
@@ -37,6 +37,11 @@ async function ocrSpaceParse(fileBuffer, mimetype, filename) {
 
   const res = await fetch(OCR_SPACE_URL, { method: 'POST', body: form });
   if (!res.ok) {
+    // Log the actual reason so a 502 here is diagnosable instead of a black
+    // box — OCR.space returns a JSON or plain-text error body on failure
+    // (bad/missing API key, rate limit, file too large, unsupported format).
+    const bodyText = await res.text().catch(() => '');
+    console.error(`[ocrReceipt] OCR.space request failed (${res.status}): ${bodyText.slice(0, 300)}`);
     throw new AppError('OCR service request failed', 502);
   }
   const data = await res.json();
@@ -81,27 +86,14 @@ function extractName(text) {
  * @returns {Promise<{
  *   txnId: string|null, name: string|null, amount: number|null,
  *   bankName: string|null, date: string|null,
- *   source: 'groq-vision'|'groq'|'regex', rawText: string
+ *   source: 'groq'|'regex', rawText: string
  * }>}
  */
 async function parseReceiptImage(fileBuffer, mimetype, filename) {
-  // Primary path: let a Groq vision model read the image directly. This is
-  // the accurate path — OCR.space's classic text extraction is what was
-  // producing bad reads on phone-screenshot receipts, and no amount of
-  // downstream LLM classification can recover text OCR.space already
-  // mangled. Reading the pixels avoids that lossy step entirely.
-  try {
-    const visionResult = await extractReceiptFieldsFromImage(fileBuffer, mimetype);
-    if (visionResult && (visionResult.txnId || visionResult.name || visionResult.amount)) {
-      return { ...visionResult, source: 'groq-vision', rawText: '' };
-    }
-  } catch (err) {
-    // Not configured, rate-limited, or the model had a bad day — fall
-    // through to the OCR.space + regex/text-Groq pipeline below rather
-    // than blocking the upload.
-    console.error('[ocrReceipt] Groq vision extraction failed, falling back to OCR.space:', err.message);
-  }
-
+  // OCR.space extracts the raw text off the screenshot first; Groq then
+  // classifies that text into structured fields (amount vs. txn ID vs.
+  // sender name, etc.) — Groq never sees the image itself, only the text
+  // OCR.space already extracted.
   const rawText = await ocrSpaceParse(fileBuffer, mimetype, filename);
 
   // Regex pass always runs first — it's free, fast, and is the fallback if

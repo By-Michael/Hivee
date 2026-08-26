@@ -17,9 +17,9 @@
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 
 // Groq model IDs that are fully shut down (calls 404 with model_not_found).
-// If a deployment's env still points GROQ_MODEL/GROQ_VISION_MODEL at one of
-// these — e.g. a stale Render/hosting env var — we ignore it and fall back
-// to the current default below instead of failing every request.
+// If a deployment's env still points GROQ_MODEL at one of these — e.g. a
+// stale Render/hosting env var — we ignore it and fall back to the current
+// default below instead of failing every request.
 const RETIRED_GROQ_MODELS = new Set([
   'llama-3.1-8b-instant',
   'llama-3.3-70b-versatile',
@@ -53,11 +53,6 @@ function resolveModel(envValue, fallback, label) {
 // traffic at gpt-oss-120b now. Override via env if you want a different
 // (currently-active) model.
 const GROQ_MODEL = resolveModel(process.env.GROQ_MODEL, 'openai/gpt-oss-120b', 'GROQ_MODEL');
-// Vision-capable model used to read the receipt image directly (see
-// extractReceiptFieldsFromImage below). Override via env — Groq's
-// multimodal lineup changes fairly often. Note qwen/qwen3.6-27b is a
-// preview model per Groq's docs, so treat it as best-effort, not SLA'd.
-const GROQ_VISION_MODEL = resolveModel(process.env.GROQ_VISION_MODEL, 'qwen/qwen3.6-27b', 'GROQ_VISION_MODEL');
 
 // Strict JSON Schema for the extracted fields. Using response_format:
 // { type: 'json_schema', json_schema: { strict: true, ... } } instead of
@@ -100,26 +95,6 @@ Return ONLY a JSON object, no prose, no markdown fences, with exactly these keys
 
 Rules:
 - If a field is not clearly present in the text, use null. Never guess or invent a value.
-- amount must be a plain JSON number (e.g. 1250.5), not a string, not formatted with commas or currency symbols.
-- Do not confuse a phone number, account number, or reference-looking noise for the transaction ID unless it is labeled as such or is the most plausible candidate.
-- Respond with the JSON object only.`;
-
-// Same schema/rules, but reading the receipt image directly instead of an
-// OCR text blob — see extractReceiptFieldsFromImage for why this is the
-// primary path now.
-const VISION_SYSTEM_PROMPT = `You read a photo or screenshot of a bank payment/transfer receipt and extract structured fields directly from the image. The image may be a phone screenshot, a photo of a printed receipt, low resolution, glare, or an unfamiliar bank app layout — read it as carefully as a human would.
-
-Return ONLY a JSON object, no prose, no markdown fences, with exactly these keys:
-{
-  "amount": number or null,       // the transferred amount, as a plain number, no currency symbol or commas
-  "name": string or null,         // the sender's / payer's name (not the recipient/bank staff)
-  "txnId": string or null,        // transaction ID / reference number / FT number
-  "bankName": string or null,     // the bank or mobile money provider name
-  "date": string or null          // transaction date, ISO 8601 (YYYY-MM-DD) if you can determine it, else null
-}
-
-Rules:
-- If a field is not clearly visible or legible, use null. Never guess or invent a value.
 - amount must be a plain JSON number (e.g. 1250.5), not a string, not formatted with commas or currency symbols.
 - Do not confuse a phone number, account number, or reference-looking noise for the transaction ID unless it is labeled as such or is the most plausible candidate.
 - Respond with the JSON object only.`;
@@ -225,66 +200,8 @@ async function extractReceiptFields(rawText, regexHints = {}) {
   return normalizeParsedFields(parsed);
 }
 
-/**
- * Reads the receipt image directly with a Groq vision model, instead of
- * classifying OCR.space's text output. This is the main accuracy fix:
- * OCR.space is a classic OCR engine and struggles with phone-screenshot
- * receipts (small fonts, colored app backgrounds, glare on photos), and
- * once it mangles a character there is no way for a downstream text-only
- * model to recover it. A vision model reads the pixels itself, so it isn't
- * bottlenecked by a lossy intermediate text extraction.
- *
- * @param {Buffer} fileBuffer
- * @param {string} mimetype
- * @returns {Promise<{amount:number|null,name:string|null,txnId:string|null,bankName:string|null,date:string|null}|null>}
- *   Returns null (never throws) if Groq isn't configured — caller falls
- *   back to the OCR.space + regex/text-Groq pipeline. Throws on a
- *   configured-but-failed call so the caller can log it distinctly.
- */
-async function extractReceiptFieldsFromImage(fileBuffer, mimetype) {
-  const apiKey = process.env.GROQ_API_KEY;
-  if (!apiKey) return null; // not configured — caller falls back
-
-  const base64 = fileBuffer.toString('base64');
-  const dataUrl = `data:${mimetype || 'image/jpeg'};base64,${base64}`;
-
-  const res = await groqChatCompletion(apiKey, {
-    model: GROQ_VISION_MODEL,
-    temperature: 0,
-    max_tokens: 300,
-    messages: [
-      { role: 'system', content: VISION_SYSTEM_PROMPT },
-      {
-        role: 'user',
-        content: [
-          { type: 'text', text: 'Extract the fields from this payment receipt image.' },
-          { type: 'image_url', image_url: { url: dataUrl } },
-        ],
-      },
-    ],
-  });
-
-  if (!res.ok) {
-    const bodyText = await res.text().catch(() => '');
-    throw new Error(`Groq vision API request failed (${res.status}): ${bodyText.slice(0, 200)}`);
-  }
-
-  const data = await res.json();
-  const content = data?.choices?.[0]?.message?.content;
-  if (!content) throw new Error('Groq vision response had no content');
-
-  let parsed;
-  try {
-    parsed = JSON.parse(content);
-  } catch (err) {
-    throw new Error(`Groq vision response was not valid JSON: ${content.slice(0, 200)}`);
-  }
-
-  return normalizeParsedFields(parsed);
-}
-
 function isStubActive() {
   return !process.env.GROQ_API_KEY;
 }
 
-module.exports = { extractReceiptFields, extractReceiptFieldsFromImage, isStubActive };
+module.exports = { extractReceiptFields, isStubActive };
