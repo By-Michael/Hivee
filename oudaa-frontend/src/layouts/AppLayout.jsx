@@ -694,7 +694,7 @@ function Brand({ collapsed = false, onToggle }) {
       <img
         src="/oudaa-h-mark.png"
         alt="Oudaa"
-        className={`h-10 w-10 object-contain transition-opacity duration-200 ease-in-out ${collapsed && onToggle ? 'group-hover:opacity-0' : ''}`}
+        className={`h-8 w-8 object-contain transition-opacity duration-200 ease-in-out ${collapsed && onToggle ? 'group-hover:opacity-0' : ''}`}
       />
       {collapsed && onToggle && (
         <PanelLeftOpen className="h-[19px] w-[19px] text-ink-400 absolute inset-0 m-auto opacity-0 group-hover:opacity-100 transition-opacity duration-200 ease-in-out" />
@@ -716,8 +716,8 @@ function Brand({ collapsed = false, onToggle }) {
       ) : (
         LogoMark
       )}
-      <div className={`overflow-hidden flex items-center transition-all duration-300 ease-in-out ${collapsed ? 'max-w-0 opacity-0' : 'max-w-[80px] opacity-100 -ml-1'}`}>
-        <p className="font-display font-bold text-xl bg-brand-gradient bg-clip-text text-transparent whitespace-nowrap mt-1">
+      <div className={`overflow-hidden flex items-center transition-all duration-300 ease-in-out ${collapsed ? 'max-w-0 opacity-0' : 'max-w-[90px] opacity-100 ml-1.5'}`}>
+        <p className="font-display font-bold text-xl bg-brand-gradient bg-clip-text text-transparent whitespace-nowrap">
           udaa
         </p>
       </div>
