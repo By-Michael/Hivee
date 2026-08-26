@@ -269,7 +269,7 @@ export default function AdminDashboard() {
         )}
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-5 mb-6">
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-5 mb-6 items-start">
         <div className="card p-5 xl:col-span-2 animate-fade-up">
           <div className="flex items-center justify-between mb-1">
             <h3 className="font-semibold text-ink-800">Collections vs. Expenses</h3>
