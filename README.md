@@ -1,15 +1,15 @@
-# Hivee — Community Fund Management System
+# Oudaa — Community Fund Management System
 
-Hivee is a full-stack app for managing a residential community's shared
+Oudaa is a full-stack app for managing a residential community's shared
 funds: resident registration, fee schedules, payments, funds, projects,
 expenses, receipts, dashboards, and reports. It supports role-based access
 for **Admin (committee)** and **Resident** users.
 
 ## Stack
 
-- **Backend** (`hivee-backend/`): Node.js, Express, Prisma ORM, PostgreSQL,
+- **Backend** (`oudaa-backend/`): Node.js, Express, Prisma ORM, PostgreSQL,
   JWT authentication (short-lived access token + httpOnly refresh cookie).
-- **Frontend** (`hivee-frontend/`): React 18, Vite, Tailwind CSS, React
+- **Frontend** (`oudaa-frontend/`): React 18, Vite, Tailwind CSS, React
   Router, Recharts, Axios.
 
 The frontend talks to the backend over a REST API mounted at `/api/v1`.
@@ -45,7 +45,7 @@ worth knowing if you're extending the schema:
 
 ```bash
 # 1. Backend
-cd hivee-backend
+cd oudaa-backend
 npm install
 cp .env.example .env          # fill in DATABASE_URL + JWT secrets
 npx prisma generate
@@ -54,12 +54,12 @@ npm run seed                  # optional demo data
 npm run dev                   # http://localhost:4000
 
 # 2. Frontend (new terminal)
-cd hivee-frontend
+cd oudaa-frontend
 npm install
 npm run dev                   # http://localhost:5173, proxies /api -> :4000
 ```
 
-Demo login after seeding (see `hivee-backend/prisma/seed.js`), password
+Demo login after seeding (see `oudaa-backend/prisma/seed.js`), password
 `Password123!` for both:
 
 - Admin: `admin@greenwood.example`
@@ -89,6 +89,6 @@ Frontend: http://localhost:5173 · Backend: http://localhost:4000
   (Vercel, Netlify, S3+CloudFront, nginx). Set `VITE_API_URL` at build time
   to your deployed backend's base URL, e.g.
   `https://api.yourdomain.com/api/v1`.
-- Uploaded receipts are written to `hivee-backend/uploads/` on local disk —
+- Uploaded receipts are written to `oudaa-backend/uploads/` on local disk —
   for a deployment behind multiple instances or an ephemeral filesystem
   (most PaaS), swap `config/upload.js` for S3-compatible object storage.
