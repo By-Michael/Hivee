@@ -119,9 +119,15 @@ export default function ResidentPayments() {
     }
   }
 
+  const isAdminPreview = user?.role === 'admin'
+
   async function attemptSubmit() {
     setError('')
     setCanRetry(false)
+    if (isAdminPreview) {
+      setError("You're previewing the resident view as an admin — payment submission is only available to residents.")
+      return
+    }
     setPhase('verifying')
     try {
       const payment = await submitSelfPayment({
@@ -375,7 +381,7 @@ export default function ResidentPayments() {
 
             <div className="flex gap-2 pt-2">
               <button type="button" onClick={closeModal} className="btn-secondary flex-1">Cancel</button>
-              <button type="submit" className="btn-primary flex-1">Submit payment</button>
+              <button type="submit" className="btn-primary flex-1" disabled={isAdminPreview} title={isAdminPreview ? 'Admins are previewing this page — submission is resident-only' : undefined}>Submit payment</button>
             </div>
           </form>
         )}
