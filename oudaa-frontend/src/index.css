@@ -11,7 +11,7 @@
   }
   body {
     @apply bg-brand-50/40 text-ink-800 font-sans;
-    background-color: #f5f8ff;
+    background-color: #eef1f9;
     background-image:
       radial-gradient(at 0% 0%, rgba(37,112,245,0.07) 0px, transparent 45%),
       radial-gradient(at 100% 0%, rgba(90,164,255,0.10) 0px, transparent 45%);
@@ -93,6 +93,22 @@
 .animate-fade-up {
   animation: fadeUp 0.45s ease both;
 }
+
+/* =============================================================
+   LIGHT-THEME CONTRAST FIX
+   ink-100 (#eceef5) was chosen as the light-mode border/divider
+   color, but it sits almost flush against the page background
+   (#f5f8ff) and against white cards, so every boundary — header,
+   sidebar, card edges, table rows — nearly disappears. Rather than
+   hand-editing border-ink-100 / divide-ink-100 on ~20 components,
+   we override the utility once, here, outside any @layer block so
+   it wins the cascade over Tailwind's own @layer utilities rule
+   regardless of source order. Only affects light mode: every
+   dark-mode boundary already has its own explicit dark:border-[...]
+   color and is untouched by this. */
+.border-ink-100 { border-color: #d7dde9; }
+.divide-ink-100 > :not([hidden]) ~ :not([hidden]) { border-color: #d7dde9; }
+
 
 /* =============================================================
    HEX HIVE — animated, blurred hex-grid backdrop for the login

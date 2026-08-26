@@ -49,7 +49,7 @@ export default {
       },
       boxShadow: {
         soft: '0 1px 2px rgba(15, 45, 55, 0.06), 0 8px 24px -12px rgba(15, 45, 55, 0.12)',
-        card: '0 1px 3px rgba(15, 45, 55, 0.06), 0 2px 12px -4px rgba(15, 45, 55, 0.10)',
+        card: '0 1px 3px rgba(15, 45, 55, 0.08), 0 4px 16px -4px rgba(15, 45, 55, 0.14)',
         glow: '0 0 0 1px rgba(34, 184, 207, 0.10), 0 12px 32px -8px rgba(37, 112, 245, 0.28)',
       },
       backgroundImage: {

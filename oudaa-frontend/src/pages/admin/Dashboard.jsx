@@ -289,7 +289,7 @@ export default function AdminDashboard() {
                   <stop offset="100%" stopColor="#f59e0b" stopOpacity={0} />
                 </linearGradient>
               </defs>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eef1f8" />
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#dbe1ee" />
               <XAxis dataKey="month" tickLine={false} axisLine={false} tick={{ fill: '#8790b3', fontSize: 12 }} />
               <YAxis tickLine={false} axisLine={false} tick={{ fill: '#8790b3', fontSize: 12 }} tickFormatter={(v) => `${v / 1000}k`} />
               <Tooltip

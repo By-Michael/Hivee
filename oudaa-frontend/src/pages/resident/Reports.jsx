@@ -49,7 +49,7 @@ function ContributionTrendCard({ myPayments, fees, dailySeries, categorySeries, 
             <h3 className="text-center text-sm font-semibold text-ink-800 mb-4">Daily Contributions — {monthLabel}</h3>
             <ResponsiveContainer width="100%" height={300}>
               <LineChart data={dailySeries}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eef1f8" />
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#dbe1ee" />
                 <XAxis dataKey="day" tick={{ fill: '#8790b3', fontSize: 10 }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fill: '#8790b3', fontSize: 12 }} tickFormatter={(v) => currency(v)} axisLine={false} tickLine={false} width={70} />
                 <Tooltip formatter={(v) => currency(v)} contentStyle={{ borderRadius: 12, border: '1px solid #eef1f8' }} />
@@ -66,7 +66,7 @@ function ContributionTrendCard({ myPayments, fees, dailySeries, categorySeries, 
             <h3 className="text-center text-sm font-semibold text-ink-800 mb-4">Contributions by Category</h3>
             <ResponsiveContainer width="100%" height={300}>
               <BarChart data={categorySeries}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eef1f8" />
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#dbe1ee" />
                 <XAxis dataKey="name" tick={{ fill: '#8790b3', fontSize: 11 }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fill: '#8790b3', fontSize: 12 }} tickFormatter={(v) => currency(v)} axisLine={false} tickLine={false} width={70} />
                 <Tooltip formatter={(v) => currency(v)} contentStyle={{ borderRadius: 12, border: '1px solid #eef1f8' }} />
@@ -83,7 +83,7 @@ function ContributionTrendCard({ myPayments, fees, dailySeries, categorySeries, 
             <h3 className="text-center text-sm font-semibold text-ink-800 mb-4">Last 6 Months</h3>
             <ResponsiveContainer width="100%" height={300}>
               <BarChart data={monthlySeries}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eef1f8" />
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#dbe1ee" />
                 <XAxis dataKey="month" tick={{ fill: '#8790b3', fontSize: 11 }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fill: '#8790b3', fontSize: 12 }} tickFormatter={(v) => currency(v)} axisLine={false} tickLine={false} width={70} />
                 <Tooltip formatter={(v) => currency(v)} contentStyle={{ borderRadius: 12, border: '1px solid #eef1f8' }} />
@@ -306,7 +306,7 @@ export default function ResidentReports() {
           <h3 className="font-semibold text-ink-800 mb-4">Project budget vs. spend</h3>
           <ResponsiveContainer width="100%" height={280}>
             <BarChart data={projects.map((p) => ({ name: p.name, Budget: p.budget, Spent: p.spent }))}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eef1f8" />
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#dbe1ee" />
               <XAxis dataKey="name" tick={{ fill: '#8790b3', fontSize: 11 }} axisLine={false} tickLine={false} />
               <YAxis tick={{ fill: '#8790b3', fontSize: 12 }} tickFormatter={(v) => `${v / 1000}k`} axisLine={false} tickLine={false} />
               <Tooltip formatter={(v) => currency(v)} contentStyle={{ borderRadius: 12, border: '1px solid #eef1f8' }} />

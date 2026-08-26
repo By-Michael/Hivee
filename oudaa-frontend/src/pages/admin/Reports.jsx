@@ -520,7 +520,7 @@ export default function Reports() {
                   </linearGradient>
                 ))}
               </defs>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eef1f8" />
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#dbe1ee" />
               <XAxis dataKey="name" tick={{ fill: '#8790b3', fontSize: 11 }} axisLine={false} tickLine={false} interval={0} angle={-12} textAnchor="end" height={50} />
               <YAxis tick={{ fill: '#8790b3', fontSize: 12 }} tickFormatter={(v) => `${v / 1000}k`} axisLine={false} tickLine={false} />
               <Tooltip formatter={(v) => currency(v)} cursor={{ fill: '#f5f7fd' }} contentStyle={{ borderRadius: 12, border: '1px solid #eef1f8' }} />
@@ -588,7 +588,7 @@ export default function Reports() {
                   <stop offset="95%" stopColor="#f43f5e" stopOpacity={0.02} />
                 </linearGradient>
               </defs>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eef1f8" />
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#dbe1ee" />
               <XAxis dataKey="month" tick={{ fill: '#8790b3', fontSize: 12 }} axisLine={false} tickLine={false} />
               <YAxis tick={{ fill: '#8790b3', fontSize: 12 }} tickFormatter={(v) => `${v / 1000}k`} axisLine={false} tickLine={false} />
               <Tooltip formatter={(v) => currency(v)} contentStyle={{ borderRadius: 12, border: '1px solid #eef1f8' }} />
@@ -643,7 +643,7 @@ export default function Reports() {
           <h3 className="font-semibold text-ink-800 mb-4">Project budget vs. spend</h3>
           <ResponsiveContainer width="100%" height={280}>
             <BarChart data={projects.map((p) => ({ name: p.name, Budget: p.budget, Spent: p.spent }))}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eef1f8" />
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#dbe1ee" />
               <XAxis dataKey="name" tick={{ fill: '#8790b3', fontSize: 11 }} axisLine={false} tickLine={false} />
               <YAxis tick={{ fill: '#8790b3', fontSize: 12 }} tickFormatter={(v) => `${v / 1000}k`} axisLine={false} tickLine={false} />
               <Tooltip formatter={(v) => currency(v)} contentStyle={{ borderRadius: 12, border: '1px solid #eef1f8' }} />
@@ -658,7 +658,7 @@ export default function Reports() {
           <h3 className="font-semibold text-ink-800 mb-4">Budget utilisation (%)</h3>
           <ResponsiveContainer width="100%" height={280}>
             <RadarChart data={projectRadar}>
-              <PolarGrid stroke="#eef1f8" />
+              <PolarGrid stroke="#dbe1ee" />
               <PolarAngleAxis dataKey="name" tick={{ fill: '#4f5779', fontSize: 11 }} />
               <PolarRadiusAxis tick={{ fill: '#8790b3', fontSize: 10 }} />
               <Radar dataKey="utilisation" stroke="#1554d6" fill="#2570f5" fillOpacity={0.4} />
