@@ -5,7 +5,7 @@ import {
   LayoutDashboard, Users, Receipt, Wallet, FolderKanban, FileText,
   BarChart3, LogOut, Menu, X, Bell, Search, Landmark, ChevronDown,
   PanelLeftClose, PanelLeftOpen, UserCog, AlertCircle, CheckCircle2, Clock, ShieldCheck,
-  Sun, Moon, Settings, HelpCircle, ChevronRight,
+  Sun, Moon, Settings, HelpCircle,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { useData } from '../context/DataContext'
@@ -518,10 +518,8 @@ export default function AppLayout({ role }) {
         </nav>
         <SidebarFooter
           user={user}
-          base={base}
           collapsed={collapsed}
           navCollapsed={navCollapsed}
-          navigate={navigate}
           onLogout={handleLogout}
         />
       </aside>
@@ -546,12 +544,9 @@ export default function AppLayout({ role }) {
             </nav>
             <SidebarFooter
               user={user}
-              base={base}
               collapsed={false}
               navCollapsed={false}
-              navigate={navigate}
               onLogout={handleLogout}
-              onNavigate={() => setOpen(false)}
             />
           </aside>
         </div>
@@ -646,32 +641,17 @@ function Avatar({ user }) {
   )
 }
 
-function SidebarFooter({ user, base, collapsed, navCollapsed, navigate, onLogout, onNavigate }) {
+function SidebarFooter({ user, collapsed, navCollapsed, onLogout }) {
   // Sidebar footer: account summary + help + sign out. Kept as three
   // distinct, individually-clickable rows (not one big card) so each
   // affordance has its own hit target and hover state, same pattern as
   // the nav links above it. Collapses down to icon-only, centered
   // buttons when the sidebar itself is collapsed.
-  function go(path) {
-    onNavigate?.()
-    navigate(path)
-  }
-
   return (
-    <div className="shrink-0 pt-3 mt-2 border-t border-ink-100 dark:border-[#263255] space-y-1">
-      <button
-        type="button"
-        onClick={() => go(`${base}/profile`)}
-        title={collapsed ? 'Signed in as ' + (user?.name || '') : undefined}
-        className={`w-full flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-left hover:bg-ink-50 dark:hover:bg-white/5 transition-colors ${navCollapsed ? 'justify-center px-0' : ''}`}
-      >
-        <Avatar user={user} />
-        <div className={`min-w-0 overflow-hidden transition-all duration-300 ease-in-out ${collapsed ? 'max-w-0 opacity-0' : 'max-w-[170px] opacity-100'}`}>
-          <p className="text-[11px] leading-tight text-ink-400 whitespace-nowrap">Signed in as</p>
-          <p className="text-sm font-semibold text-ink-800 dark:text-ink-100 leading-tight truncate">{user?.name}</p>
-        </div>
-        {!collapsed && <ChevronRight className="h-4 w-4 text-ink-300 ml-auto shrink-0" />}
-      </button>
+    <div className="shrink-0 pt-3 mt-2 border-t border-ink-100 dark:border-[#263255] space-y-2.5" style={{ marginTop: '5px' }}>
+      <p className={`text-xs text-ink-400 dark:text-ink-500 whitespace-nowrap transition-all duration-300 ease-in-out ${collapsed ? 'hidden' : 'px-2.5'}`}>
+        Signed in as <span className="font-semibold text-ink-700 dark:text-ink-200">{user?.name}</span>
+      </p>
 
       <a
         href="mailto:support@oudaa.app"
@@ -688,12 +668,10 @@ function SidebarFooter({ user, base, collapsed, navCollapsed, navigate, onLogout
         type="button"
         onClick={onLogout}
         title={collapsed ? 'Log out' : undefined}
-        className={`sidebar-link ${navCollapsed ? 'collapsed' : ''} w-full text-rose-500 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10`}
+        className={`inline-flex items-center justify-center gap-2 rounded-full border border-ink-200 dark:border-[#324066] px-4 py-1.5 text-sm font-medium text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-500/10 transition-colors ${navCollapsed ? 'w-9 h-9 !p-0' : 'w-full'}`}
       >
-        <LogOut className="h-4.5 w-4.5 shrink-0" />
-        <span className={`overflow-hidden whitespace-nowrap transition-all duration-300 ease-in-out ${collapsed ? 'max-w-0 opacity-0' : 'max-w-[160px] opacity-100'}`}>
-          Log out
-        </span>
+        <LogOut className="h-4 w-4 shrink-0" />
+        {!collapsed && 'Log out'}
       </button>
     </div>
   )
