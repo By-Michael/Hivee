@@ -518,7 +518,7 @@ function CommunityTab() {
         name: community.name || '',
         address: community.address || '',
         contactInfo: community.contactInfo || '',
-        paymentBankName: community.paymentBankName || '',
+        paymentBankName: community.paymentBankName || BANK_OPTIONS[0],
         paymentAccountName: community.paymentAccountName || '',
         paymentAccountNumber: community.paymentAccountNumber || '',
         autoVerifyMaxAmount: community.autoVerifyMaxAmount ?? '',
@@ -639,33 +639,34 @@ function CommunityTab() {
           </p>
           <div className="grid sm:grid-cols-2 gap-4">
             <div className="sm:col-span-2">
-              <label className="label">Bank name</label>
-              <select
-                required
-                className="input"
-                value={bankIsOther ? 'Other' : (form.paymentBankName || '')}
-                onChange={(e) => {
-                  if (e.target.value === 'Other') {
-                    setBankIsOther(true)
-                    updateField({ paymentBankName: '' })
-                  } else {
-                    setBankIsOther(false)
-                    updateField({ paymentBankName: e.target.value })
-                  }
-                }}
-              >
-                <option value="" disabled>Select a bank…</option>
-                {BANK_OPTIONS.map((b) => <option key={b} value={b}>{b}</option>)}
-              </select>
-              {bankIsOther && (
-                <input
-                  required
-                  autoFocus
-                  className="input mt-2"
-                  placeholder="Enter bank name"
-                  value={form.paymentBankName}
-                  onChange={(e) => updateField({ paymentBankName: e.target.value })}
-                />
+              <label className="label">Bank</label>
+              {bankIsOther ? (
+                <>
+                  <input
+                    required
+                    autoFocus
+                    className="input"
+                    placeholder="Enter bank name"
+                    value={form.paymentBankName}
+                    onChange={(e) => updateField({ paymentBankName: e.target.value })}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => { setBankIsOther(false); updateField({ paymentBankName: BANK_OPTIONS[0] }) }}
+                    className="mt-1.5 text-xs font-medium text-brand-700 hover:text-brand-800"
+                  >
+                    Switch to Commercial Bank of Ethiopia instead
+                  </button>
+                </>
+              ) : (
+                // Hivee only supports CBE as the bank for this fallback
+                // account (Telebirr has no bank account — see the note
+                // above) — nothing to choose here, so this is a fixed
+                // display rather than a dropdown with one pointless option.
+                <div className="flex items-center gap-2.5 rounded-xl px-3.5 py-3 ring-1 ring-brand-200 bg-brand-50 text-brand-700">
+                  <Landmark className="h-4 w-4 shrink-0" />
+                  <span className="text-sm font-semibold">Commercial Bank of Ethiopia (CBE)</span>
+                </div>
               )}
             </div>
             <div>
@@ -735,8 +736,8 @@ function CommunityTab() {
 // in schema.prisma) — CBE and Telebirr are the two rails Veritas has
 // dedicated, reliable verification adapters for.
 const METHOD_PROVIDERS = [
-  { value: 'CBE', label: 'Commercial Bank of Ethiopia (CBE)' },
-  { value: 'TELEBIRR', label: 'Telebirr' },
+  { value: 'CBE', label: 'Commercial Bank of Ethiopia (CBE)', short: 'CBE' },
+  { value: 'TELEBIRR', label: 'Telebirr', short: 'Telebirr' },
 ]
 const emptyMethodForm = {
   provider: 'CBE', label: '', bankName: '', accountName: '', accountNumber: '', fullName: '', phoneNumber: '', isActive: true,
@@ -873,14 +874,27 @@ function PaymentMethodsPanel() {
         <form onSubmit={submit} className="space-y-4">
           <div>
             <label className="label">Provider</label>
-            <select
-              required
-              className="input"
-              value={form.provider}
-              onChange={(e) => setForm((f) => ({ ...f, provider: e.target.value }))}
-            >
-              {METHOD_PROVIDERS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
-            </select>
+            <div className="grid grid-cols-2 gap-2.5">
+              {METHOD_PROVIDERS.map((p) => {
+                const selected = form.provider === p.value
+                const Icon = p.value === 'TELEBIRR' ? Smartphone : Landmark
+                return (
+                  <button
+                    key={p.value}
+                    type="button"
+                    onClick={() => setForm((f) => ({ ...f, provider: p.value }))}
+                    className={`flex flex-col items-center gap-1.5 rounded-xl px-3 py-3.5 text-center transition ring-1 ${
+                      selected
+                        ? 'bg-brand-50 ring-brand-300 text-brand-700'
+                        : 'bg-white ring-ink-200 text-ink-500 hover:bg-ink-50'
+                    }`}
+                  >
+                    <Icon className={`h-5 w-5 ${selected ? 'text-brand-600' : 'text-ink-400'}`} />
+                    <span className="text-sm font-semibold leading-tight">{p.short}</span>
+                  </button>
+                )
+              })}
+            </div>
           </div>
           <div>
             <label className="label">Label shown to residents</label>
