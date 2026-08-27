@@ -143,10 +143,11 @@ export function feeToAPI(form) {
 }
 
 // ------------------------------- payment methods ---------------------------
-// A community's configured ways to receive money (CBE, Telebirr, other
-// banks...). The backend shape (schema.prisma CommunityPaymentMethod) is
-// already camelCase and matches what the UI needs field-for-field, so this
-// just normalizes nulls to '' so <input>s stay controlled.
+// A community's configured ways to receive money — CBE and/or Telebirr,
+// the only two providers Hivee supports (see PaymentProvider in
+// schema.prisma). The backend shape (schema.prisma CommunityPaymentMethod)
+// is already camelCase and matches what the UI needs field-for-field, so
+// this just normalizes nulls to '' so <input>s stay controlled.
 export function paymentMethodToUI(m) {
   return {
     id: m.id,

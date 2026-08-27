@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import {
-  Wallet, Plus, Copy, Check, Landmark, Camera, Loader2, ShieldCheck, Clock, RotateCw, Upload, FileCheck2, Smartphone,
+  Wallet, Plus, Copy, Check, Landmark, Camera, Loader2, ShieldCheck, Clock, RotateCw, Upload, FileCheck2, Smartphone, Link2,
 } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import { useData } from '../../context/DataContext'
@@ -8,14 +8,13 @@ import { PageHeader, Modal, Badge, EmptyState, currency, formatDate, usePagedLis
 
 // Maps a CommunityPaymentMethod's `provider` enum (DB value) to the
 // lowercase hint the backend's self-verify endpoint expects (see
-// DB_PROVIDER_TO_VERITAS in paymentController.js). BANK_OTHER has no
-// dedicated bank adapter, so it's sent with no hint (universal auto-detect).
+// DB_PROVIDER_TO_VERITAS in paymentController.js). Hivee only supports
+// these two providers (see PaymentProvider in schema.prisma).
 const PROVIDER_TO_HINT = {
-  CBE: 'cbe', TELEBIRR: 'telebirr', DASHEN: 'dashen', ABYSSINIA: 'abyssinia', CBEBIRR: 'cbebirr', MPESA: 'mpesa', BANK_OTHER: undefined,
+  CBE: 'cbe', TELEBIRR: 'telebirr',
 }
 const PROVIDER_LABELS = {
-  CBE: 'Commercial Bank of Ethiopia (CBE)', TELEBIRR: 'Telebirr', DASHEN: 'Dashen Bank',
-  ABYSSINIA: 'Bank of Abyssinia', CBEBIRR: 'CBE Birr', MPESA: 'M-Pesa', BANK_OTHER: 'Other bank',
+  CBE: 'Commercial Bank of Ethiopia (CBE)', TELEBIRR: 'Telebirr',
 }
 
 // Small "value + copy button" row used in the "pay to" block.
@@ -48,7 +47,7 @@ function CopyRow({ label, value, mono }) {
   )
 }
 
-const emptyForm = { feeId: '', paymentMethodId: '', payerName: '', txnId: '', suffix: '', phoneNumber: '', reason: '' }
+const emptyForm = { feeId: '', paymentMethodId: '', payerName: '', txnId: '', phoneNumber: '', reason: '' }
 
 export default function ResidentPayments() {
   const { user } = useAuth()
@@ -79,19 +78,23 @@ export default function ResidentPayments() {
   const [receiptAmount, setReceiptAmount] = useState(null)
   const fileInputRef = useRef(null)
 
-  // CBE-only: the resident uploads their e-receipt separately (before
-  // submit) and we hang on to the resulting URL to send with self-verify.
+  // CBE-only: the resident either uploads their e-receipt (screenshot/PDF)
+  // or pastes a link to it — either way we end up with a receiptUrl to send
+  // with self-verify. "mode" toggles which of the two inputs is showing.
+  const [receiptMode, setReceiptMode] = useState('upload') // 'upload' | 'link'
   const [receiptUploading, setReceiptUploading] = useState(false)
   const [receiptFileName, setReceiptFileName] = useState('')
   const [receiptUploadError, setReceiptUploadError] = useState('')
+  const [receiptLink, setReceiptLink] = useState('')
   const receiptInputRef = useRef(null)
 
   const selectedFee = fees.find((f) => f.id === form.feeId)
   const selectedMethod = activeMethods.find((m) => m.id === form.paymentMethodId)
   const isCbe = selectedMethod?.provider === 'CBE'
   const isTelebirr = selectedMethod?.provider === 'TELEBIRR'
-  const needsSuffix = selectedMethod?.provider === 'ABYSSINIA'
-  const needsPhone = selectedMethod?.provider === 'CBEBIRR' || isTelebirr
+  // Only CBE and Telebirr are supported — CBE is receipt-only (no
+  // transaction ID/suffix needed) and Telebirr needs the sender's phone.
+  const needsPhone = isTelebirr
 
   function openModal() {
     setForm({ ...emptyForm, feeId: fees[0]?.id || '', paymentMethodId: activeMethods[0]?.id || '' })
@@ -101,19 +104,22 @@ export default function ResidentPayments() {
     setCanRetry(false)
     setOcrNote('')
     setReceiptAmount(null)
+    setReceiptMode('upload')
     setReceiptFileName('')
     setReceiptUploadError('')
+    setReceiptLink('')
     setModal(true)
   }
 
   function selectMethod(methodId) {
     // Clear fields that don't carry over between providers (a CBE
-    // receipt is meaningless for Telebirr, a suffix typed for Abyssinia
-    // isn't relevant to Dashen, etc.) so a leftover value can't sneak
-    // into a submission it doesn't apply to.
-    setForm((f) => ({ ...f, paymentMethodId: methodId, txnId: '', suffix: '', phoneNumber: '', receiptUrl: undefined }))
+    // receipt is meaningless for Telebirr and vice versa) so a leftover
+    // value can't sneak into a submission it doesn't apply to.
+    setForm((f) => ({ ...f, paymentMethodId: methodId, txnId: '', phoneNumber: '', receiptUrl: undefined }))
+    setReceiptMode('upload')
     setReceiptFileName('')
     setReceiptUploadError('')
+    setReceiptLink('')
   }
 
   async function handleReceiptUpload(e) {
@@ -189,15 +195,11 @@ export default function ResidentPayments() {
       return
     }
     if (isCbe && !form.receiptUrl) {
-      setError('Upload your CBE e-receipt before submitting.')
+      setError('Upload your CBE e-receipt (or paste a link to it) before submitting.')
       return
     }
     if (!isCbe && !form.txnId.trim()) {
       setError('Transaction ID is required.')
-      return
-    }
-    if (needsSuffix && !form.suffix.trim()) {
-      setError('This bank requires the account suffix shown on your receipt.')
       return
     }
     if (needsPhone && !form.phoneNumber.trim()) {
@@ -214,7 +216,6 @@ export default function ResidentPayments() {
         paymentMethodId: selectedMethod?.id || undefined,
         provider: selectedMethod ? PROVIDER_TO_HINT[selectedMethod.provider] : undefined,
         txnId: isCbe ? undefined : form.txnId.trim(),
-        suffix: needsSuffix ? form.suffix.trim() : undefined,
         phoneNumber: needsPhone ? form.phoneNumber.trim() : undefined,
         receiptUrl: isCbe ? form.receiptUrl : undefined,
       })
@@ -429,21 +430,52 @@ export default function ResidentPayments() {
 
             {isCbe ? (
               <div className="rounded-xl border border-dashed border-brand-200 bg-brand-50/40 p-3.5">
-                <label className="label !mb-1.5">Upload your CBE e-receipt</label>
+                <label className="label !mb-1.5">CBE e-receipt</label>
                 <p className="text-xs text-ink-400 mb-2.5">
                   CBE transactions can't be looked up automatically — upload the screenshot or PDF receipt
-                  from your transfer and a committee admin will confirm it against this record.
+                  from your transfer, or paste a link to it, and a committee admin will confirm it against
+                  this record.
                 </p>
-                <input ref={receiptInputRef} type="file" accept="image/png,image/jpeg,image/webp,application/pdf" className="hidden" onChange={handleReceiptUpload} />
-                <button
-                  type="button"
-                  onClick={() => receiptInputRef.current?.click()}
-                  disabled={receiptUploading}
-                  className="w-full flex items-center justify-center gap-2 text-sm font-medium text-ink-600 hover:text-brand-700 disabled:opacity-50"
-                >
-                  {receiptUploading ? <Loader2 className="h-4 w-4 animate-spin" /> : (form.receiptUrl ? <FileCheck2 className="h-4 w-4 text-emerald-600" /> : <Upload className="h-4 w-4" />)}
-                  {receiptUploading ? 'Uploading…' : form.receiptUrl ? `Uploaded: ${receiptFileName}` : 'Choose a screenshot or PDF'}
-                </button>
+                <div className="flex gap-1.5 mb-2.5">
+                  <button
+                    type="button"
+                    onClick={() => { setReceiptMode('upload'); setReceiptLink(''); setForm((f) => ({ ...f, receiptUrl: undefined })) }}
+                    className={`flex-1 rounded-lg py-1.5 text-xs font-medium transition ${receiptMode === 'upload' ? 'bg-brand-600 text-white' : 'bg-white text-ink-500 ring-1 ring-ink-200'}`}
+                  >
+                    Upload file
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setReceiptMode('link'); setReceiptFileName(''); setForm((f) => ({ ...f, receiptUrl: undefined })) }}
+                    className={`flex-1 rounded-lg py-1.5 text-xs font-medium transition ${receiptMode === 'link' ? 'bg-brand-600 text-white' : 'bg-white text-ink-500 ring-1 ring-ink-200'}`}
+                  >
+                    Paste a link
+                  </button>
+                </div>
+                {receiptMode === 'upload' ? (
+                  <>
+                    <input ref={receiptInputRef} type="file" accept="image/png,image/jpeg,image/webp,application/pdf" className="hidden" onChange={handleReceiptUpload} />
+                    <button
+                      type="button"
+                      onClick={() => receiptInputRef.current?.click()}
+                      disabled={receiptUploading}
+                      className="w-full flex items-center justify-center gap-2 text-sm font-medium text-ink-600 hover:text-brand-700 disabled:opacity-50"
+                    >
+                      {receiptUploading ? <Loader2 className="h-4 w-4 animate-spin" /> : (form.receiptUrl ? <FileCheck2 className="h-4 w-4 text-emerald-600" /> : <Upload className="h-4 w-4" />)}
+                      {receiptUploading ? 'Uploading…' : form.receiptUrl ? `Uploaded: ${receiptFileName}` : 'Choose a screenshot or PDF'}
+                    </button>
+                  </>
+                ) : (
+                  <div className="relative">
+                    <Link2 className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-400" />
+                    <input
+                      className="input pl-9"
+                      placeholder="https://…"
+                      value={receiptLink}
+                      onChange={(e) => { setReceiptLink(e.target.value); setForm((f) => ({ ...f, receiptUrl: e.target.value.trim() || undefined })) }}
+                    />
+                  </div>
+                )}
                 {receiptUploadError && <p className="mt-2 text-xs text-center text-rose-600">{receiptUploadError}</p>}
               </div>
             ) : (
@@ -455,19 +487,6 @@ export default function ResidentPayments() {
                   placeholder="From your bank's transfer confirmation"
                   value={form.txnId}
                   onChange={(e) => setForm({ ...form, txnId: e.target.value })}
-                />
-              </div>
-            )}
-
-            {needsSuffix && (
-              <div>
-                <label className="label">Account suffix</label>
-                <input
-                  required
-                  className="input font-mono"
-                  placeholder="Shown on your receipt"
-                  value={form.suffix}
-                  onChange={(e) => setForm({ ...form, suffix: e.target.value })}
                 />
               </div>
             )}

@@ -460,14 +460,10 @@ const uploadSelfPaymentReceipt = catchAsync(async (req, res) => {
 
 // Map a CommunityPaymentMethod's PaymentProvider enum (schema.prisma, DB
 // value) to the lowercase provider hint bankVerification.js expects.
+// Hivee only supports these two providers (see PaymentProvider enum).
 const DB_PROVIDER_TO_VERITAS = {
   CBE: 'cbe',
   TELEBIRR: 'telebirr',
-  DASHEN: 'dashen',
-  ABYSSINIA: 'abyssinia',
-  CBEBIRR: 'cbebirr',
-  MPESA: 'mpesa',
-  BANK_OTHER: undefined, // no dedicated Veritas adapter — universal auto-detect
 };
 
 // Resolves which payment method the resident is paying through, and what
@@ -513,8 +509,8 @@ async function resolvePaymentMethod(req, community) {
 //     branch below) until QR extraction is wired up.
 //   - TELEBIRR: txnId (the reference number) + phoneNumber (the sender's
 //     phone) — Telebirr has no account to cross-check against.
-//   - everything else (DASHEN/ABYSSINIA/CBEBIRR/MPESA/BANK_OTHER/legacy
-//     single-account): the existing txnId (+ suffix if required) flow.
+//   - legacy single-account communities (no CommunityPaymentMethod rows
+//     yet): the existing txnId flow, no provider hint.
 const selfVerifyPayment = catchAsync(async (req, res) => {
   if (req.user.role !== 'RESIDENT') {
     throw new AppError('Only residents can submit self-verified payments', 403);

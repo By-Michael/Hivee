@@ -480,16 +480,17 @@ function PreferencesTab() {
 // bank-detail changes still route through the existing multi-committee
 // approval flow on save.
 // ===========================================================================
-// Common banks offered in the "Bank name" dropdown so admins pick from a
-// known-good list instead of free-typing (and risking typos residents would
-// then transfer money against). "Other" reveals a text input as a fallback
-// for anything not on the list.
-const BANK_OPTIONS = [
-  'Commercial Bank of Ethiopia', 'Awash Bank', 'Dashen Bank', 'Bank of Abyssinia',
-  'Wegagen Bank', 'United Bank', 'Nib International Bank', 'Cooperative Bank of Oromia',
-  'Zemen Bank', 'Abay Bank', 'Berhan Bank', 'Bunna Bank', 'Hibret Bank', 'Enat Bank',
-  'Telebirr', 'Other',
-]
+// Hivee only supports CBE and Telebirr as payment providers, so this
+// legacy single-account fallback (a bank-transfer-style account) can only
+// ever be a CBE account — fixed rather than a dropdown, so there's
+// nothing to mistype or pick wrong.
+//
+// Deliberately excludes Telebirr: this legacy single-account form always
+// requires an Account name + Account number below, which doesn't make
+// sense for Telebirr (no bank account — just a full name + phone number).
+// Telebirr belongs in "Payment methods" further down this page instead,
+// which asks for the right fields per provider.
+const BANK_OPTIONS = ['Commercial Bank of Ethiopia']
 
 function CommunityTab() {
   const { community, updateCommunity } = useData()
@@ -522,7 +523,7 @@ function CommunityTab() {
         paymentAccountNumber: community.paymentAccountNumber || '',
         autoVerifyMaxAmount: community.autoVerifyMaxAmount ?? '',
       })
-      setBankIsOther(!!community.paymentBankName && !BANK_OPTIONS.slice(0, -1).includes(community.paymentBankName))
+      setBankIsOther(!!community.paymentBankName && !BANK_OPTIONS.includes(community.paymentBankName))
       loadedOnceRef.current = true
     }
   }, [community])
@@ -630,9 +631,11 @@ function CommunityTab() {
             <Landmark className="h-4 w-4 text-brand-600" /> Payment account
           </h3>
           <p className="text-xs text-ink-400 mb-3">
-            Shown to every resident in "Make a payment" as the account to transfer into — one account for the whole community.
-            Changes here need every other committee member to approve before they take effect (see the notification
-            bell / dashboard once you save).
+            Shown to every resident in "Make a payment" as the fallback account to transfer into — one bank account
+            for the whole community. Changes here need every other committee member to approve before they take
+            effect (see the notification bell / dashboard once you save). For Telebirr or a second/third bank,
+            use <strong className="text-ink-500">Payment methods</strong> below instead — it applies instantly and
+            asks for the right fields per provider.
           </p>
           <div className="grid sm:grid-cols-2 gap-4">
             <div className="sm:col-span-2">
@@ -721,21 +724,19 @@ function CommunityTab() {
 }
 
 // ===========================================================================
-// Payment methods — a community can register several ways to receive money
-// (CBE, Telebirr, other banks) instead of the single legacy account above.
-// Residents pick one of these when self-verifying a payment (see
+// Payment methods — a community can register CBE and/or Telebirr (the
+// only two providers Hivee supports) instead of the single legacy account
+// above. Residents pick one of these when self-verifying a payment (see
 // resident/Payments.jsx). Applies immediately (no committee approval, unlike
 // the legacy bank fields above) since removing/disabling a method never
 // touches existing payment history — see paymentMethodController.js.
 // ===========================================================================
+// Hivee only supports these two payment providers (see PaymentProvider
+// in schema.prisma) — CBE and Telebirr are the two rails Veritas has
+// dedicated, reliable verification adapters for.
 const METHOD_PROVIDERS = [
   { value: 'CBE', label: 'Commercial Bank of Ethiopia (CBE)' },
   { value: 'TELEBIRR', label: 'Telebirr' },
-  { value: 'DASHEN', label: 'Dashen Bank' },
-  { value: 'ABYSSINIA', label: 'Bank of Abyssinia' },
-  { value: 'CBEBIRR', label: 'CBE Birr' },
-  { value: 'MPESA', label: 'M-Pesa' },
-  { value: 'BANK_OTHER', label: 'Other bank' },
 ]
 const emptyMethodForm = {
   provider: 'CBE', label: '', bankName: '', accountName: '', accountNumber: '', fullName: '', phoneNumber: '', isActive: true,
@@ -817,8 +818,9 @@ function PaymentMethodsPanel() {
             <Smartphone className="h-4 w-4 text-brand-600" /> Payment methods
           </h3>
           <p className="text-xs text-ink-400 mt-1 max-w-md">
-            Give residents more than one way to pay — e.g. CBE, Telebirr, and a second bank. They pick one under
-            "Make a payment". Takes effect immediately, no committee approval needed.
+            Register your CBE account and/or Telebirr number — these are the only two payment providers Hivee
+            supports. Residents pick one under "Make a payment". Takes effect immediately, no committee approval
+            needed.
           </p>
         </div>
         <button onClick={openAdd} className="btn-secondary shrink-0 !py-1.5 !px-3 text-xs">

@@ -1,6 +1,6 @@
 const { z } = require('zod');
 
-const PROVIDERS = ['CBE', 'TELEBIRR', 'DASHEN', 'ABYSSINIA', 'CBEBIRR', 'MPESA', 'BANK_OTHER'];
+const PROVIDERS = ['CBE', 'TELEBIRR'];
 
 // Telebirr has no bank account — a committee registering one only needs a
 // full name + phone number to give residents (see model comment in
@@ -23,11 +23,11 @@ function refineByProvider(body) {
   if (TELEBIRR_ONLY_FIELDS.has(body.provider)) {
     return !!body.fullName && !!body.phoneNumber;
   }
-  // CBE / DASHEN / ABYSSINIA / CBEBIRR / MPESA / BANK_OTHER — a bank
-  // account to show residents in the "send payment to" block. CBE still
-  // needs this even though residents no longer type a txn suffix for it
-  // (see selfVerifyPayment's CBE branch) — the account is still shown so
-  // they know where to send the money in the first place.
+  // CBE — a bank account to show residents in the "send payment to"
+  // block. CBE still needs this even though residents no longer type a
+  // txn suffix for it (see selfVerifyPayment's CBE branch) — the account
+  // is still shown so they know where to send the money in the first
+  // place.
   return !!body.accountNumber;
 }
 

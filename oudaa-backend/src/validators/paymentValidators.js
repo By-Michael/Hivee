@@ -78,11 +78,12 @@ const selfVerifyPaymentSchema = z.object({
     // paymentMethodId is also present — the validator's CBE/txnId/
     // receiptUrl refines below run on this field, before the controller
     // ever loads the payment method row to double check it server-side.
-    provider: z.enum(['cbe', 'telebirr', 'dashen', 'abyssinia', 'cbebirr', 'mpesa']).optional(),
-    // Required by Bank of Abyssinia (legacy CBE FT-ref suffixes are no
-    // longer collected from residents — see the CBE branch below).
+    provider: z.enum(['cbe', 'telebirr']).optional(),
+    // Not required by either supported provider today (legacy CBE FT-ref
+    // suffixes are no longer collected from residents — see the CBE
+    // branch below); kept optional for Veritas API compatibility.
     suffix: z.string().optional(),
-    // Required by CBE Birr and Telebirr, format 251XXXXXXXXX.
+    // Required by Telebirr, format 251XXXXXXXXX.
     phoneNumber: z.string().optional(),
     // CBE only: URL of the e-receipt — either uploaded via
     // POST /payments/self-verify/receipt (screenshot/PDF, returns this

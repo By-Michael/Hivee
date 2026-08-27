@@ -3,8 +3,9 @@
 //
 // Backed by Veritas (https://veritas.et), an UNOFFICIAL third-party
 // Ethiopian payment-verification service (not affiliated with any bank
-// or the NBE) that reverse-engineers CBE / Telebirr / Dashen / Bank of
-// Abyssinia / CBE Birr / M-Pesa receipts. It is more real than the old
+// or the NBE) that reverse-engineers CBE / Telebirr receipts (Veritas
+// also supports other providers, but Hivee only offers these two — see
+// PaymentProvider in schema.prisma). It is more real than the old
 // hardcoded stub, but it is a single-vendor dependency with no bank-level
 // accountability — treat `matched: true` from it as strong evidence, not
 // final proof. See selfVerifyPayment in paymentController.js for the
@@ -32,11 +33,16 @@ function isStubActive() {
 
 // Providers whose universal detection needs a secondary field alongside
 // the reference. selfVerifyPayment collects these from the resident when
-// their chosen bank requires it (see paymentValidators.js).
-const PROVIDERS_NEEDING_SUFFIX = new Set(['cbe', 'abyssinia']);
+// their chosen bank requires it (see paymentValidators.js). Neither of
+// Hivee's two supported providers (CBE, Telebirr) needs an account
+// suffix — CBE is receipt-only (see selfVerifyPayment's CBE branch) and
+// never reaches this check. Kept as a Set (rather than deleted outright)
+// since Veritas's own /verify-<provider> contract still supports it, in
+// case a provider needing it is ever reintroduced.
+const PROVIDERS_NEEDING_SUFFIX = new Set([]);
 // Telebirr has no bank account — Veritas cross-checks the sender's phone
-// number instead of an account suffix (same reason CBE Birr needs it).
-const PROVIDERS_NEEDING_PHONE = new Set(['cbebirr', 'telebirr']);
+// number instead of an account suffix.
+const PROVIDERS_NEEDING_PHONE = new Set(['telebirr']);
 
 /**
  * Best-effort extraction of the fields we care about out of a Veritas
@@ -77,12 +83,12 @@ function normalizeAmount(raw) {
  * @param {string} params.txnId - The transaction ID the resident typed in.
  * @param {number} params.expectedAmount - The fee amount the payment should match.
  * @param {string} [params.expectedAccountNumber] - The community's receiving account.
- * @param {string} [params.provider] - Provider hint (cbe/telebirr/dashen/abyssinia/cbebirr/mpesa).
- *   When omitted, Veritas's universal /verify route auto-detects (all
- *   providers except M-Pesa, which requires the dedicated route/hint).
- * @param {string} [params.suffix] - Account suffix, required by CBE
- *   (legacy FT refs) and Bank of Abyssinia.
- * @param {string} [params.phoneNumber] - 251-format phone, required by CBE Birr.
+ * @param {string} [params.provider] - Provider hint (cbe/telebirr). When
+ *   omitted, Veritas's universal /verify route auto-detects.
+ * @param {string} [params.suffix] - Account suffix. Not required by
+ *   either provider Hivee currently supports; kept for Veritas API
+ *   compatibility.
+ * @param {string} [params.phoneNumber] - 251-format phone, required by Telebirr.
  * @returns {Promise<{
  *   matched: boolean,
  *   senderName: string | null,

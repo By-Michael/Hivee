@@ -37,19 +37,15 @@ enum PaymentMethod {
   OTHER
 }
 
-// Which real-world provider a CommunityPaymentMethod represents. Mirrors
-// the `provider` hint bankVerification.js already accepts (cbe/telebirr/
-// dashen/abyssinia/cbebirr/mpesa) plus BANK_OTHER for any bank Veritas
-// doesn't have a dedicated adapter for (falls back to the universal
-// /verify auto-detect route, no provider hint sent).
+// Which real-world provider a CommunityPaymentMethod represents. Product
+// decision: Hivee only supports CBE and Telebirr — these are the two
+// rails Veritas (bankVerification.js) has dedicated, reliable adapters
+// for and cover the overwhelming majority of Ethiopian resident
+// payments. Previously also had DASHEN/ABYSSINIA/CBEBIRR/MPESA/
+// BANK_OTHER — removed (see migration 20260827040000_narrow_payment_providers).
 enum PaymentProvider {
   CBE
   TELEBIRR
-  DASHEN
-  ABYSSINIA
-  CBEBIRR
-  MPESA
-  BANK_OTHER
 }
 
 enum PaymentStatus {
@@ -135,9 +131,9 @@ model Community {
   @@map("communities")
 }
 
-// A committee can register more than one way to receive money (their main
-// CBE account, a Telebirr merchant number, a second bank for a different
-// purpose, etc). Residents pick one of these — instead of the single fixed
+// A committee can register more than one way to receive money — their CBE
+// account and/or a Telebirr number (see PaymentProvider). Residents pick
+// one of these — instead of the single fixed
 // paymentBankName/paymentAccountName/paymentAccountNumber on Community
 // above, which is kept only for backward compatibility with communities
 // that haven't added any of these yet (see paymentController.js fallback).
@@ -147,10 +143,9 @@ model Community {
 // provider = X"):
 //   - TELEBIRR has no bank account at all — only fullName + phoneNumber
 //     are used; bankName/accountName/accountNumber stay null.
-//   - CBE/DASHEN/ABYSSINIA/CBEBIRR/MPESA/BANK_OTHER use
-//     bankName/accountName/accountNumber (CBE still shows an account for
-//     display purposes even though residents no longer type a suffix —
-//     see selfVerifyPayment's CBE branch, receipt-upload only).
+//   - CBE uses bankName/accountName/accountNumber (shown for display
+//     purposes even though residents no longer type a suffix — see
+//     selfVerifyPayment's CBE branch, receipt-upload only).
 model CommunityPaymentMethod {
   id            String          @id @default(uuid())
   communityId   String
