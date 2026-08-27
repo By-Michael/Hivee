@@ -791,10 +791,14 @@ function PaymentMethodsPanel() {
     setSaving(true)
     setError('')
     try {
+      // CBE is the only bank Hivee supports here — the provider picker
+      // above already says so, so don't also ask the admin to type
+      // "Commercial Bank of Ethiopia" into a free-text field right below it.
+      const payload = { ...form, bankName: form.provider === 'CBE' ? 'Commercial Bank of Ethiopia' : '' }
       if (editingId) {
-        await updatePaymentMethod(editingId, form)
+        await updatePaymentMethod(editingId, payload)
       } else {
-        await addPaymentMethod(form)
+        await addPaymentMethod(payload)
       }
       setModal(false)
     } catch (err) {
@@ -951,10 +955,6 @@ function PaymentMethodsPanel() {
             </>
           ) : (
             <>
-              <div>
-                <label className="label">Bank name</label>
-                <input required className="input" value={form.bankName} onChange={(e) => setForm((f) => ({ ...f, bankName: e.target.value }))} />
-              </div>
               <div>
                 <label className="label">Account name</label>
                 <input required className="input" value={form.accountName} onChange={(e) => setForm((f) => ({ ...f, accountName: e.target.value }))} />
