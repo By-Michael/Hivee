@@ -624,11 +624,11 @@ export function DataProvider({ children }) {
     // failure so the caller can show the error inline and let them retry.
     submitSelfPayment: async ({
       feeId, fundId, txnId, payerName, reason, amount, receiptAmount,
-      paymentMethodId, provider, phoneNumber, receiptUrl,
+      paymentMethodId, provider, phoneNumber, receiptUrl, receiptReference,
     }) => {
       const { data } = await api.post(endpoints.paymentSelfVerify(), {
         feeId, fundId, txnId, payerName, reason, amount, receiptAmount,
-        paymentMethodId, provider, phoneNumber, receiptUrl,
+        paymentMethodId, provider, phoneNumber, receiptUrl, receiptReference,
       })
       patchList('payments')((list) => [paymentToUI(data.data), ...list])
       refresh({ silent: true })

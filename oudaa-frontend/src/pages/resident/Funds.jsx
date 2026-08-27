@@ -97,6 +97,7 @@ export default function ResidentFunds() {
   const [receiptUploadError, setReceiptUploadError] = useState('')
   const [receiptLink, setReceiptLink] = useState('')
   const receiptInputRef = useRef(null)
+  const [receiptReference, setReceiptReference] = useState('')
 
   const selectedMethod = activeMethods.find((m) => m.id === form.paymentMethodId)
   const isCbe = selectedMethod?.provider === 'CBE'
@@ -137,6 +138,7 @@ export default function ResidentFunds() {
     setReceiptFileName('')
     setReceiptUploadError('')
     setReceiptLink('')
+    setReceiptReference('')
   }
 
   function selectMethod(methodId) {
@@ -148,6 +150,7 @@ export default function ResidentFunds() {
     setReceiptFileName('')
     setReceiptUploadError('')
     setReceiptLink('')
+    setReceiptReference('')
   }
 
   async function handleReceiptUpload(e) {
@@ -159,6 +162,7 @@ export default function ResidentFunds() {
       const result = await uploadSelfPaymentReceipt(file)
       setForm((f) => ({ ...f, receiptUrl: result.receiptUrl }))
       setReceiptFileName(file.name)
+      setReceiptReference(result.extractedReference || '')
     } catch (err) {
       setReceiptUploadError(err?.response?.data?.message || err.message || 'Could not upload that receipt.')
     } finally {
@@ -241,6 +245,7 @@ export default function ResidentFunds() {
         txnId: isCbe ? undefined : form.txnId.trim(),
         phoneNumber: needsPhone ? form.phoneNumber.trim() : undefined,
         receiptUrl: isCbe ? form.receiptUrl : undefined,
+        receiptReference: isCbe ? (receiptReference || undefined) : undefined,
       })
       setSuccessStatus(payment?.status || 'paid')
       setSuccessReviewFlags(payment?.reviewFlags || '')
@@ -458,20 +463,21 @@ export default function ResidentFunds() {
               <div className="rounded-xl border border-dashed border-brand-200 bg-brand-50/40 p-3.5">
                 <label className="label !mb-1.5">CBE e-receipt</label>
                 <p className="text-xs text-ink-400 mb-2.5">
-                  CBE transactions can't be looked up automatically — upload the screenshot/PDF receipt or
-                  paste a link to it, and a committee admin will confirm it against this contribution.
+                  Upload the screenshot or PDF receipt from your transfer, or paste a link to it — we'll
+                  read the QR code and verify it automatically. If we can't read it, a committee admin
+                  will confirm it against this contribution instead.
                 </p>
                 <div className="flex gap-1.5 mb-2.5">
                   <button
                     type="button"
-                    onClick={() => { setReceiptMode('upload'); setReceiptLink(''); setForm((f) => ({ ...f, receiptUrl: undefined })) }}
+                    onClick={() => { setReceiptMode('upload'); setReceiptLink(''); setReceiptReference(''); setForm((f) => ({ ...f, receiptUrl: undefined })) }}
                     className={`flex-1 rounded-lg py-1.5 text-xs font-medium transition ${receiptMode === 'upload' ? 'bg-brand-600 text-white' : 'bg-white text-ink-500 ring-1 ring-ink-200'}`}
                   >
                     Upload file
                   </button>
                   <button
                     type="button"
-                    onClick={() => { setReceiptMode('link'); setReceiptFileName(''); setForm((f) => ({ ...f, receiptUrl: undefined })) }}
+                    onClick={() => { setReceiptMode('link'); setReceiptFileName(''); setReceiptReference(''); setForm((f) => ({ ...f, receiptUrl: undefined })) }}
                     className={`flex-1 rounded-lg py-1.5 text-xs font-medium transition ${receiptMode === 'link' ? 'bg-brand-600 text-white' : 'bg-white text-ink-500 ring-1 ring-ink-200'}`}
                   >
                     Paste a link
@@ -489,15 +495,28 @@ export default function ResidentFunds() {
                       {receiptUploading ? <Loader2 className="h-4 w-4 animate-spin" /> : (form.receiptUrl ? <FileCheck2 className="h-4 w-4 text-emerald-600" /> : <Upload className="h-4 w-4" />)}
                       {receiptUploading ? 'Uploading…' : form.receiptUrl ? `Uploaded: ${receiptFileName}` : 'Choose a screenshot or PDF'}
                     </button>
+                    {form.receiptUrl && !receiptUploading && (
+                      <p className={`mt-1.5 text-xs ${receiptReference ? 'text-emerald-600' : 'text-amber-600'}`}>
+                        {receiptReference
+                          ? 'QR code read successfully — this can be verified automatically.'
+                          : "Couldn't read a QR code off this file — it'll be queued for manual review."}
+                      </p>
+                    )}
                   </>
                 ) : (
                   <div className="relative">
                     <Link2 className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-400" />
                     <input
                       className="input pl-9"
-                      placeholder="https://…"
+                      placeholder="https://mbreciept.cbe.com.et/…"
                       value={receiptLink}
-                      onChange={(e) => { setReceiptLink(e.target.value); setForm((f) => ({ ...f, receiptUrl: e.target.value.trim() || undefined })) }}
+                      onChange={(e) => {
+                        const value = e.target.value
+                        setReceiptLink(value)
+                        const trimmed = value.trim()
+                        setForm((f) => ({ ...f, receiptUrl: trimmed || undefined }))
+                        setReceiptReference(trimmed)
+                      }}
                     />
                   </div>
                 )}

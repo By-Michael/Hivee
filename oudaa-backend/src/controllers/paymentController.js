@@ -4,7 +4,7 @@ const AppError = require('../utils/AppError');
 const { recordAudit } = require('../utils/audit');
 const { verifyBankTransaction, PROVIDERS_NEEDING_SUFFIX, PROVIDERS_NEEDING_PHONE } = require('../utils/bankVerification');
 const { parseReceiptImage } = require('../utils/ocrReceipt');
-const { extractCbeReferenceFromReceipt } = require('../utils/receiptQrExtraction');
+const { extractCbeReferenceFromReceipt, isLikelyCbeReceiptLink } = require('../utils/receiptQrExtraction');
 const { saveReceiptFile } = require('../config/storage');
 
 // Amount tolerance for the bank-verification cross-check — covers bank-fee
@@ -606,11 +606,35 @@ const selfVerifyPayment = catchAsync(async (req, res) => {
 
   const targetLabel = fee ? `fee "${fee.name}"` : `fund "${fund.name}"`;
 
-  // ---- CBE branch: no bank lookup possible without an extracted
-  // reference (see receiptQrExtraction.js). Record the payment straight
-  // to PENDING_REVIEW with the receipt attached, for an admin to confirm
-  // against the uploaded screenshot/PDF/link by hand. ----
+  // ---- CBE branch ----
+  // CBE dropped the old FT-reference + account-suffix scheme, so the
+  // resident never types a bank transaction ID for it. Instead we try to
+  // resolve a Veritas-verifiable reference from whatever they gave us —
+  // a pasted receipt link, or the QR code decoded off an uploaded
+  // screenshot/PDF (see receiptQrExtraction.js) — and, when we get one,
+  // verify it exactly like any other provider (shared logic below).
+  // Only when no reference could be resolved (QR unreadable, resident
+  // uploaded something without a QR, etc.) do we fall back to the old
+  // "queue for manual review" behavior.
+  let cbeReference = null;
   if (isCbe) {
+    if (req.body.receiptReference && req.body.receiptReference.trim()) {
+      cbeReference = req.body.receiptReference.trim();
+    } else if (isLikelyCbeReceiptLink(receiptUrl)) {
+      // The resident pasted the CBE receipt link directly as receiptUrl
+      // (rather than uploading a file) — that link IS the reference.
+      cbeReference = receiptUrl.trim();
+    } else {
+      // Last resort: if a file was uploaded, its receiptUrl is our own
+      // storage URL, not a CBE link — try decoding the QR straight off
+      // that stored file so a client that skipped the
+      // /self-verify/receipt prefill step doesn't lose out.
+      const extracted = await extractCbeReferenceFromReceipt({ receiptLink: receiptUrl }).catch(() => null);
+      if (extracted?.reference) cbeReference = extracted.reference;
+    }
+  }
+
+  if (isCbe && !cbeReference) {
     const payment = await prisma.payment.create({
       data: {
         communityId: req.communityId,
@@ -626,7 +650,7 @@ const selfVerifyPayment = catchAsync(async (req, res) => {
         status: 'PENDING_REVIEW',
         receiptUrl,
         verificationRaw: null,
-        reviewFlags: 'CBE receipt uploaded — no automatic transaction lookup yet, needs manual review against the receipt.',
+        reviewFlags: 'CBE receipt uploaded — could not automatically read a QR reference off it, needs manual review against the receipt.',
       },
       include: PAYMENT_INCLUDE,
     });
@@ -634,13 +658,39 @@ const selfVerifyPayment = catchAsync(async (req, res) => {
       action: 'CREATE',
       entityType: 'Payment',
       entityId: payment.id,
-      description: `Self-verified CBE payment (${amount}) for ${targetLabel} — pending manual review`,
+      description: `Self-verified CBE payment (${amount}) for ${targetLabel} — pending manual review (no QR reference found)`,
     });
     return res.json({ success: true, data: withSenderName(payment) });
   }
 
+  // From here on, CBE-with-a-resolved-reference and every other provider
+  // share the exact same verify → cross-check → create flow. `txnId` is
+  // used purely as the effective reference from this point down (the
+  // dedupe check and the stored `transactionReference` both need it).
+  const effectiveTxnId = isCbe ? cbeReference : txnId.trim();
+
+  // A transaction ID/reference can only ever pay for one fee — block
+  // reuse the same way for CBE as every other provider now that CBE has
+  // a real reference to dedupe against.
+  if (isCbe) {
+    const alreadyUsed = await prisma.payment.findFirst({
+      where: {
+        transactionReference: effectiveTxnId,
+        ...communityPaymentFilter(req.communityId),
+        status: { not: 'REJECTED' },
+      },
+      include: PAYMENT_INCLUDE,
+    });
+    if (alreadyUsed) {
+      if (alreadyUsed.residentId === resident.id) {
+        return res.json({ success: true, data: alreadyUsed, idempotentReplay: true });
+      }
+      throw new AppError('This CBE receipt has already been used for a payment', 409);
+    }
+  }
+
   const result = await verifyBankTransaction({
-    txnId: txnId.trim(),
+    txnId: effectiveTxnId,
     expectedAmount: amount,
     expectedAccountNumber,
     provider,
@@ -658,7 +708,14 @@ const selfVerifyPayment = catchAsync(async (req, res) => {
   // because a third-party lookup service is having an outage. Instead we
   // fall through and queue it for manual admin review, same as any other
   // safeguard flag below.
-  if (!result.matched && !result.serviceUnavailable) {
+  //
+  // CBE is the one exception to the hard-reject: if Veritas concretely
+  // says the QR-decoded reference doesn't match anything, that's much
+  // more likely a QR mis-decode than the resident having typed something
+  // wrong (they never typed anything) — so a CBE non-match still queues
+  // for manual review against the uploaded receipt instead of blocking
+  // the submission outright.
+  if (!result.matched && !result.serviceUnavailable && !isCbe) {
     throw new AppError(result.reason || 'Could not verify this transaction. Double-check the ID and try again.', 422);
   }
 
@@ -669,6 +726,10 @@ const selfVerifyPayment = catchAsync(async (req, res) => {
   // people toward typing more plausible-looking fake IDs to get past a
   // hard rejection).
   const flags = [];
+
+  if (isCbe && !result.matched) {
+    flags.push(result.reason || 'Could not verify the CBE receipt reference automatically — needs manual review.');
+  }
 
   if (result.serviceUnavailable) {
     flags.push('Bank verification service was unreachable — this payment could not be automatically checked and needs manual review.');
@@ -743,12 +804,13 @@ const selfVerifyPayment = catchAsync(async (req, res) => {
       feeId: fee ? fee.id : undefined,
       fundId: fund ? fund.id : undefined,
       amount,
-      paymentMethod: provider === 'telebirr' ? 'MOBILE_MONEY' : 'BANK_TRANSFER',
+      paymentMethod: isCbe || provider === 'telebirr' ? 'MOBILE_MONEY' : 'BANK_TRANSFER',
       paymentMethodId: paymentMethod?.id,
-      transactionReference: txnId.trim(),
+      transactionReference: effectiveTxnId,
       payerName: payerName.trim(),
       reason: reason?.trim() || undefined,
       status,
+      receiptUrl: isCbe ? receiptUrl : undefined,
       verificationRaw: result.raw ?? undefined,
       reviewFlags: flags.length > 0 ? flags.join(' ') : undefined,
     },

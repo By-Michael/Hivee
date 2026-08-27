@@ -87,6 +87,12 @@ export default function ResidentPayments() {
   const [receiptUploadError, setReceiptUploadError] = useState('')
   const [receiptLink, setReceiptLink] = useState('')
   const receiptInputRef = useRef(null)
+  // Set when either the pasted link or an uploaded screenshot/PDF resolves
+  // to a real CBE reference (see uploadSelfPaymentReceipt's
+  // extractedReference and the receiptLink effect below) — sent as
+  // receiptReference so the backend can bank-verify the CBE payment
+  // instantly instead of always queuing it for manual review.
+  const [receiptReference, setReceiptReference] = useState('')
 
   const selectedFee = fees.find((f) => f.id === form.feeId)
   const selectedMethod = activeMethods.find((m) => m.id === form.paymentMethodId)
@@ -108,6 +114,7 @@ export default function ResidentPayments() {
     setReceiptFileName('')
     setReceiptUploadError('')
     setReceiptLink('')
+    setReceiptReference('')
     setModal(true)
   }
 
@@ -120,6 +127,7 @@ export default function ResidentPayments() {
     setReceiptFileName('')
     setReceiptUploadError('')
     setReceiptLink('')
+    setReceiptReference('')
   }
 
   async function handleReceiptUpload(e) {
@@ -131,6 +139,12 @@ export default function ResidentPayments() {
       const result = await uploadSelfPaymentReceipt(file)
       setForm((f) => ({ ...f, receiptUrl: result.receiptUrl }))
       setReceiptFileName(file.name)
+      // The backend tried to decode the receipt's QR code server-side
+      // (see receiptQrExtraction.js) — if it found a reference, this
+      // payment can be bank-verified instantly instead of sitting in
+      // manual review. A failed/unreadable QR still lets the upload
+      // through (receiptReference stays empty, falls back to review).
+      setReceiptReference(result.extractedReference || '')
     } catch (err) {
       setReceiptUploadError(err?.response?.data?.message || err.message || 'Could not upload that receipt.')
     } finally {
@@ -218,6 +232,7 @@ export default function ResidentPayments() {
         txnId: isCbe ? undefined : form.txnId.trim(),
         phoneNumber: needsPhone ? form.phoneNumber.trim() : undefined,
         receiptUrl: isCbe ? form.receiptUrl : undefined,
+        receiptReference: isCbe ? (receiptReference || undefined) : undefined,
       })
       setSuccessStatus(payment?.status || 'paid')
       setSuccessReviewFlags(payment?.reviewFlags || '')
@@ -432,21 +447,21 @@ export default function ResidentPayments() {
               <div className="rounded-xl border border-dashed border-brand-200 bg-brand-50/40 p-3.5">
                 <label className="label !mb-1.5">CBE e-receipt</label>
                 <p className="text-xs text-ink-400 mb-2.5">
-                  CBE transactions can't be looked up automatically — upload the screenshot or PDF receipt
-                  from your transfer, or paste a link to it, and a committee admin will confirm it against
-                  this record.
+                  Upload the screenshot or PDF receipt from your transfer, or paste a link to it — we'll
+                  read the QR code and verify it automatically. If we can't read it, a committee admin
+                  will confirm it against this record instead.
                 </p>
                 <div className="flex gap-1.5 mb-2.5">
                   <button
                     type="button"
-                    onClick={() => { setReceiptMode('upload'); setReceiptLink(''); setForm((f) => ({ ...f, receiptUrl: undefined })) }}
+                    onClick={() => { setReceiptMode('upload'); setReceiptLink(''); setReceiptReference(''); setForm((f) => ({ ...f, receiptUrl: undefined })) }}
                     className={`flex-1 rounded-lg py-1.5 text-xs font-medium transition ${receiptMode === 'upload' ? 'bg-brand-600 text-white' : 'bg-white text-ink-500 ring-1 ring-ink-200'}`}
                   >
                     Upload file
                   </button>
                   <button
                     type="button"
-                    onClick={() => { setReceiptMode('link'); setReceiptFileName(''); setForm((f) => ({ ...f, receiptUrl: undefined })) }}
+                    onClick={() => { setReceiptMode('link'); setReceiptFileName(''); setReceiptReference(''); setForm((f) => ({ ...f, receiptUrl: undefined })) }}
                     className={`flex-1 rounded-lg py-1.5 text-xs font-medium transition ${receiptMode === 'link' ? 'bg-brand-600 text-white' : 'bg-white text-ink-500 ring-1 ring-ink-200'}`}
                   >
                     Paste a link
@@ -464,15 +479,31 @@ export default function ResidentPayments() {
                       {receiptUploading ? <Loader2 className="h-4 w-4 animate-spin" /> : (form.receiptUrl ? <FileCheck2 className="h-4 w-4 text-emerald-600" /> : <Upload className="h-4 w-4" />)}
                       {receiptUploading ? 'Uploading…' : form.receiptUrl ? `Uploaded: ${receiptFileName}` : 'Choose a screenshot or PDF'}
                     </button>
+                    {form.receiptUrl && !receiptUploading && (
+                      <p className={`mt-1.5 text-xs ${receiptReference ? 'text-emerald-600' : 'text-amber-600'}`}>
+                        {receiptReference
+                          ? 'QR code read successfully — this can be verified automatically.'
+                          : "Couldn't read a QR code off this file — it'll be queued for manual review."}
+                      </p>
+                    )}
                   </>
                 ) : (
                   <div className="relative">
                     <Link2 className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-400" />
                     <input
                       className="input pl-9"
-                      placeholder="https://…"
+                      placeholder="https://mbreciept.cbe.com.et/…"
                       value={receiptLink}
-                      onChange={(e) => { setReceiptLink(e.target.value); setForm((f) => ({ ...f, receiptUrl: e.target.value.trim() || undefined })) }}
+                      onChange={(e) => {
+                        const value = e.target.value
+                        setReceiptLink(value)
+                        const trimmed = value.trim()
+                        setForm((f) => ({ ...f, receiptUrl: trimmed || undefined }))
+                        // The pasted link IS the reference — the backend
+                        // re-validates its shape, so no need to duplicate
+                        // that check here just to enable this.
+                        setReceiptReference(trimmed)
+                      }}
                     />
                   </div>
                 )}
