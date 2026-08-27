@@ -34,7 +34,9 @@ function isStubActive() {
 // the reference. selfVerifyPayment collects these from the resident when
 // their chosen bank requires it (see paymentValidators.js).
 const PROVIDERS_NEEDING_SUFFIX = new Set(['cbe', 'abyssinia']);
-const PROVIDERS_NEEDING_PHONE = new Set(['cbebirr']);
+// Telebirr has no bank account — Veritas cross-checks the sender's phone
+// number instead of an account suffix (same reason CBE Birr needs it).
+const PROVIDERS_NEEDING_PHONE = new Set(['cbebirr', 'telebirr']);
 
 /**
  * Best-effort extraction of the fields we care about out of a Veritas

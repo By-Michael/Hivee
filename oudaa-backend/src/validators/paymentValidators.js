@@ -56,7 +56,15 @@ const selfVerifyPaymentSchema = z.object({
     // (Community Funds page). Enforced by the .refine() below.
     feeId: z.string().uuid().optional(),
     fundId: z.string().uuid().optional(),
-    txnId: z.string().min(1),
+    // Which of the community's configured payment methods (see
+    // CommunityPaymentMethod) the resident is paying through. Optional
+    // for backward compatibility with communities that haven't added any
+    // yet (falls back to the single community.paymentAccountNumber) —
+    // see resolvePaymentMethod in paymentController.js.
+    paymentMethodId: z.string().uuid().optional(),
+    // Required for every provider except CBE, which is receipt-only (see
+    // the refine below and the CBE branch in the controller).
+    txnId: z.string().optional(),
     payerName: z.string().min(1),
     reason: z.string().optional(),
     // Optional for feeId (defaults to the fee's amount, must be >= it —
@@ -65,11 +73,22 @@ const selfVerifyPaymentSchema = z.object({
     amount: z.number().positive().optional(),
     // Which bank/provider the receipt is from — lets Veritas skip
     // auto-detection and lets us know which secondary field to require.
+    // The frontend should always send this (lowercased from whichever
+    // CommunityPaymentMethod.provider was selected) even when
+    // paymentMethodId is also present — the validator's CBE/txnId/
+    // receiptUrl refines below run on this field, before the controller
+    // ever loads the payment method row to double check it server-side.
     provider: z.enum(['cbe', 'telebirr', 'dashen', 'abyssinia', 'cbebirr', 'mpesa']).optional(),
-    // Required by CBE (legacy FT refs) and Bank of Abyssinia.
+    // Required by Bank of Abyssinia (legacy CBE FT-ref suffixes are no
+    // longer collected from residents — see the CBE branch below).
     suffix: z.string().optional(),
-    // Required by CBE Birr, format 251XXXXXXXXX.
+    // Required by CBE Birr and Telebirr, format 251XXXXXXXXX.
     phoneNumber: z.string().optional(),
+    // CBE only: URL of the e-receipt — either uploaded via
+    // POST /payments/self-verify/receipt (screenshot/PDF, returns this
+    // URL) or a link the resident pasted directly. Both are just URLs by
+    // the time they reach this endpoint, so one field covers either path.
+    receiptUrl: z.string().trim().url().optional(),
     // Best-effort amount OCR'd off the receipt screenshot the resident
     // uploaded (see parsePaymentScreenshot). Purely a client-side signal —
     // never trusted as proof by itself — but if it disagrees with the
@@ -92,6 +111,12 @@ const selfVerifyPaymentSchema = z.object({
   }).refine((body) => !body.fundId || body.amount !== undefined, {
     message: 'amount is required when contributing directly to a fund',
     path: ['amount'],
+  }).refine((body) => body.provider === 'cbe' || (!!body.txnId && !!body.txnId.trim()), {
+    message: 'Transaction ID is required',
+    path: ['txnId'],
+  }).refine((body) => body.provider !== 'cbe' || !!body.receiptUrl, {
+    message: 'Upload a receipt (screenshot, PDF, or link) for CBE payments',
+    path: ['receiptUrl'],
   }),
 });
 

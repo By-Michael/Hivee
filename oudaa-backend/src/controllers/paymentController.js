@@ -4,6 +4,8 @@ const AppError = require('../utils/AppError');
 const { recordAudit } = require('../utils/audit');
 const { verifyBankTransaction, PROVIDERS_NEEDING_SUFFIX, PROVIDERS_NEEDING_PHONE } = require('../utils/bankVerification');
 const { parseReceiptImage } = require('../utils/ocrReceipt');
+const { extractCbeReferenceFromReceipt } = require('../utils/receiptQrExtraction');
+const { saveReceiptFile } = require('../config/storage');
 
 // Amount tolerance for the bank-verification cross-check — covers bank-fee
 // rounding, not a loophole. Absolute birr amount, not a percentage, so it
@@ -419,42 +421,131 @@ const uploadPaymentReceipt = catchAsync(async (req, res) => {
     throw new AppError('Receipts can only be attached to manually-recorded payments', 403);
   }
 
+  const { fileUrl } = await saveReceiptFile(req.file);
   const updated = await prisma.payment.update({
     where: { id: payment.id },
-    data: { receiptUrl: `/uploads/receipts/${req.file.filename}` },
+    data: { receiptUrl: fileUrl },
     include: PAYMENT_INCLUDE,
   });
 
   res.json({ success: true, data: updated });
 });
 
+// Resident self-serve: upload a CBE e-receipt (screenshot or PDF) *before*
+// calling self-verify, and get back a URL to send as `receiptUrl`. Kept as
+// its own multipart endpoint (like uploadPaymentReceipt above) rather than
+// folded into self-verify itself, so self-verify can stay a plain JSON
+// endpoint — every other provider never touches a file at all.
+const uploadSelfPaymentReceipt = catchAsync(async (req, res) => {
+  if (req.user.role !== 'RESIDENT') {
+    throw new AppError('Only residents can upload a self-payment receipt', 403);
+  }
+  if (!req.file) throw new AppError('Receipt file is required', 422);
+
+  const { fileUrl } = await saveReceiptFile(req.file);
+
+  // Best-effort: try to pull the transaction reference straight off the
+  // receipt (QR code) so a CBE payment can eventually skip PENDING_REVIEW
+  // the same way other providers do. Stubbed today — see module header —
+  // so this always comes back null until that's implemented, and
+  // selfVerifyPayment already treats a missing reference as "queue for
+  // manual review", not an error.
+  const extracted = await extractCbeReferenceFromReceipt({
+    fileBuffer: req.file.buffer,
+    mimetype: req.file.mimetype,
+  }).catch(() => ({ reference: null, suffix: null }));
+
+  res.json({ success: true, data: { receiptUrl: fileUrl, extractedReference: extracted.reference } });
+});
+
+// Map a CommunityPaymentMethod's PaymentProvider enum (schema.prisma, DB
+// value) to the lowercase provider hint bankVerification.js expects.
+const DB_PROVIDER_TO_VERITAS = {
+  CBE: 'cbe',
+  TELEBIRR: 'telebirr',
+  DASHEN: 'dashen',
+  ABYSSINIA: 'abyssinia',
+  CBEBIRR: 'cbebirr',
+  MPESA: 'mpesa',
+  BANK_OTHER: undefined, // no dedicated Veritas adapter — universal auto-detect
+};
+
+// Resolves which payment method the resident is paying through, and what
+// provider/expected-account that implies. Falls back to the community's
+// single legacy account (community.paymentAccountNumber, no provider
+// hint — universal auto-detect) for communities that haven't added any
+// CommunityPaymentMethod rows yet, so nothing breaks for them.
+async function resolvePaymentMethod(req, community) {
+  const { paymentMethodId, provider: rawProvider } = req.body;
+
+  if (paymentMethodId) {
+    const method = await prisma.communityPaymentMethod.findFirst({
+      where: { id: paymentMethodId, communityId: req.communityId, isActive: true },
+    });
+    if (!method) throw new AppError('Selected payment method is not available', 404);
+    return {
+      method,
+      provider: DB_PROVIDER_TO_VERITAS[method.provider],
+      expectedAccountNumber: method.accountNumber || undefined,
+    };
+  }
+
+  // Backward-compat path: no payment methods configured yet, resident's
+  // client sent a bare `provider` string against the single legacy account.
+  return {
+    method: null,
+    provider: rawProvider,
+    expectedAccountNumber: community?.paymentAccountNumber,
+  };
+}
+
 // Resident self-serve flow: submit a bank txn ID + the name it was sent
 // under, and get verified against the bank instantly instead of waiting
 // on an admin. Required fields are txnId + payerName plus exactly one of
 // feeId (pay a fee) or fundId (free-form contribution to a fund, any
 // amount of the resident's choosing — no "usual amount" involved).
+//
+// Provider-specific shape (see resolvePaymentMethod / CommunityPaymentMethod):
+//   - CBE: no txnId, no suffix. The resident instead uploads a receipt
+//     (POST /payments/self-verify/receipt first, or pastes a link) —
+//     `receiptUrl` is required instead. Without a bank-verifiable
+//     reference this always lands in PENDING_REVIEW today (see the CBE
+//     branch below) until QR extraction is wired up.
+//   - TELEBIRR: txnId (the reference number) + phoneNumber (the sender's
+//     phone) — Telebirr has no account to cross-check against.
+//   - everything else (DASHEN/ABYSSINIA/CBEBIRR/MPESA/BANK_OTHER/legacy
+//     single-account): the existing txnId (+ suffix if required) flow.
 const selfVerifyPayment = catchAsync(async (req, res) => {
   if (req.user.role !== 'RESIDENT') {
     throw new AppError('Only residents can submit self-verified payments', 403);
   }
 
-  const { feeId, fundId, txnId, payerName, reason, provider, suffix, phoneNumber, receiptAmount } = req.body;
+  const { feeId, fundId, txnId, payerName, reason, suffix, phoneNumber, receiptAmount, receiptUrl } = req.body;
   if (!feeId && !fundId) throw new AppError('feeId or fundId is required', 422);
   if (feeId && fundId) throw new AppError('Provide exactly one of feeId or fundId', 422);
-  if (!txnId || !txnId.trim()) throw new AppError('Transaction ID is required', 422);
   if (!payerName || !payerName.trim()) throw new AppError('Payer name is required', 422);
-  if (provider && PROVIDERS_NEEDING_SUFFIX.has(provider) && !suffix) {
-    throw new AppError('This bank requires the account suffix shown on your receipt', 422);
-  }
-  if (provider && PROVIDERS_NEEDING_PHONE.has(provider) && !phoneNumber) {
-    throw new AppError('This provider requires the phone number the payment was made from', 422);
-  }
 
   const resident = await prisma.resident.findUnique({
     where: { userId: req.user.id },
     include: { user: { select: { fullName: true } } },
   });
   if (!resident) throw new AppError('Resident profile not found', 404);
+
+  const community = await prisma.community.findUnique({ where: { id: req.communityId } });
+  const { method: paymentMethod, provider, expectedAccountNumber } = await resolvePaymentMethod(req, community);
+  const isCbe = provider === 'cbe';
+
+  if (!isCbe) {
+    if (!txnId || !txnId.trim()) throw new AppError('Transaction ID is required', 422);
+    if (provider && PROVIDERS_NEEDING_SUFFIX.has(provider) && !suffix) {
+      throw new AppError('This bank requires the account suffix shown on your receipt', 422);
+    }
+    if (provider && PROVIDERS_NEEDING_PHONE.has(provider) && !phoneNumber) {
+      throw new AppError('This provider requires the phone number the payment was made from', 422);
+    }
+  } else if (!receiptUrl) {
+    throw new AppError('Upload a receipt (screenshot, PDF, or link) for CBE payments', 422);
+  }
 
   let fee = null;
   let fund = null;
@@ -485,39 +576,77 @@ const selfVerifyPayment = catchAsync(async (req, res) => {
     amount = req.body.amount;
   }
 
-  const community = await prisma.community.findUnique({ where: { id: req.communityId } });
-
   // A transaction ID can only ever pay for one fee — block reuse (typo'd
   // resubmits are fine since they'll get a fresh ID, but the same real
-  // transfer can't be used to "pay" twice).
-  const alreadyUsed = await prisma.payment.findFirst({
-    where: {
-      transactionReference: txnId.trim(),
-      ...communityPaymentFilter(req.communityId),
-      status: { not: 'REJECTED' },
-    },
-    include: PAYMENT_INCLUDE,
-  });
-  if (alreadyUsed) {
-    // Bank verification below can take up to ~25s (3 retries x 8s
-    // timeout). If the client's connection drops before the response
-    // arrives, the request has already completed server-side by the time
-    // the resident sees a "network error" and retries — so a same-resident
-    // resubmit of the exact txnId is very likely their own earlier attempt
-    // succeeding invisibly, not a real double-submission. Return that
-    // existing payment instead of a scary 409 in that case; a *different*
-    // resident reusing someone else's transaction ID is the case we
-    // actually need to block hard.
-    if (alreadyUsed.residentId === resident.id) {
-      return res.json({ success: true, data: alreadyUsed, idempotentReplay: true });
+  // transfer can't be used to "pay" twice). CBE has no txnId at this
+  // point (receipt-only), so this check simply doesn't apply to it yet —
+  // once QR extraction is wired up and yields a real reference, the same
+  // dedup should run against that instead.
+  if (!isCbe) {
+    const alreadyUsed = await prisma.payment.findFirst({
+      where: {
+        transactionReference: txnId.trim(),
+        ...communityPaymentFilter(req.communityId),
+        status: { not: 'REJECTED' },
+      },
+      include: PAYMENT_INCLUDE,
+    });
+    if (alreadyUsed) {
+      // Bank verification below can take up to ~25s (3 retries x 8s
+      // timeout). If the client's connection drops before the response
+      // arrives, the request has already completed server-side by the time
+      // the resident sees a "network error" and retries — so a same-resident
+      // resubmit of the exact txnId is very likely their own earlier attempt
+      // succeeding invisibly, not a real double-submission. Return that
+      // existing payment instead of a scary 409 in that case; a *different*
+      // resident reusing someone else's transaction ID is the case we
+      // actually need to block hard.
+      if (alreadyUsed.residentId === resident.id) {
+        return res.json({ success: true, data: alreadyUsed, idempotentReplay: true });
+      }
+      throw new AppError('This transaction ID has already been used for a payment', 409);
     }
-    throw new AppError('This transaction ID has already been used for a payment', 409);
+  }
+
+  const targetLabel = fee ? `fee "${fee.name}"` : `fund "${fund.name}"`;
+
+  // ---- CBE branch: no bank lookup possible without an extracted
+  // reference (see receiptQrExtraction.js). Record the payment straight
+  // to PENDING_REVIEW with the receipt attached, for an admin to confirm
+  // against the uploaded screenshot/PDF/link by hand. ----
+  if (isCbe) {
+    const payment = await prisma.payment.create({
+      data: {
+        communityId: req.communityId,
+        residentId: resident.id,
+        feeId: fee ? fee.id : undefined,
+        fundId: fund ? fund.id : undefined,
+        amount,
+        paymentMethod: 'MOBILE_MONEY',
+        paymentMethodId: paymentMethod?.id,
+        transactionReference: null,
+        payerName: payerName.trim(),
+        reason: reason?.trim() || undefined,
+        status: 'PENDING_REVIEW',
+        receiptUrl,
+        verificationRaw: null,
+        reviewFlags: 'CBE receipt uploaded — no automatic transaction lookup yet, needs manual review against the receipt.',
+      },
+      include: PAYMENT_INCLUDE,
+    });
+    await recordAudit(req, {
+      action: 'CREATE',
+      entityType: 'Payment',
+      entityId: payment.id,
+      description: `Self-verified CBE payment (${amount}) for ${targetLabel} — pending manual review`,
+    });
+    return res.json({ success: true, data: withSenderName(payment) });
   }
 
   const result = await verifyBankTransaction({
     txnId: txnId.trim(),
     expectedAmount: amount,
-    expectedAccountNumber: community?.paymentAccountNumber,
+    expectedAccountNumber,
     provider,
     suffix,
     phoneNumber,
@@ -583,13 +712,16 @@ const selfVerifyPayment = catchAsync(async (req, res) => {
     }
   }
 
-  if (result.receiverAccount && community?.paymentAccountNumber && result.receiverAccount !== community.paymentAccountNumber) {
+  if (result.receiverAccount && expectedAccountNumber && result.receiverAccount !== expectedAccountNumber) {
     // Before treating a receiving-account mismatch as suspicious, check
     // whether it matches an account the community used to pay into
     // *before* a bank-details change (see CommunityBankAccountHistory /
     // pendingChanges.js apply()) — a resident sending to an account that
     // was genuinely correct at some point isn't the same signal as one
-    // sent to a random/wrong account.
+    // sent to a random/wrong account. Only applies to the legacy single-
+    // account history table, so this lookup is most meaningful when
+    // paying against that fallback account rather than a specific
+    // CommunityPaymentMethod (which doesn't have its own history table).
     const historicalAccount = await prisma.communityBankAccountHistory.findFirst({
       where: { communityId: req.communityId, accountNumber: result.receiverAccount },
       orderBy: { replacedAt: 'desc' },
@@ -608,8 +740,6 @@ const selfVerifyPayment = catchAsync(async (req, res) => {
 
   const status = flags.length > 0 ? 'PENDING_REVIEW' : 'VERIFIED';
 
-  const targetLabel = fee ? `fee "${fee.name}"` : `fund "${fund.name}"`;
-
   const payment = await prisma.payment.create({
     data: {
       communityId: req.communityId,
@@ -617,7 +747,8 @@ const selfVerifyPayment = catchAsync(async (req, res) => {
       feeId: fee ? fee.id : undefined,
       fundId: fund ? fund.id : undefined,
       amount,
-      paymentMethod: 'BANK_TRANSFER',
+      paymentMethod: provider === 'telebirr' ? 'MOBILE_MONEY' : 'BANK_TRANSFER',
+      paymentMethodId: paymentMethod?.id,
       transactionReference: txnId.trim(),
       payerName: payerName.trim(),
       reason: reason?.trim() || undefined,
@@ -713,6 +844,7 @@ module.exports = {
   updatePayment,
   deletePayment,
   uploadPaymentReceipt,
+  uploadSelfPaymentReceipt,
   selfVerifyPayment,
   parsePaymentScreenshot,
   retractOwnPayment,

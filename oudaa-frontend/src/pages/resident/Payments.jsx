@@ -1,10 +1,22 @@
 import { useRef, useState } from 'react'
 import {
-  Wallet, Plus, Copy, Check, Landmark, Camera, Loader2, ShieldCheck, Clock, RotateCw,
+  Wallet, Plus, Copy, Check, Landmark, Camera, Loader2, ShieldCheck, Clock, RotateCw, Upload, FileCheck2, Smartphone,
 } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import { useData } from '../../context/DataContext'
 import { PageHeader, Modal, Badge, EmptyState, currency, formatDate, usePagedList, Pager } from '../../components/ui'
+
+// Maps a CommunityPaymentMethod's `provider` enum (DB value) to the
+// lowercase hint the backend's self-verify endpoint expects (see
+// DB_PROVIDER_TO_VERITAS in paymentController.js). BANK_OTHER has no
+// dedicated bank adapter, so it's sent with no hint (universal auto-detect).
+const PROVIDER_TO_HINT = {
+  CBE: 'cbe', TELEBIRR: 'telebirr', DASHEN: 'dashen', ABYSSINIA: 'abyssinia', CBEBIRR: 'cbebirr', MPESA: 'mpesa', BANK_OTHER: undefined,
+}
+const PROVIDER_LABELS = {
+  CBE: 'Commercial Bank of Ethiopia (CBE)', TELEBIRR: 'Telebirr', DASHEN: 'Dashen Bank',
+  ABYSSINIA: 'Bank of Abyssinia', CBEBIRR: 'CBE Birr', MPESA: 'M-Pesa', BANK_OTHER: 'Other bank',
+}
 
 // Small "value + copy button" row used in the "pay to" block.
 function CopyRow({ label, value, mono }) {
@@ -36,11 +48,18 @@ function CopyRow({ label, value, mono }) {
   )
 }
 
-const emptyForm = { feeId: '', payerName: '', txnId: '', reason: '' }
+const emptyForm = { feeId: '', paymentMethodId: '', payerName: '', txnId: '', suffix: '', phoneNumber: '', reason: '' }
 
 export default function ResidentPayments() {
   const { user } = useAuth()
-  const { payments, fees, residents, community, submitSelfPayment, retractPayment, parsePaymentScreenshot, loadError, loading } = useData()
+  const {
+    payments, fees, residents, community, paymentMethods,
+    submitSelfPayment, uploadSelfPaymentReceipt, retractPayment, parsePaymentScreenshot, loadError, loading,
+  } = useData()
+  // Residents only ever see active methods (see paymentMethodController's
+  // listPaymentMethods) — but filter again defensively in case an admin
+  // preview or cached state slips one through.
+  const activeMethods = paymentMethods.filter((m) => m.isActive)
   const resident = residents.find((r) => r.id === user?.residentId) || residents[0]
   const mine = payments.filter((p) => p.residentId === resident?.id).sort((a, b) => new Date(b.date) - new Date(a.date))
   const feeOf = (id) => fees.find((f) => f.id === id)
@@ -60,17 +79,58 @@ export default function ResidentPayments() {
   const [receiptAmount, setReceiptAmount] = useState(null)
   const fileInputRef = useRef(null)
 
+  // CBE-only: the resident uploads their e-receipt separately (before
+  // submit) and we hang on to the resulting URL to send with self-verify.
+  const [receiptUploading, setReceiptUploading] = useState(false)
+  const [receiptFileName, setReceiptFileName] = useState('')
+  const [receiptUploadError, setReceiptUploadError] = useState('')
+  const receiptInputRef = useRef(null)
+
   const selectedFee = fees.find((f) => f.id === form.feeId)
+  const selectedMethod = activeMethods.find((m) => m.id === form.paymentMethodId)
+  const isCbe = selectedMethod?.provider === 'CBE'
+  const isTelebirr = selectedMethod?.provider === 'TELEBIRR'
+  const needsSuffix = selectedMethod?.provider === 'ABYSSINIA'
+  const needsPhone = selectedMethod?.provider === 'CBEBIRR' || isTelebirr
 
   function openModal() {
-    setForm({ ...emptyForm, feeId: fees[0]?.id || '' })
+    setForm({ ...emptyForm, feeId: fees[0]?.id || '', paymentMethodId: activeMethods[0]?.id || '' })
     setUseMyName(false)
     setPhase('form')
     setError('')
     setCanRetry(false)
     setOcrNote('')
     setReceiptAmount(null)
+    setReceiptFileName('')
+    setReceiptUploadError('')
     setModal(true)
+  }
+
+  function selectMethod(methodId) {
+    // Clear fields that don't carry over between providers (a CBE
+    // receipt is meaningless for Telebirr, a suffix typed for Abyssinia
+    // isn't relevant to Dashen, etc.) so a leftover value can't sneak
+    // into a submission it doesn't apply to.
+    setForm((f) => ({ ...f, paymentMethodId: methodId, txnId: '', suffix: '', phoneNumber: '', receiptUrl: undefined }))
+    setReceiptFileName('')
+    setReceiptUploadError('')
+  }
+
+  async function handleReceiptUpload(e) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setReceiptUploading(true)
+    setReceiptUploadError('')
+    try {
+      const result = await uploadSelfPaymentReceipt(file)
+      setForm((f) => ({ ...f, receiptUrl: result.receiptUrl }))
+      setReceiptFileName(file.name)
+    } catch (err) {
+      setReceiptUploadError(err?.response?.data?.message || err.message || 'Could not upload that receipt.')
+    } finally {
+      setReceiptUploading(false)
+      if (receiptInputRef.current) receiptInputRef.current.value = ''
+    }
   }
 
   function closeModal() {
@@ -128,14 +188,35 @@ export default function ResidentPayments() {
       setError("You're previewing the resident view as an admin — payment submission is only available to residents.")
       return
     }
+    if (isCbe && !form.receiptUrl) {
+      setError('Upload your CBE e-receipt before submitting.')
+      return
+    }
+    if (!isCbe && !form.txnId.trim()) {
+      setError('Transaction ID is required.')
+      return
+    }
+    if (needsSuffix && !form.suffix.trim()) {
+      setError('This bank requires the account suffix shown on your receipt.')
+      return
+    }
+    if (needsPhone && !form.phoneNumber.trim()) {
+      setError('This provider requires the phone number the payment was made from.')
+      return
+    }
     setPhase('verifying')
     try {
       const payment = await submitSelfPayment({
         feeId: form.feeId,
-        txnId: form.txnId.trim(),
         payerName: form.payerName.trim(),
         reason: form.reason.trim(),
         receiptAmount,
+        paymentMethodId: selectedMethod?.id || undefined,
+        provider: selectedMethod ? PROVIDER_TO_HINT[selectedMethod.provider] : undefined,
+        txnId: isCbe ? undefined : form.txnId.trim(),
+        suffix: needsSuffix ? form.suffix.trim() : undefined,
+        phoneNumber: needsPhone ? form.phoneNumber.trim() : undefined,
+        receiptUrl: isCbe ? form.receiptUrl : undefined,
       })
       setSuccessStatus(payment?.status || 'paid')
       setSuccessReviewFlags(payment?.reviewFlags || '')
@@ -294,15 +375,35 @@ export default function ResidentPayments() {
               )}
             </div>
 
+            {activeMethods.length > 0 && (
+              <div>
+                <label className="label">Pay with</label>
+                <select required className="input" value={form.paymentMethodId} onChange={(e) => selectMethod(e.target.value)}>
+                  {activeMethods.map((m) => (
+                    <option key={m.id} value={m.id}>{m.label} · {PROVIDER_LABELS[m.provider] || m.provider}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             {selectedFee && (
               <div className="rounded-xl bg-brand-50/60 ring-1 ring-brand-100 p-4">
                 <p className="text-xs font-semibold uppercase tracking-wide text-brand-700 flex items-center gap-1.5 mb-1.5">
-                  <Landmark className="h-3.5 w-3.5" /> Send payment to
+                  {isTelebirr ? <Smartphone className="h-3.5 w-3.5" /> : <Landmark className="h-3.5 w-3.5" />} Send payment to
                 </p>
                 <div className="divide-y divide-brand-100/80">
-                  <CopyRow label="Bank" value={community?.paymentBankName || '—'} />
-                  <CopyRow label="Account name" value={community?.paymentAccountName || '—'} />
-                  <CopyRow label="Account number" value={community?.paymentAccountNumber || '—'} mono />
+                  {isTelebirr ? (
+                    <>
+                      <CopyRow label="Full name" value={selectedMethod.fullName || '—'} />
+                      <CopyRow label="Phone number" value={selectedMethod.phoneNumber || '—'} mono />
+                    </>
+                  ) : (
+                    <>
+                      <CopyRow label="Bank" value={selectedMethod?.bankName || community?.paymentBankName || '—'} />
+                      <CopyRow label="Account name" value={selectedMethod?.accountName || community?.paymentAccountName || '—'} />
+                      <CopyRow label="Account number" value={selectedMethod?.accountNumber || community?.paymentAccountNumber || '—'} mono />
+                    </>
+                  )}
                   <CopyRow label="Amount" value={currency(selectedFee.amount)} />
                 </div>
               </div>
@@ -326,16 +427,63 @@ export default function ResidentPayments() {
               <p className="mt-1 text-xs text-ink-400">If someone paid on your behalf (e.g. a family member), put their name here.</p>
             </div>
 
-            <div>
-              <label className="label">Transaction ID</label>
-              <input
-                required
-                className="input font-mono"
-                placeholder="From your bank's transfer confirmation"
-                value={form.txnId}
-                onChange={(e) => setForm({ ...form, txnId: e.target.value })}
-              />
-            </div>
+            {isCbe ? (
+              <div className="rounded-xl border border-dashed border-brand-200 bg-brand-50/40 p-3.5">
+                <label className="label !mb-1.5">Upload your CBE e-receipt</label>
+                <p className="text-xs text-ink-400 mb-2.5">
+                  CBE transactions can't be looked up automatically — upload the screenshot or PDF receipt
+                  from your transfer and a committee admin will confirm it against this record.
+                </p>
+                <input ref={receiptInputRef} type="file" accept="image/png,image/jpeg,image/webp,application/pdf" className="hidden" onChange={handleReceiptUpload} />
+                <button
+                  type="button"
+                  onClick={() => receiptInputRef.current?.click()}
+                  disabled={receiptUploading}
+                  className="w-full flex items-center justify-center gap-2 text-sm font-medium text-ink-600 hover:text-brand-700 disabled:opacity-50"
+                >
+                  {receiptUploading ? <Loader2 className="h-4 w-4 animate-spin" /> : (form.receiptUrl ? <FileCheck2 className="h-4 w-4 text-emerald-600" /> : <Upload className="h-4 w-4" />)}
+                  {receiptUploading ? 'Uploading…' : form.receiptUrl ? `Uploaded: ${receiptFileName}` : 'Choose a screenshot or PDF'}
+                </button>
+                {receiptUploadError && <p className="mt-2 text-xs text-center text-rose-600">{receiptUploadError}</p>}
+              </div>
+            ) : (
+              <div>
+                <label className="label">{isTelebirr ? 'Reference number' : 'Transaction ID'}</label>
+                <input
+                  required
+                  className="input font-mono"
+                  placeholder="From your bank's transfer confirmation"
+                  value={form.txnId}
+                  onChange={(e) => setForm({ ...form, txnId: e.target.value })}
+                />
+              </div>
+            )}
+
+            {needsSuffix && (
+              <div>
+                <label className="label">Account suffix</label>
+                <input
+                  required
+                  className="input font-mono"
+                  placeholder="Shown on your receipt"
+                  value={form.suffix}
+                  onChange={(e) => setForm({ ...form, suffix: e.target.value })}
+                />
+              </div>
+            )}
+
+            {needsPhone && (
+              <div>
+                <label className="label">Phone number used to pay</label>
+                <input
+                  required
+                  className="input font-mono"
+                  placeholder="e.g. 2519XXXXXXXX"
+                  value={form.phoneNumber}
+                  onChange={(e) => setForm({ ...form, phoneNumber: e.target.value })}
+                />
+              </div>
+            )}
 
             <div>
               <label className="label">Reason (optional)</label>

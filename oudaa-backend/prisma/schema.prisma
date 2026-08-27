@@ -37,6 +37,21 @@ enum PaymentMethod {
   OTHER
 }
 
+// Which real-world provider a CommunityPaymentMethod represents. Mirrors
+// the `provider` hint bankVerification.js already accepts (cbe/telebirr/
+// dashen/abyssinia/cbebirr/mpesa) plus BANK_OTHER for any bank Veritas
+// doesn't have a dedicated adapter for (falls back to the universal
+// /verify auto-detect route, no provider hint sent).
+enum PaymentProvider {
+  CBE
+  TELEBIRR
+  DASHEN
+  ABYSSINIA
+  CBEBIRR
+  MPESA
+  BANK_OTHER
+}
+
 enum PaymentStatus {
   PENDING
   // Bank verification returned matched:true, but our own safeguard check
@@ -115,8 +130,52 @@ model Community {
   auditLogs AuditLog[]
   bankAccountHistory CommunityBankAccountHistory[]
   autoApprovals      CommitteeAutoApproval[]
+  paymentMethods     CommunityPaymentMethod[]
 
   @@map("communities")
+}
+
+// A committee can register more than one way to receive money (their main
+// CBE account, a Telebirr merchant number, a second bank for a different
+// purpose, etc). Residents pick one of these — instead of the single fixed
+// paymentBankName/paymentAccountName/paymentAccountNumber on Community
+// above, which is kept only for backward compatibility with communities
+// that haven't added any of these yet (see paymentController.js fallback).
+//
+// Field usage differs by provider, enforced in paymentMethodValidators.js
+// rather than the schema (Postgres can't express "required only when
+// provider = X"):
+//   - TELEBIRR has no bank account at all — only fullName + phoneNumber
+//     are used; bankName/accountName/accountNumber stay null.
+//   - CBE/DASHEN/ABYSSINIA/CBEBIRR/MPESA/BANK_OTHER use
+//     bankName/accountName/accountNumber (CBE still shows an account for
+//     display purposes even though residents no longer type a suffix —
+//     see selfVerifyPayment's CBE branch, receipt-upload only).
+model CommunityPaymentMethod {
+  id            String          @id @default(uuid())
+  communityId   String
+  provider      PaymentProvider
+  // Short display name the resident sees in the picker, e.g. "CBE — Main
+  // Account", "Telebirr — Security Deposits". Defaults to the provider's
+  // generic name in the UI if left blank.
+  label         String
+  bankName      String?
+  accountName   String?
+  accountNumber String?
+  // Telebirr-only — since Telebirr has no bank account, residents send to
+  // (and identify) the committee by these two fields instead.
+  fullName      String?
+  phoneNumber   String?
+  isActive      Boolean         @default(true)
+  sortOrder     Int             @default(0)
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  community Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  payments  Payment[]
+
+  @@index([communityId])
+  @@map("community_payment_methods")
 }
 
 // Snapshot of a community's bank payment account every time it's changed
@@ -332,6 +391,13 @@ model Payment {
   fundId             String?
   amount             Decimal       @db.Decimal(12, 2)
   paymentMethod      PaymentMethod @default(CASH)
+  // Which of the community's configured payment methods (see
+  // CommunityPaymentMethod) a resident's self-verified payment was sent
+  // through. Null for manually-recorded (cash/in-person) payments and for
+  // self-verified payments made before this existed (single-account
+  // fallback — see selfVerifyPayment). SetNull so deleting a payment
+  // method later doesn't touch historical payment records.
+  paymentMethodId    String?
   transactionReference String?
   // Name typed in by the resident submitting the payment — the person who
   // actually sent the money, which may not be the resident themselves
@@ -378,6 +444,7 @@ model Payment {
   fund     Fund?    @relation(fields: [fundId], references: [id], onDelete: SetNull)
   verifier User?    @relation("PaymentVerifiedBy", fields: [verifiedBy], references: [id], onDelete: SetNull)
   recorder User?    @relation("PaymentRecordedBy", fields: [recordedBy], references: [id], onDelete: SetNull)
+  paymentMethodUsed CommunityPaymentMethod? @relation(fields: [paymentMethodId], references: [id], onDelete: SetNull)
 
   @@index([residentId])
   @@index([feeId])

@@ -3,6 +3,7 @@ import { useLocation, useSearchParams } from 'react-router-dom'
 import {
   Camera, KeyRound, Mail, Phone, ShieldCheck, Loader2, Users2, Clock, XCircle, Search, Check,
   User, Bell, Palette, Landmark, AlertTriangle, ShieldAlert, Save, CheckCircle2, Sun, Moon, Monitor,
+  Plus, Pencil, Trash2, Smartphone, ToggleLeft, ToggleRight,
 } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import { useData } from '../../context/DataContext'
@@ -713,6 +714,224 @@ function CommunityTab() {
           )}
         </div>
       </form>
+
+      <PaymentMethodsPanel />
+    </div>
+  )
+}
+
+// ===========================================================================
+// Payment methods — a community can register several ways to receive money
+// (CBE, Telebirr, other banks) instead of the single legacy account above.
+// Residents pick one of these when self-verifying a payment (see
+// resident/Payments.jsx). Applies immediately (no committee approval, unlike
+// the legacy bank fields above) since removing/disabling a method never
+// touches existing payment history — see paymentMethodController.js.
+// ===========================================================================
+const METHOD_PROVIDERS = [
+  { value: 'CBE', label: 'Commercial Bank of Ethiopia (CBE)' },
+  { value: 'TELEBIRR', label: 'Telebirr' },
+  { value: 'DASHEN', label: 'Dashen Bank' },
+  { value: 'ABYSSINIA', label: 'Bank of Abyssinia' },
+  { value: 'CBEBIRR', label: 'CBE Birr' },
+  { value: 'MPESA', label: 'M-Pesa' },
+  { value: 'BANK_OTHER', label: 'Other bank' },
+]
+const emptyMethodForm = {
+  provider: 'CBE', label: '', bankName: '', accountName: '', accountNumber: '', fullName: '', phoneNumber: '', isActive: true,
+}
+
+function PaymentMethodsPanel() {
+  const { paymentMethods, addPaymentMethod, updatePaymentMethod, removePaymentMethod } = useData()
+  const [modal, setModal] = useState(false)
+  const [editingId, setEditingId] = useState(null)
+  const [form, setForm] = useState(emptyMethodForm)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [deletingId, setDeletingId] = useState(null)
+
+  const sorted = [...paymentMethods].sort((a, b) => (a.sortOrder - b.sortOrder) || a.label.localeCompare(b.label))
+
+  function openAdd() {
+    setEditingId(null)
+    setForm(emptyMethodForm)
+    setError('')
+    setModal(true)
+  }
+
+  function openEdit(m) {
+    setEditingId(m.id)
+    setForm({
+      provider: m.provider, label: m.label, bankName: m.bankName, accountName: m.accountName,
+      accountNumber: m.accountNumber, fullName: m.fullName, phoneNumber: m.phoneNumber, isActive: m.isActive,
+    })
+    setError('')
+    setModal(true)
+  }
+
+  async function submit(e) {
+    e.preventDefault()
+    setSaving(true)
+    setError('')
+    try {
+      if (editingId) {
+        await updatePaymentMethod(editingId, form)
+      } else {
+        await addPaymentMethod(form)
+      }
+      setModal(false)
+    } catch (err) {
+      setError(err?.response?.data?.message || err.message || 'Could not save this payment method.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function toggleActive(m) {
+    try {
+      await updatePaymentMethod(m.id, { ...m, isActive: !m.isActive })
+    } catch (err) {
+      notify(err?.response?.data?.message || err.message || 'Could not update this payment method.')
+    }
+  }
+
+  async function handleDelete(m) {
+    if (!window.confirm(`Remove "${m.label}"? Residents will no longer be able to pick it, but existing payments made through it are unaffected.`)) return
+    setDeletingId(m.id)
+    try {
+      await removePaymentMethod(m.id)
+    } catch (err) {
+      notify(err?.response?.data?.message || err.message || 'Could not remove this payment method.')
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
+  const isTelebirr = form.provider === 'TELEBIRR'
+
+  return (
+    <div className="card p-6 max-w-2xl mt-6">
+      <div className="flex items-start justify-between gap-3 mb-1">
+        <div>
+          <h3 className="text-sm font-semibold text-ink-800 flex items-center gap-2">
+            <Smartphone className="h-4 w-4 text-brand-600" /> Payment methods
+          </h3>
+          <p className="text-xs text-ink-400 mt-1 max-w-md">
+            Give residents more than one way to pay — e.g. CBE, Telebirr, and a second bank. They pick one under
+            "Make a payment". Takes effect immediately, no committee approval needed.
+          </p>
+        </div>
+        <button onClick={openAdd} className="btn-secondary shrink-0 !py-1.5 !px-3 text-xs">
+          <Plus className="h-3.5 w-3.5" /> Add method
+        </button>
+      </div>
+
+      {sorted.length === 0 ? (
+        <p className="text-sm text-ink-400 py-6 text-center">
+          No payment methods added yet — residents will see the single account above.
+        </p>
+      ) : (
+        <div className="divide-y divide-ink-100 mt-3">
+          {sorted.map((m) => (
+            <div key={m.id} className="flex items-center justify-between gap-3 py-3">
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-ink-800 truncate">{m.label}</p>
+                <p className="text-xs text-ink-400 truncate">
+                  {METHOD_PROVIDERS.find((p) => p.value === m.provider)?.label || m.provider}
+                  {m.provider === 'TELEBIRR' ? ` · ${m.phoneNumber || 'no phone set'}` : ` · ${m.accountNumber || 'no account set'}`}
+                </p>
+              </div>
+              <div className="flex items-center gap-1 shrink-0">
+                <button
+                  onClick={() => toggleActive(m)}
+                  title={m.isActive ? 'Active — click to disable' : 'Disabled — click to enable'}
+                  className={`flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium transition ${m.isActive ? 'text-emerald-700 bg-emerald-50 hover:bg-emerald-100' : 'text-ink-400 bg-ink-50 hover:bg-ink-100'}`}
+                >
+                  {m.isActive ? <ToggleRight className="h-3.5 w-3.5" /> : <ToggleLeft className="h-3.5 w-3.5" />}
+                  {m.isActive ? 'Active' : 'Disabled'}
+                </button>
+                <button onClick={() => openEdit(m)} className="p-1.5 rounded-lg text-ink-400 hover:text-brand-700 hover:bg-brand-50" title="Edit">
+                  <Pencil className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  onClick={() => handleDelete(m)}
+                  disabled={deletingId === m.id}
+                  className="p-1.5 rounded-lg text-ink-400 hover:text-rose-600 hover:bg-rose-50 disabled:opacity-50"
+                  title="Remove"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <Modal open={modal} onClose={() => setModal(false)} title={editingId ? 'Edit payment method' : 'Add payment method'}>
+        <form onSubmit={submit} className="space-y-4">
+          <div>
+            <label className="label">Provider</label>
+            <select
+              required
+              className="input"
+              value={form.provider}
+              onChange={(e) => setForm((f) => ({ ...f, provider: e.target.value }))}
+            >
+              {METHOD_PROVIDERS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="label">Label shown to residents</label>
+            <input
+              required
+              className="input"
+              placeholder="e.g. CBE main account"
+              value={form.label}
+              onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))}
+            />
+          </div>
+
+          {isTelebirr ? (
+            <>
+              <div>
+                <label className="label">Full name on the Telebirr account</label>
+                <input required className="input" value={form.fullName} onChange={(e) => setForm((f) => ({ ...f, fullName: e.target.value }))} />
+              </div>
+              <div>
+                <label className="label">Phone number</label>
+                <input required className="input font-mono" placeholder="2519XXXXXXXX" value={form.phoneNumber} onChange={(e) => setForm((f) => ({ ...f, phoneNumber: e.target.value }))} />
+              </div>
+            </>
+          ) : (
+            <>
+              <div>
+                <label className="label">Bank name</label>
+                <input required className="input" value={form.bankName} onChange={(e) => setForm((f) => ({ ...f, bankName: e.target.value }))} />
+              </div>
+              <div>
+                <label className="label">Account name</label>
+                <input required className="input" value={form.accountName} onChange={(e) => setForm((f) => ({ ...f, accountName: e.target.value }))} />
+              </div>
+              <div>
+                <label className="label">Account number</label>
+                <input required className="input font-mono" value={form.accountNumber} onChange={(e) => setForm((f) => ({ ...f, accountNumber: e.target.value }))} />
+              </div>
+            </>
+          )}
+
+          <label className="flex items-center gap-2 text-sm text-ink-600 cursor-pointer select-none">
+            <input type="checkbox" className="rounded" checked={form.isActive} onChange={(e) => setForm((f) => ({ ...f, isActive: e.target.checked }))} />
+            Active (visible to residents)
+          </label>
+
+          {error && <div className="rounded-xl bg-rose-50 border border-rose-100 px-3.5 py-2.5 text-sm text-rose-600">{error}</div>}
+
+          <div className="flex gap-2 pt-2">
+            <button type="button" onClick={() => setModal(false)} className="btn-secondary flex-1">Cancel</button>
+            <button type="submit" disabled={saving} className="btn-primary flex-1">{saving ? 'Saving…' : 'Save'}</button>
+          </div>
+        </form>
+      </Modal>
     </div>
   )
 }

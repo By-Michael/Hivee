@@ -11,6 +11,7 @@ import {
   receiptToUI,
   communityToUI, communityToUpdateAPI,
   pendingChangeToUI,
+  paymentMethodToUI, paymentMethodToAPI,
 } from '../lib/adapters'
 
 const EMPTY_DATA = {
@@ -21,6 +22,7 @@ const EMPTY_DATA = {
   // active" header stays correct even when the full list isn't in memory.
   residentsMeta: { total: 0, activeTotal: 0, page: 1, totalPages: 1, limit: 200 },
   fees: [],
+  paymentMethods: [],
   payments: [],
   funds: [],
   projects: [],
@@ -181,9 +183,13 @@ export function DataProvider({ children }) {
       const skipBigListPage1 = opts.silent && fullyLoaded.residents && fullyLoaded.payments && fullyLoaded.expenses
 
       const [
-        feesRes, fundsRes, projectsRes, expensesRes, paymentsRes, communityRes, residentsRes, fundSummariesRes, pendingChangesRes,
+        feesRes, paymentMethodsRes, fundsRes, projectsRes, expensesRes, paymentsRes, communityRes, residentsRes, fundSummariesRes, pendingChangesRes,
       ] = await Promise.all([
         api.get(endpoints.fees()).catch(label('fees')),
+        // Which ways the community accepts payment (CBE/Telebirr/other
+        // banks) — residents need this to pick one in "Make a payment";
+        // admins need it to manage the list under Settings > Community.
+        api.get(endpoints.paymentMethods()).catch(label('paymentMethods')),
         api.get(endpoints.funds()).catch(label('funds')),
         api.get(endpoints.projects()).catch(label('projects')),
         skipBigListPage1
@@ -270,6 +276,7 @@ export function DataProvider({ children }) {
           residents: isFirstLoad || residentsRes === null ? residentsUI : mergeById(prev.residents, residentsUI),
           residentsMeta,
           fees: feesRes?.__failed ? prev.fees : feesRes.data.data.map(feeToUI),
+          paymentMethods: paymentMethodsRes?.__failed ? prev.paymentMethods : paymentMethodsRes.data.data.map(paymentMethodToUI),
           payments: isFirstLoad || paymentsRes === null ? paymentsUI : mergeById(prev.payments, paymentsUI),
           funds: fundsRes?.__failed ? prev.funds : fundsRaw.map((f) => fundToUI(f, summariesById.get(f.id) || null)),
           projects: projectsRes?.__failed ? prev.projects : projectsRes.data.data.map(projectToUI),
@@ -520,6 +527,25 @@ export function DataProvider({ children }) {
       patchList('fees')((list) => list.filter((f) => f.id !== id))
     },
 
+    // ---- payment methods (ADMIN write, ADMIN+RESIDENT read) ----
+    // How the community accepts money — a committee can register several
+    // (CBE, Telebirr, other banks) and residents pick one when
+    // self-verifying a payment (see submitSelfPayment below).
+    addPaymentMethod: async (form) => {
+      const { data } = await api.post(endpoints.paymentMethods(), paymentMethodToAPI(form))
+      patchList('paymentMethods')((list) => [...list, paymentMethodToUI(data.data)])
+      return paymentMethodToUI(data.data)
+    },
+    updatePaymentMethod: async (id, form) => {
+      const { data } = await api.patch(endpoints.paymentMethod(id), paymentMethodToAPI(form))
+      patchList('paymentMethods')((list) => list.map((m) => (m.id === id ? paymentMethodToUI(data.data) : m)))
+      return paymentMethodToUI(data.data)
+    },
+    removePaymentMethod: async (id) => {
+      await api.delete(endpoints.paymentMethod(id))
+      patchList('paymentMethods')((list) => list.filter((m) => m.id !== id))
+    },
+
     // ---- payments ----
     // A committee member recording a payment (cash-in-hand, no bank access,
     // etc.) has, by definition, already received the money — the backend
@@ -596,11 +622,29 @@ export function DataProvider({ children }) {
     // Resident self-serve flow: submit a bank txn ID and get verified
     // against the bank instantly (no admin step). Throws on mismatch/
     // failure so the caller can show the error inline and let them retry.
-    submitSelfPayment: async ({ feeId, fundId, txnId, payerName, reason, amount, receiptAmount }) => {
-      const { data } = await api.post(endpoints.paymentSelfVerify(), { feeId, fundId, txnId, payerName, reason, amount, receiptAmount })
+    submitSelfPayment: async ({
+      feeId, fundId, txnId, payerName, reason, amount, receiptAmount,
+      paymentMethodId, provider, suffix, phoneNumber, receiptUrl,
+    }) => {
+      const { data } = await api.post(endpoints.paymentSelfVerify(), {
+        feeId, fundId, txnId, payerName, reason, amount, receiptAmount,
+        paymentMethodId, provider, suffix, phoneNumber, receiptUrl,
+      })
       patchList('payments')((list) => [paymentToUI(data.data), ...list])
       refresh({ silent: true })
       return paymentToUI(data.data)
+    },
+    // CBE-only: upload the e-receipt (screenshot/PDF) *before* calling
+    // submitSelfPayment, and pass the returned receiptUrl in as part of
+    // that call — CBE has no bank-verifiable txnId, so the receipt is the
+    // evidence an admin will check by hand (see paymentController.js).
+    uploadSelfPaymentReceipt: async (file) => {
+      const body = new FormData()
+      body.append('receipt', file)
+      const { data } = await api.post(endpoints.paymentSelfVerifyReceipt(), body, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
+      return data.data
     },
     // Resident retracting their own still-pending self-verified payment
     // (e.g. wrong txn ID / wrong fee). Backend only allows this while the

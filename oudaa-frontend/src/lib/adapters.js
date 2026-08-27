@@ -142,6 +142,40 @@ export function feeToAPI(form) {
   }
 }
 
+// ------------------------------- payment methods ---------------------------
+// A community's configured ways to receive money (CBE, Telebirr, other
+// banks...). The backend shape (schema.prisma CommunityPaymentMethod) is
+// already camelCase and matches what the UI needs field-for-field, so this
+// just normalizes nulls to '' so <input>s stay controlled.
+export function paymentMethodToUI(m) {
+  return {
+    id: m.id,
+    provider: m.provider,
+    label: m.label || '',
+    bankName: m.bankName || '',
+    accountName: m.accountName || '',
+    accountNumber: m.accountNumber || '',
+    fullName: m.fullName || '',
+    phoneNumber: m.phoneNumber || '',
+    isActive: m.isActive !== false,
+    sortOrder: m.sortOrder ?? 0,
+  }
+}
+
+export function paymentMethodToAPI(form) {
+  const isTelebirr = form.provider === 'TELEBIRR'
+  return {
+    provider: form.provider,
+    label: form.label.trim(),
+    bankName: isTelebirr ? undefined : (form.bankName || '').trim() || undefined,
+    accountName: isTelebirr ? undefined : (form.accountName || '').trim() || undefined,
+    accountNumber: isTelebirr ? undefined : (form.accountNumber || '').trim() || undefined,
+    fullName: isTelebirr ? (form.fullName || '').trim() || undefined : undefined,
+    phoneNumber: isTelebirr ? (form.phoneNumber || '').trim() || undefined : undefined,
+    isActive: form.isActive !== false,
+  }
+}
+
 // ------------------------------- payments ---------------------------------
 export function paymentToUI(p) {
   return {

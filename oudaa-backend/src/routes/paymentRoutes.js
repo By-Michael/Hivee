@@ -28,6 +28,14 @@ router.post(
   validate(selfVerifyPaymentSchema),
   ctrl.selfVerifyPayment
 );
+// CBE only: upload the e-receipt (screenshot/PDF) *before* calling
+// self-verify, get back a receiptUrl to send as part of that JSON body.
+router.post(
+  '/self-verify/receipt',
+  authorize('RESIDENT'),
+  upload.single('receipt'),
+  ctrl.uploadSelfPaymentReceipt
+);
 // Screenshot autofill: OCR the image, return best-guess name/txnId.
 router.post(
   '/parse-screenshot',

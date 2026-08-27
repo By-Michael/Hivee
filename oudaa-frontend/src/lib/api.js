@@ -110,9 +110,16 @@ export const endpoints = {
   payment: (id) => `/payments/${id}`,
   paymentReceipt: (id) => `/payments/${id}/receipt`,
   paymentSelfVerify: () => '/payments/self-verify',
+  paymentSelfVerifyReceipt: () => '/payments/self-verify/receipt',
   paymentBatchVerify: () => '/payments/batch-verify',
   paymentParseScreenshot: () => '/payments/parse-screenshot',
   paymentRetract: (id) => `/payments/${id}/retract`,
+
+  // A community can register several ways to receive money (CBE, Telebirr,
+  // other banks, ...) — residents pick one when self-verifying a payment;
+  // only ADMIN can write.
+  paymentMethods: () => '/payment-methods',
+  paymentMethod: (id) => `/payment-methods/${id}`,
 
   funds: () => '/funds',
   fund: (id) => `/funds/${id}`,
