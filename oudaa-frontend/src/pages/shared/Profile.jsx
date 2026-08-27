@@ -640,34 +640,49 @@ function CommunityTab() {
           <div className="grid sm:grid-cols-2 gap-4">
             <div className="sm:col-span-2">
               <label className="label">Bank</label>
-              {bankIsOther ? (
-                <>
-                  <input
-                    required
-                    autoFocus
-                    className="input"
-                    placeholder="Enter bank name"
-                    value={form.paymentBankName}
-                    onChange={(e) => updateField({ paymentBankName: e.target.value })}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => { setBankIsOther(false); updateField({ paymentBankName: BANK_OPTIONS[0] }) }}
-                    className="mt-1.5 text-xs font-medium text-brand-700 hover:text-brand-800"
-                  >
-                    Switch to Commercial Bank of Ethiopia instead
-                  </button>
-                </>
-              ) : (
-                // Hivee only supports CBE as the bank for this fallback
-                // account (Telebirr has no bank account — see the note
-                // above) — nothing to choose here, so this is a fixed
-                // display rather than a dropdown with one pointless option.
-                <div className="flex items-center gap-2.5 rounded-xl px-3.5 py-3 ring-1 ring-brand-200 bg-brand-50 text-brand-700">
-                  <Landmark className="h-4 w-4 shrink-0" />
-                  <span className="text-sm font-semibold">Commercial Bank of Ethiopia (CBE)</span>
-                </div>
+              <div className="grid grid-cols-2 gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => { setBankIsOther(false); updateField({ paymentBankName: BANK_OPTIONS[0] }) }}
+                  className={`flex flex-col items-center gap-1.5 rounded-xl px-3 py-3.5 text-center transition ring-1 ${
+                    !bankIsOther
+                      ? 'bg-brand-50 ring-brand-300 text-brand-700'
+                      : 'bg-white ring-ink-200 text-ink-500 hover:bg-ink-50'
+                  }`}
+                >
+                  <Landmark className={`h-5 w-5 ${!bankIsOther ? 'text-brand-600' : 'text-ink-400'}`} />
+                  <span className="text-sm font-semibold leading-tight">CBE</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    // The legacy single-account fields below (account
+                    // name + number) have nowhere to put a phone number,
+                    // so Telebirr can't actually be saved through this
+                    // form — hand off to Payment methods instead of
+                    // pretending it fits here (see the free-text "Enter
+                    // bank name" bug this replaces, where typing
+                    // "Telebirr" produced a bank account form that made
+                    // no sense for it).
+                    document.getElementById('payment-methods-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                    window.dispatchEvent(new CustomEvent('hivee:open-add-payment-method', { detail: { provider: 'TELEBIRR' } }))
+                  }}
+                  className="flex flex-col items-center gap-1.5 rounded-xl px-3 py-3.5 text-center transition ring-1 bg-white ring-ink-200 text-ink-500 hover:bg-ink-50"
+                >
+                  <Smartphone className="h-5 w-5 text-ink-400" />
+                  <span className="text-sm font-semibold leading-tight">Telebirr</span>
+                </button>
+              </div>
+              {bankIsOther && (
+                <p className="mt-2 text-xs text-amber-600">
+                  Currently set to "{form.paymentBankName}", which isn't CBE — click <strong>CBE</strong> above
+                  to switch this fallback account to Commercial Bank of Ethiopia.
+                </p>
               )}
+              <p className="mt-2 text-xs text-ink-400">
+                Telebirr has no bank account to store here — clicking it takes you to <strong className="text-ink-500">Payment methods</strong> below,
+                which asks for the right fields (full name + phone number) and applies instantly.
+              </p>
             </div>
             <div>
               <label className="label">Account name</label>
@@ -811,8 +826,24 @@ function PaymentMethodsPanel() {
 
   const isTelebirr = form.provider === 'TELEBIRR'
 
+  // Lets other parts of this page (the "Bank" cards in CommunityTab
+  // above) open this panel's Add modal pre-set to a specific provider —
+  // e.g. clicking "Telebirr" up there, where Telebirr can't actually be
+  // saved (no phone-number field in that legacy single-account schema),
+  // hands off here instead of pretending it fits.
+  useEffect(() => {
+    function onOpenAdd(e) {
+      setEditingId(null)
+      setForm({ ...emptyMethodForm, provider: e.detail?.provider || 'CBE' })
+      setError('')
+      setModal(true)
+    }
+    window.addEventListener('hivee:open-add-payment-method', onOpenAdd)
+    return () => window.removeEventListener('hivee:open-add-payment-method', onOpenAdd)
+  }, [])
+
   return (
-    <div className="card p-6 max-w-2xl mt-6">
+    <div id="payment-methods-panel" className="card p-6 max-w-2xl mt-6">
       <div className="flex items-start justify-between gap-3 mb-1">
         <div>
           <h3 className="text-sm font-semibold text-ink-800 flex items-center gap-2">
