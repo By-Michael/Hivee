@@ -1,7 +1,15 @@
+const crypto = require('crypto');
 const prisma = require('../config/prisma');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/AppError');
-const { recordAudit } = require('../utils/audit');
+const { createPendingChange } = require('./pendingChangeController');
+
+// Hivee only supports 2 payment providers total (CBE and Telebirr — see
+// PaymentProvider in schema.prisma) and there are no plans to add more, so
+// a community is capped at 2 registered payment methods. Enforced here
+// rather than left to the UI so it can't be bypassed by calling the API
+// directly.
+const MAX_PAYMENT_METHODS = 2;
 
 // Telebirr rows never carry bank fields, bank rows never carry
 // fullName/phoneNumber — strip whichever half doesn't apply so stale data
@@ -19,6 +27,16 @@ function scrubByProvider(data) {
   return out;
 }
 
+function assertProviderFieldsComplete(data) {
+  const needsBank = data.provider !== 'TELEBIRR';
+  if (needsBank && !data.accountNumber) {
+    throw new AppError('This provider needs an account number', 422);
+  }
+  if (!needsBank && (!data.fullName || !data.phoneNumber)) {
+    throw new AppError('Telebirr needs a full name and phone number', 422);
+  }
+}
+
 // Residents (and any unauthenticated-in-community context) only ever see
 // active methods — an admin toggling one off should immediately remove it
 // from the resident "pay with" picker without residents seeing a
@@ -32,20 +50,47 @@ const listPaymentMethods = catchAsync(async (req, res) => {
     where,
     orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
   });
-  res.json({ success: true, data: methods });
+  res.json({ success: true, data: methods, maxPaymentMethods: MAX_PAYMENT_METHODS });
 });
 
+// Adding, editing, or removing a payment method changes where every
+// resident is told to send money — same stakes as the legacy single bank
+// account fields (see communityController.updateMyCommunity), so all
+// three go through the PendingChange committee-approval flow instead of
+// applying instantly. A sole committee member still gets it applied right
+// away (see createPendingChange) — nobody else to approve it.
 const createPaymentMethod = catchAsync(async (req, res) => {
-  const method = await prisma.communityPaymentMethod.create({
-    data: { ...scrubByProvider(req.body), communityId: req.communityId },
+  const scrubbed = scrubByProvider(req.body);
+  assertProviderFieldsComplete(scrubbed);
+
+  const existingCount = await prisma.communityPaymentMethod.count({ where: { communityId: req.communityId } });
+  const pendingCreateCount = await prisma.pendingChange.count({
+    where: { communityId: req.communityId, changeType: 'PAYMENT_METHOD_CREATE', status: 'PENDING' },
   });
-  await recordAudit(req, {
-    action: 'CREATE',
-    entityType: 'CommunityPaymentMethod',
-    entityId: method.id,
-    description: `Added payment method "${method.label}" (${method.provider})`,
+  if (existingCount + pendingCreateCount >= MAX_PAYMENT_METHODS) {
+    throw new AppError(`This community already has the maximum of ${MAX_PAYMENT_METHODS} payment methods (CBE and Telebirr).`, 422);
+  }
+
+  // Generated up front so it can double as the PendingChange's entityId —
+  // the row doesn't exist yet, so there's nothing else to key it on until
+  // it's actually created on approval (see PAYMENT_METHOD_CREATE.apply).
+  const newId = crypto.randomUUID();
+
+  const result = await createPendingChange(req, {
+    changeType: 'PAYMENT_METHOD_CREATE',
+    entityId: newId,
+    currentEntity: {},
+    proposedFields: scrubbed,
   });
-  res.status(201).json({ success: true, data: method });
+
+  res.status(201).json({
+    success: true,
+    data: result.applied ? result.entity : null,
+    pendingChange: result.pending || null,
+    message: result.pending
+      ? 'Needs every other committee member to approve before it takes effect.'
+      : "Added — you're the only committee member, so no separate approval was needed.",
+  });
 });
 
 const updatePaymentMethod = catchAsync(async (req, res) => {
@@ -55,36 +100,25 @@ const updatePaymentMethod = catchAsync(async (req, res) => {
   if (!method) throw new AppError('Payment method not found', 404);
 
   const merged = scrubByProvider({ ...method, ...req.body });
-  const nextProvider = merged.provider;
-  const needsBank = nextProvider !== 'TELEBIRR';
-  if (needsBank && !merged.accountNumber) {
-    throw new AppError('This provider needs an account number', 422);
-  }
-  if (!needsBank && (!merged.fullName || !merged.phoneNumber)) {
-    throw new AppError('Telebirr needs a full name and phone number', 422);
-  }
+  assertProviderFieldsComplete(merged);
 
-  const updated = await prisma.communityPaymentMethod.update({
-    where: { id: method.id },
-    data: {
-      provider: merged.provider,
-      label: merged.label,
-      bankName: merged.bankName,
-      accountName: merged.accountName,
-      accountNumber: merged.accountNumber,
-      fullName: merged.fullName,
-      phoneNumber: merged.phoneNumber,
-      isActive: merged.isActive,
-      sortOrder: merged.sortOrder,
-    },
-  });
-  await recordAudit(req, {
-    action: 'UPDATE',
-    entityType: 'CommunityPaymentMethod',
+  const result = await createPendingChange(req, {
+    changeType: 'PAYMENT_METHOD_UPDATE',
     entityId: method.id,
-    description: `Updated payment method "${updated.label}"`,
+    currentEntity: method,
+    proposedFields: merged,
   });
-  res.json({ success: true, data: updated });
+
+  res.json({
+    success: true,
+    data: result.applied ? result.entity : (result.noChange ? method : null),
+    pendingChange: result.pending || null,
+    message: result.noChange
+      ? 'No changes to save.'
+      : result.pending
+        ? 'Needs every other committee member to approve before it takes effect.'
+        : "Updated — you're the only committee member, so no separate approval was needed.",
+  });
 });
 
 const deletePaymentMethod = catchAsync(async (req, res) => {
@@ -93,17 +127,21 @@ const deletePaymentMethod = catchAsync(async (req, res) => {
   });
   if (!method) throw new AppError('Payment method not found', 404);
 
-  // Payments that used this method keep their record (paymentMethodId just
-  // goes null via the FK's ON DELETE SET NULL) — deleting a payment method
-  // must never delete or orphan financial history.
-  await prisma.communityPaymentMethod.delete({ where: { id: method.id } });
-  await recordAudit(req, {
-    action: 'DELETE',
-    entityType: 'CommunityPaymentMethod',
+  const result = await createPendingChange(req, {
+    changeType: 'PAYMENT_METHOD_DELETE',
     entityId: method.id,
-    description: `Removed payment method "${method.label}"`,
+    currentEntity: method,
+    proposedFields: {},
   });
-  res.json({ success: true, message: 'Payment method removed' });
+
+  res.json({
+    success: true,
+    removed: !!result.applied,
+    pendingChange: result.pending || null,
+    message: result.pending
+      ? 'Removal needs every other committee member to approve before it takes effect.'
+      : "Removed — you're the only committee member, so no separate approval was needed.",
+  });
 });
 
 module.exports = { listPaymentMethods, createPaymentMethod, updatePaymentMethod, deletePaymentMethod };

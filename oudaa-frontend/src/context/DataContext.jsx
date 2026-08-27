@@ -528,22 +528,30 @@ export function DataProvider({ children }) {
     },
 
     // ---- payment methods (ADMIN write, ADMIN+RESIDENT read) ----
-    // How the community accepts money — a committee can register several
-    // (CBE, Telebirr, other banks) and residents pick one when
-    // self-verifying a payment (see submitSelfPayment below).
+    // How the community accepts money — a committee can register up to 2
+    // (CBE and/or Telebirr, the only providers Hivee supports) and
+    // residents pick one when self-verifying a payment (see
+    // submitSelfPayment below). Every add/edit/removal goes through the
+    // same committee-approval flow as the legacy bank-account fields (see
+    // paymentMethodController.js) — a sole committee member still gets it
+    // applied instantly, but with more than one admin it may come back as
+    // a `pendingChange` instead of `data`. Callers (the Payments settings
+    // tab) inspect the raw response to show the right "saved" vs "awaiting
+    // approval" message, same shape as updateCommunity below.
     addPaymentMethod: async (form) => {
       const { data } = await api.post(endpoints.paymentMethods(), paymentMethodToAPI(form))
-      patchList('paymentMethods')((list) => [...list, paymentMethodToUI(data.data)])
-      return paymentMethodToUI(data.data)
+      refresh({ silent: true })
+      return data
     },
     updatePaymentMethod: async (id, form) => {
       const { data } = await api.patch(endpoints.paymentMethod(id), paymentMethodToAPI(form))
-      patchList('paymentMethods')((list) => list.map((m) => (m.id === id ? paymentMethodToUI(data.data) : m)))
-      return paymentMethodToUI(data.data)
+      refresh({ silent: true })
+      return data
     },
     removePaymentMethod: async (id) => {
-      await api.delete(endpoints.paymentMethod(id))
-      patchList('paymentMethods')((list) => list.filter((m) => m.id !== id))
+      const { data } = await api.delete(endpoints.paymentMethod(id))
+      refresh({ silent: true })
+      return data
     },
 
     // ---- payments ----

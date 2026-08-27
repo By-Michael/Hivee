@@ -3,7 +3,7 @@ import { useLocation, useSearchParams } from 'react-router-dom'
 import {
   Camera, KeyRound, Mail, Phone, ShieldCheck, Loader2, Users2, Clock, XCircle, Search, Check,
   User, Bell, Palette, Landmark, AlertTriangle, ShieldAlert, Save, CheckCircle2, Sun, Moon, Monitor,
-  Plus, Pencil, Trash2, Smartphone, ToggleLeft, ToggleRight,
+  Plus, Pencil, Trash2, Smartphone, ToggleLeft, ToggleRight, Wallet,
 } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import { useData } from '../../context/DataContext'
@@ -36,6 +36,7 @@ const TABS = [
   { id: 'notifications', label: 'Notifications', icon: Bell, roles: ['admin', 'resident'] },
   { id: 'preferences', label: 'Preferences', icon: Palette, roles: ['admin', 'resident'] },
   { id: 'community', label: 'Community', icon: Landmark, roles: ['admin'] },
+  { id: 'payments', label: 'Payments', icon: Wallet, roles: ['admin'] },
   { id: 'approvals', label: 'Approvals', icon: ShieldCheck, roles: ['admin'] },
   { id: 'membership', label: 'Membership', icon: Users2, roles: ['admin'] },
 ]
@@ -102,6 +103,7 @@ export default function Profile() {
       {activeTab === 'notifications' && <NotificationsTab user={user} roleKey={roleKey} />}
       {activeTab === 'preferences' && <PreferencesTab />}
       {isCommittee && activeTab === 'community' && <CommunityTab />}
+      {isCommittee && activeTab === 'payments' && <PaymentsTab />}
       {isCommittee && activeTab === 'approvals' && <ApprovalsTab user={user} />}
       {isCommittee && activeTab === 'membership' && <MembershipTab user={user} />}
     </div>
@@ -475,42 +477,24 @@ function PreferencesTab() {
 }
 
 // ===========================================================================
-// Community — community details + the shared payment account. Committee-
-// only: this affects every resident, not just the person editing it, so
-// bank-detail changes still route through the existing multi-committee
-// approval flow on save.
+// Community — community details only. Committee-only: this affects every
+// resident, not just the person editing it. The community's payment
+// methods (CBE/Telebirr) and the resident self-verification safeguard
+// live in the separate "Payments" tab below (see PaymentsTab) instead of
+// being buried in here.
 // ===========================================================================
-// Hivee only supports CBE and Telebirr as payment providers, so this
-// legacy single-account fallback (a bank-transfer-style account) can only
-// ever be a CBE account — fixed rather than a dropdown, so there's
-// nothing to mistype or pick wrong.
-//
-// Deliberately excludes Telebirr: this legacy single-account form always
-// requires an Account name + Account number below, which doesn't make
-// sense for Telebirr (no bank account — just a full name + phone number).
-// Telebirr belongs in "Payment methods" further down this page instead,
-// which asks for the right fields per provider.
-const BANK_OPTIONS = ['Commercial Bank of Ethiopia']
-
 function CommunityTab() {
   const { community, updateCommunity } = useData()
-  const emptyForm = {
-    name: '', address: '', contactInfo: '',
-    paymentBankName: '', paymentAccountName: '', paymentAccountNumber: '',
-    autoVerifyMaxAmount: '',
-  }
+  const emptyForm = { name: '', address: '', contactInfo: '' }
   const [form, setForm] = useState(emptyForm)
-  const [bankIsOther, setBankIsOther] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [saved, setSaved] = useState(false)
-  const [pendingNotice, setPendingNotice] = useState('')
   // Tracks whether the admin has touched anything since the form was last
   // synced from the server, so the background 60s silent refresh (see
   // DataContext) can't clobber in-progress edits by re-running the sync
   // effect underneath them, and so we know when to warn about unsaved work.
   const dirtyRef = useRef(false)
-  const loadedOnceRef = useRef(false)
 
   useEffect(() => {
     if (community && !dirtyRef.current) {
@@ -518,13 +502,7 @@ function CommunityTab() {
         name: community.name || '',
         address: community.address || '',
         contactInfo: community.contactInfo || '',
-        paymentBankName: community.paymentBankName || BANK_OPTIONS[0],
-        paymentAccountName: community.paymentAccountName || '',
-        paymentAccountNumber: community.paymentAccountNumber || '',
-        autoVerifyMaxAmount: community.autoVerifyMaxAmount ?? '',
       })
-      setBankIsOther(!!community.paymentBankName && !BANK_OPTIONS.includes(community.paymentBankName))
-      loadedOnceRef.current = true
     }
   }, [community])
 
@@ -551,19 +529,8 @@ function CommunityTab() {
     setSaving(true)
     setError('')
     setSaved(false)
-    setPendingNotice('')
     try {
-      const result = await updateCommunity({
-        ...form,
-        autoVerifyMaxAmount: form.autoVerifyMaxAmount === '' ? null : Number(form.autoVerifyMaxAmount),
-      })
-      // Bank-detail fields don't apply instantly — they went through
-      // committee approval on the backend. Tell the admin which happened
-      // rather than showing a plain "Saved" that would imply it's live now.
-      if (result?.bankDetailsMessage) {
-        setPendingNotice(result.bankDetailsMessage)
-        setTimeout(() => setPendingNotice(''), 8000)
-      }
+      await updateCommunity(form)
       dirtyRef.current = false
       setSaved(true)
       setTimeout(() => setSaved(false), 3000)
@@ -573,6 +540,196 @@ function CommunityTab() {
       setSaving(false)
     }
   }
+
+  return (
+    <div>
+      <form onSubmit={submit} className="card p-6 max-w-2xl space-y-6">
+        <div>
+          <h3 className="text-sm font-semibold text-ink-800 mb-3">Community</h3>
+          <div className="space-y-4">
+            <div>
+              <label className="label">Community name</label>
+              <input required className="input" value={form.name} onChange={(e) => updateField({ name: e.target.value })} />
+            </div>
+            <div>
+              <label className="label">Address</label>
+              <input className="input" value={form.address} onChange={(e) => updateField({ address: e.target.value })} />
+            </div>
+            <div>
+              <label className="label">Contact info</label>
+              <input className="input" value={form.contactInfo} onChange={(e) => updateField({ contactInfo: e.target.value })} />
+            </div>
+          </div>
+        </div>
+
+        {error && <div className="rounded-xl bg-rose-50 border border-rose-100 px-3.5 py-2.5 text-sm text-rose-600">{error}</div>}
+
+        <div className="flex items-center gap-3 pt-2">
+          <button type="submit" disabled={saving} className="btn-primary">
+            <Save className="h-4 w-4" /> {saving ? 'Saving…' : 'Save settings'}
+          </button>
+          {saved && (
+            <span className="flex items-center gap-1.5 text-sm text-emerald-600 font-medium">
+              <CheckCircle2 className="h-4 w-4" /> Saved
+            </span>
+          )}
+        </div>
+      </form>
+    </div>
+  )
+}
+
+// ===========================================================================
+// Payments — a community can register up to 2 payment methods: CBE and/or
+// Telebirr, the only two providers Hivee supports (see PaymentProvider in
+// schema.prisma), so there's nothing left to add once both are registered.
+// Residents pick one of these when self-verifying a payment (see
+// resident/Payments.jsx). Every add/edit/removal here is a sensitive,
+// community-wide change — same stakes as the old single-account fields —
+// so it goes through the same PendingChange committee-approval flow: a
+// sole committee member gets it applied instantly, otherwise it needs
+// every other committee member to sign off first (see the notification
+// bell / dashboard once you save).
+// ===========================================================================
+const METHOD_PROVIDERS = [
+  { value: 'CBE', label: 'Commercial Bank of Ethiopia (CBE)', short: 'CBE' },
+  { value: 'TELEBIRR', label: 'Telebirr', short: 'Telebirr' },
+]
+const emptyMethodForm = {
+  provider: 'CBE', label: '', bankName: '', accountName: '', accountNumber: '', fullName: '', phoneNumber: '', isActive: true,
+}
+const MAX_PAYMENT_METHODS = 2
+
+function PaymentsTab() {
+  const { community, paymentMethods, pendingChanges, addPaymentMethod, updatePaymentMethod, removePaymentMethod, updateCommunity, cancelPendingChange } = useData()
+  const [modal, setModal] = useState(false)
+  const [editingId, setEditingId] = useState(null)
+  const [form, setForm] = useState(emptyMethodForm)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [deletingId, setDeletingId] = useState(null)
+  const [notice, setNotice] = useState('')
+  const [cancellingId, setCancellingId] = useState(null)
+
+  // Self-verification safeguard (auto-verify review threshold) — its own
+  // small instant-apply form, separate from the payment-methods
+  // committee-approval flow below.
+  const [thresholdValue, setThresholdValue] = useState('')
+  const [thresholdSaving, setThresholdSaving] = useState(false)
+  const [thresholdSaved, setThresholdSaved] = useState(false)
+  const thresholdDirtyRef = useRef(false)
+
+  useEffect(() => {
+    if (community && !thresholdDirtyRef.current) {
+      setThresholdValue(community.autoVerifyMaxAmount ?? '')
+    }
+  }, [community])
+
+  async function saveThreshold(e) {
+    e.preventDefault()
+    setThresholdSaving(true)
+    try {
+      await updateCommunity({ autoVerifyMaxAmount: thresholdValue === '' ? null : Number(thresholdValue) })
+      thresholdDirtyRef.current = false
+      setThresholdSaved(true)
+      setTimeout(() => setThresholdSaved(false), 3000)
+    } catch (err) {
+      notify(err?.response?.data?.message || err.message || 'Could not save the safeguard threshold.')
+    } finally {
+      setThresholdSaving(false)
+    }
+  }
+
+  const sorted = [...paymentMethods].sort((a, b) => (a.sortOrder - b.sortOrder) || a.label.localeCompare(b.label))
+
+  // My own outstanding proposals for payment-method changes — used both to
+  // count toward the 2-method cap (a pending *new* method still "counts")
+  // and to show a "Pending approval" badge on the row being edited/removed
+  // so a second edit isn't submitted on top of an unresolved one.
+  const myPendingMethodChanges = (pendingChanges?.asProposer || []).filter((pc) =>
+    ['PAYMENT_METHOD_CREATE', 'PAYMENT_METHOD_UPDATE', 'PAYMENT_METHOD_DELETE'].includes(pc.changeType)
+  )
+  const pendingCreateCount = myPendingMethodChanges.filter((pc) => pc.changeType === 'PAYMENT_METHOD_CREATE').length
+  const atLimit = sorted.length + pendingCreateCount >= MAX_PAYMENT_METHODS
+  function pendingChangeForMethod(methodId) {
+    return myPendingMethodChanges.find((pc) => pc.entityId === methodId && pc.changeType !== 'PAYMENT_METHOD_CREATE')
+  }
+
+  function openAdd() {
+    setEditingId(null)
+    setForm(emptyMethodForm)
+    setError('')
+    setModal(true)
+  }
+
+  function openEdit(m) {
+    setEditingId(m.id)
+    setForm({
+      provider: m.provider, label: m.label, bankName: m.bankName, accountName: m.accountName,
+      accountNumber: m.accountNumber, fullName: m.fullName, phoneNumber: m.phoneNumber, isActive: m.isActive,
+    })
+    setError('')
+    setModal(true)
+  }
+
+  function flashNotice(message) {
+    setNotice(message)
+    setTimeout(() => setNotice(''), 8000)
+  }
+
+  async function submit(e) {
+    e.preventDefault()
+    setSaving(true)
+    setError('')
+    try {
+      // CBE is the only bank Hivee supports here — the provider picker
+      // above already says so, so don't also ask the admin to type
+      // "Commercial Bank of Ethiopia" into a free-text field right below it.
+      const payload = { ...form, bankName: form.provider === 'CBE' ? 'Commercial Bank of Ethiopia' : '' }
+      const result = editingId ? await updatePaymentMethod(editingId, payload) : await addPaymentMethod(payload)
+      if (result?.message) flashNotice(result.message)
+      setModal(false)
+    } catch (err) {
+      setError(err?.response?.data?.message || err.message || 'Could not save this payment method.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function toggleActive(m) {
+    try {
+      const result = await updatePaymentMethod(m.id, { ...m, isActive: !m.isActive })
+      if (result?.message) flashNotice(result.message)
+    } catch (err) {
+      notify(err?.response?.data?.message || err.message || 'Could not update this payment method.')
+    }
+  }
+
+  async function handleDelete(m) {
+    if (!window.confirm(`Remove "${m.label}"? Residents will no longer be able to pick it, but existing payments made through it are unaffected.`)) return
+    setDeletingId(m.id)
+    try {
+      const result = await removePaymentMethod(m.id)
+      if (result?.message) flashNotice(result.message)
+    } catch (err) {
+      notify(err?.response?.data?.message || err.message || 'Could not remove this payment method.')
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
+  async function handleCancelPending(pc) {
+    setCancellingId(pc.id)
+    try {
+      await cancelPendingChange(pc.id)
+    } catch (err) {
+      notify(err?.response?.data?.message || err.message || 'Could not withdraw this request.')
+    } finally {
+      setCancellingId(null)
+    }
+  }
+
+  const isTelebirr = form.provider === 'TELEBIRR'
 
   return (
     <div>
@@ -607,381 +764,232 @@ function CommunityTab() {
         </div>
       )}
 
-      <form onSubmit={submit} className="card p-6 max-w-2xl space-y-6">
-        <div>
-          <h3 className="text-sm font-semibold text-ink-800 mb-3">Community</h3>
-          <div className="space-y-4">
-            <div>
-              <label className="label">Community name</label>
-              <input required className="input" value={form.name} onChange={(e) => updateField({ name: e.target.value })} />
-            </div>
-            <div>
-              <label className="label">Address</label>
-              <input className="input" value={form.address} onChange={(e) => updateField({ address: e.target.value })} />
-            </div>
-            <div>
-              <label className="label">Contact info</label>
-              <input className="input" value={form.contactInfo} onChange={(e) => updateField({ contactInfo: e.target.value })} />
-            </div>
+      <div id="payment-methods-panel" className="card p-6 max-w-2xl">
+        <div className="flex items-start justify-between gap-3 mb-1">
+          <div>
+            <h3 className="text-sm font-semibold text-ink-800 flex items-center gap-2">
+              <Wallet className="h-4 w-4 text-brand-600" /> Payment methods
+            </h3>
+            <p className="text-xs text-ink-400 mt-1 max-w-md">
+              Register your CBE account and/or Telebirr number — up to {MAX_PAYMENT_METHODS} total, since these are
+              the only two payment providers Hivee supports. Residents pick one under "Make a payment". Changes need
+              every other committee member to approve before they take effect (a sole committee member gets it
+              applied right away).
+            </p>
           </div>
+          {!atLimit && (
+            <button onClick={openAdd} className="btn-secondary shrink-0 !py-1.5 !px-3 text-xs">
+              <Plus className="h-3.5 w-3.5" /> Add payment method
+            </button>
+          )}
         </div>
 
-        <div className="pt-2 border-t border-ink-100">
-          <h3 className="text-sm font-semibold text-ink-800 mb-1 flex items-center gap-2">
-            <Landmark className="h-4 w-4 text-brand-600" /> Payment account
-          </h3>
-          <p className="text-xs text-ink-400 mb-3">
-            Shown to every resident in "Make a payment" as the fallback account to transfer into — one bank account
-            for the whole community. Changes here need every other committee member to approve before they take
-            effect (see the notification bell / dashboard once you save). For Telebirr or a second/third bank,
-            use <strong className="text-ink-500">Payment methods</strong> below instead — it applies instantly and
-            asks for the right fields per provider.
-          </p>
-          <div className="grid sm:grid-cols-2 gap-4">
-            <div className="sm:col-span-2">
-              <label className="label">Bank</label>
-              <div className="grid grid-cols-2 gap-2.5">
-                <button
-                  type="button"
-                  onClick={() => { setBankIsOther(false); updateField({ paymentBankName: BANK_OPTIONS[0] }) }}
-                  className={`flex flex-col items-center gap-1.5 rounded-xl px-3 py-3.5 text-center transition ring-1 ${
-                    !bankIsOther
-                      ? 'bg-brand-50 ring-brand-300 text-brand-700'
-                      : 'bg-white ring-ink-200 text-ink-500 hover:bg-ink-50'
-                  }`}
-                >
-                  <Landmark className={`h-5 w-5 ${!bankIsOther ? 'text-brand-600' : 'text-ink-400'}`} />
-                  <span className="text-sm font-semibold leading-tight">CBE</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    // The legacy single-account fields below (account
-                    // name + number) have nowhere to put a phone number,
-                    // so Telebirr can't actually be saved through this
-                    // form — hand off to Payment methods instead of
-                    // pretending it fits here (see the free-text "Enter
-                    // bank name" bug this replaces, where typing
-                    // "Telebirr" produced a bank account form that made
-                    // no sense for it).
-                    document.getElementById('payment-methods-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-                    window.dispatchEvent(new CustomEvent('hivee:open-add-payment-method', { detail: { provider: 'TELEBIRR' } }))
-                  }}
-                  className="flex flex-col items-center gap-1.5 rounded-xl px-3 py-3.5 text-center transition ring-1 bg-white ring-ink-200 text-ink-500 hover:bg-ink-50"
-                >
-                  <Smartphone className="h-5 w-5 text-ink-400" />
-                  <span className="text-sm font-semibold leading-tight">Telebirr</span>
-                </button>
-              </div>
-              {bankIsOther && (
-                <p className="mt-2 text-xs text-amber-600">
-                  Currently set to "{form.paymentBankName}", which isn't CBE — click <strong>CBE</strong> above
-                  to switch this fallback account to Commercial Bank of Ethiopia.
-                </p>
-              )}
-              <p className="mt-2 text-xs text-ink-400">
-                Telebirr has no bank account to store here — clicking it takes you to <strong className="text-ink-500">Payment methods</strong> below,
-                which asks for the right fields (full name + phone number) and applies instantly.
-              </p>
-            </div>
-            <div>
-              <label className="label">Account name</label>
-              <input required className="input" placeholder="e.g. Greenwood Estate Committee" value={form.paymentAccountName} onChange={(e) => updateField({ paymentAccountName: e.target.value })} />
-            </div>
-            <div>
-              <label className="label">Account number</label>
-              <input required className="input font-mono" value={form.paymentAccountNumber} onChange={(e) => updateField({ paymentAccountNumber: e.target.value })} />
-            </div>
-          </div>
-        </div>
-
-        <div className="pt-2 border-t border-ink-100">
-          <h3 className="text-sm font-semibold text-ink-800 mb-1 flex items-center gap-2">
-            <AlertTriangle className="h-4 w-4 text-amber-600" /> Self-verification safeguard
-          </h3>
-          <p className="text-xs text-ink-400 mb-3">
-            Self-verified payments at or above this amount always go to "Pending review" for a committee
-            member to check, even if the bank lookup matched. Leave blank to only rely on the automatic
-            name/amount cross-checks.
-          </p>
-          <div className="max-w-xs">
-            <label className="label">Auto-verify review threshold (birr)</label>
-            <input
-              type="number" min="0" step="1" className="input"
-              placeholder="e.g. 5000"
-              value={form.autoVerifyMaxAmount}
-              onChange={(e) => updateField({ autoVerifyMaxAmount: e.target.value })}
-            />
-          </div>
-        </div>
-
-        {error && <div className="rounded-xl bg-rose-50 border border-rose-100 px-3.5 py-2.5 text-sm text-rose-600">{error}</div>}
-        {pendingNotice && (
-          <div className="rounded-xl bg-amber-50 border border-amber-200 px-3.5 py-2.5 text-sm text-amber-700 flex gap-2 items-start">
-            <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" /> {pendingNotice}
+        {notice && (
+          <div className="mt-3 rounded-xl bg-amber-50 border border-amber-200 px-3.5 py-2.5 text-sm text-amber-700 flex gap-2 items-start">
+            <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" /> {notice}
           </div>
         )}
 
-        <div className="flex items-center gap-3 pt-2">
-          <button type="submit" disabled={saving} className="btn-primary">
-            <Save className="h-4 w-4" /> {saving ? 'Saving…' : 'Save settings'}
+        {atLimit && (
+          <p className="mt-3 text-xs text-ink-400">
+            You've reached the maximum of {MAX_PAYMENT_METHODS} payment methods — remove one to add a different one.
+          </p>
+        )}
+
+        {sorted.length === 0 && pendingCreateCount === 0 ? (
+          <p className="text-sm text-ink-400 py-6 text-center">
+            No payment methods added yet — add CBE and/or Telebirr so residents have somewhere to pay.
+          </p>
+        ) : (
+          <div className="divide-y divide-ink-100 mt-3">
+            {sorted.map((m) => {
+              const pc = pendingChangeForMethod(m.id)
+              return (
+                <div key={m.id} className="flex items-center justify-between gap-3 py-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-ink-800 truncate flex items-center gap-2">
+                      {m.label}
+                      {pc && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 text-amber-700 px-2 py-0.5 text-[11px] font-medium shrink-0">
+                          <Clock className="h-3 w-3" /> Pending approval
+                        </span>
+                      )}
+                    </p>
+                    <p className="text-xs text-ink-400 truncate">
+                      {METHOD_PROVIDERS.find((p) => p.value === m.provider)?.label || m.provider}
+                      {m.provider === 'TELEBIRR' ? ` · ${m.phoneNumber || 'no phone set'}` : ` · ${m.accountNumber || 'no account set'}`}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    {pc ? (
+                      <button
+                        onClick={() => handleCancelPending(pc)}
+                        disabled={cancellingId === pc.id}
+                        className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium text-ink-500 bg-ink-50 hover:bg-ink-100 disabled:opacity-50"
+                        title="Withdraw this proposed change"
+                      >
+                        <XCircle className="h-3.5 w-3.5" /> {cancellingId === pc.id ? 'Withdrawing…' : 'Withdraw'}
+                      </button>
+                    ) : (
+                      <>
+                        <button
+                          onClick={() => toggleActive(m)}
+                          title={m.isActive ? 'Active — click to disable' : 'Disabled — click to enable'}
+                          className={`flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium transition ${m.isActive ? 'text-emerald-700 bg-emerald-50 hover:bg-emerald-100' : 'text-ink-400 bg-ink-50 hover:bg-ink-100'}`}
+                        >
+                          {m.isActive ? <ToggleRight className="h-3.5 w-3.5" /> : <ToggleLeft className="h-3.5 w-3.5" />}
+                          {m.isActive ? 'Active' : 'Disabled'}
+                        </button>
+                        <button onClick={() => openEdit(m)} className="p-1.5 rounded-lg text-ink-400 hover:text-brand-700 hover:bg-brand-50" title="Edit">
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          onClick={() => handleDelete(m)}
+                          disabled={deletingId === m.id}
+                          className="p-1.5 rounded-lg text-ink-400 hover:text-rose-600 hover:bg-rose-50 disabled:opacity-50"
+                          title="Remove"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+            {myPendingMethodChanges.filter((pc) => pc.changeType === 'PAYMENT_METHOD_CREATE').map((pc) => (
+              <div key={pc.id} className="flex items-center justify-between gap-3 py-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-ink-800 truncate flex items-center gap-2">
+                    {pc.diff?.label?.to || 'New payment method'}
+                    <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 text-amber-700 px-2 py-0.5 text-[11px] font-medium shrink-0">
+                      <Clock className="h-3 w-3" /> Pending approval
+                    </span>
+                  </p>
+                  <p className="text-xs text-ink-400 truncate">
+                    {METHOD_PROVIDERS.find((p) => p.value === pc.diff?.provider?.to)?.label || pc.diff?.provider?.to}
+                  </p>
+                </div>
+                <button
+                  onClick={() => handleCancelPending(pc)}
+                  disabled={cancellingId === pc.id}
+                  className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium text-ink-500 bg-ink-50 hover:bg-ink-100 disabled:opacity-50 shrink-0"
+                >
+                  <XCircle className="h-3.5 w-3.5" /> {cancellingId === pc.id ? 'Withdrawing…' : 'Withdraw'}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <Modal open={modal} onClose={() => setModal(false)} title={editingId ? 'Edit payment method' : 'Add payment method'}>
+          <form onSubmit={submit} className="space-y-4">
+            <div>
+              <label className="label">Provider</label>
+              <div className="grid grid-cols-2 gap-2.5">
+                {METHOD_PROVIDERS.map((p) => {
+                  const selected = form.provider === p.value
+                  const Icon = p.value === 'TELEBIRR' ? Smartphone : Landmark
+                  return (
+                    <button
+                      key={p.value}
+                      type="button"
+                      onClick={() => setForm((f) => ({ ...f, provider: p.value }))}
+                      className={`flex flex-col items-center gap-1.5 rounded-xl px-3 py-3.5 text-center transition ring-1 ${
+                        selected
+                          ? 'bg-brand-50 ring-brand-300 text-brand-700'
+                          : 'bg-white ring-ink-200 text-ink-500 hover:bg-ink-50'
+                      }`}
+                    >
+                      <Icon className={`h-5 w-5 ${selected ? 'text-brand-600' : 'text-ink-400'}`} />
+                      <span className="text-sm font-semibold leading-tight">{p.short}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+            <div>
+              <label className="label">Label shown to residents</label>
+              <input
+                required
+                className="input"
+                value={form.label}
+                onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))}
+              />
+            </div>
+
+            {isTelebirr ? (
+              <>
+                <div>
+                  <label className="label">Full name on the Telebirr account</label>
+                  <input required className="input" value={form.fullName} onChange={(e) => setForm((f) => ({ ...f, fullName: e.target.value }))} />
+                </div>
+                <div>
+                  <label className="label">Phone number</label>
+                  <input required className="input font-mono" placeholder="2519XXXXXXXX" value={form.phoneNumber} onChange={(e) => setForm((f) => ({ ...f, phoneNumber: e.target.value }))} />
+                </div>
+              </>
+            ) : (
+              <>
+                <div>
+                  <label className="label">Account name</label>
+                  <input required className="input" value={form.accountName} onChange={(e) => setForm((f) => ({ ...f, accountName: e.target.value }))} />
+                </div>
+                <div>
+                  <label className="label">Account number</label>
+                  <input required className="input font-mono" value={form.accountNumber} onChange={(e) => setForm((f) => ({ ...f, accountNumber: e.target.value }))} />
+                </div>
+              </>
+            )}
+
+            <label className="flex items-center gap-2 text-sm text-ink-600 cursor-pointer select-none">
+              <input type="checkbox" className="rounded" checked={form.isActive} onChange={(e) => setForm((f) => ({ ...f, isActive: e.target.checked }))} />
+              Active (visible to residents)
+            </label>
+
+            {error && <div className="rounded-xl bg-rose-50 border border-rose-100 px-3.5 py-2.5 text-sm text-rose-600">{error}</div>}
+
+            <div className="flex gap-2 pt-2">
+              <button type="button" onClick={() => setModal(false)} className="btn-secondary flex-1">Cancel</button>
+              <button type="submit" disabled={saving} className="btn-primary flex-1">{saving ? 'Saving…' : 'Save'}</button>
+            </div>
+          </form>
+        </Modal>
+      </div>
+
+      <form onSubmit={saveThreshold} className="card p-6 max-w-2xl mt-6">
+        <h3 className="text-sm font-semibold text-ink-800 mb-1 flex items-center gap-2">
+          <AlertTriangle className="h-4 w-4 text-amber-600" /> Self-verification safeguard
+        </h3>
+        <p className="text-xs text-ink-400 mb-3">
+          Self-verified payments at or above this amount always go to "Pending review" for a committee
+          member to check, even if the bank lookup matched. Leave blank to only rely on the automatic
+          name/amount cross-checks.
+        </p>
+        <div className="max-w-xs">
+          <label className="label">Auto-verify review threshold (birr)</label>
+          <input
+            type="number" min="0" step="1" className="input"
+            placeholder="e.g. 5000"
+            value={thresholdValue}
+            onChange={(e) => { thresholdDirtyRef.current = true; setThresholdValue(e.target.value) }}
+          />
+        </div>
+        <div className="flex items-center gap-3 pt-4">
+          <button type="submit" disabled={thresholdSaving} className="btn-primary !py-1.5 !px-3 text-xs">
+            <Save className="h-3.5 w-3.5" /> {thresholdSaving ? 'Saving…' : 'Save threshold'}
           </button>
-          {saved && !pendingNotice && (
+          {thresholdSaved && (
             <span className="flex items-center gap-1.5 text-sm text-emerald-600 font-medium">
               <CheckCircle2 className="h-4 w-4" /> Saved
             </span>
           )}
         </div>
       </form>
-
-      <PaymentMethodsPanel />
     </div>
   )
 }
 
-// ===========================================================================
-// Payment methods — a community can register CBE and/or Telebirr (the
-// only two providers Hivee supports) instead of the single legacy account
-// above. Residents pick one of these when self-verifying a payment (see
-// resident/Payments.jsx). Applies immediately (no committee approval, unlike
-// the legacy bank fields above) since removing/disabling a method never
-// touches existing payment history — see paymentMethodController.js.
-// ===========================================================================
-// Hivee only supports these two payment providers (see PaymentProvider
-// in schema.prisma) — CBE and Telebirr are the two rails Veritas has
-// dedicated, reliable verification adapters for.
-const METHOD_PROVIDERS = [
-  { value: 'CBE', label: 'Commercial Bank of Ethiopia (CBE)', short: 'CBE' },
-  { value: 'TELEBIRR', label: 'Telebirr', short: 'Telebirr' },
-]
-const emptyMethodForm = {
-  provider: 'CBE', label: '', bankName: '', accountName: '', accountNumber: '', fullName: '', phoneNumber: '', isActive: true,
-}
-
-function PaymentMethodsPanel() {
-  const { paymentMethods, addPaymentMethod, updatePaymentMethod, removePaymentMethod } = useData()
-  const [modal, setModal] = useState(false)
-  const [editingId, setEditingId] = useState(null)
-  const [form, setForm] = useState(emptyMethodForm)
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
-  const [deletingId, setDeletingId] = useState(null)
-
-  const sorted = [...paymentMethods].sort((a, b) => (a.sortOrder - b.sortOrder) || a.label.localeCompare(b.label))
-
-  function openAdd() {
-    setEditingId(null)
-    setForm(emptyMethodForm)
-    setError('')
-    setModal(true)
-  }
-
-  function openEdit(m) {
-    setEditingId(m.id)
-    setForm({
-      provider: m.provider, label: m.label, bankName: m.bankName, accountName: m.accountName,
-      accountNumber: m.accountNumber, fullName: m.fullName, phoneNumber: m.phoneNumber, isActive: m.isActive,
-    })
-    setError('')
-    setModal(true)
-  }
-
-  async function submit(e) {
-    e.preventDefault()
-    setSaving(true)
-    setError('')
-    try {
-      // CBE is the only bank Hivee supports here — the provider picker
-      // above already says so, so don't also ask the admin to type
-      // "Commercial Bank of Ethiopia" into a free-text field right below it.
-      const payload = { ...form, bankName: form.provider === 'CBE' ? 'Commercial Bank of Ethiopia' : '' }
-      if (editingId) {
-        await updatePaymentMethod(editingId, payload)
-      } else {
-        await addPaymentMethod(payload)
-      }
-      setModal(false)
-    } catch (err) {
-      setError(err?.response?.data?.message || err.message || 'Could not save this payment method.')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  async function toggleActive(m) {
-    try {
-      await updatePaymentMethod(m.id, { ...m, isActive: !m.isActive })
-    } catch (err) {
-      notify(err?.response?.data?.message || err.message || 'Could not update this payment method.')
-    }
-  }
-
-  async function handleDelete(m) {
-    if (!window.confirm(`Remove "${m.label}"? Residents will no longer be able to pick it, but existing payments made through it are unaffected.`)) return
-    setDeletingId(m.id)
-    try {
-      await removePaymentMethod(m.id)
-    } catch (err) {
-      notify(err?.response?.data?.message || err.message || 'Could not remove this payment method.')
-    } finally {
-      setDeletingId(null)
-    }
-  }
-
-  const isTelebirr = form.provider === 'TELEBIRR'
-
-  // Lets other parts of this page (the "Bank" cards in CommunityTab
-  // above) open this panel's Add modal pre-set to a specific provider —
-  // e.g. clicking "Telebirr" up there, where Telebirr can't actually be
-  // saved (no phone-number field in that legacy single-account schema),
-  // hands off here instead of pretending it fits.
-  useEffect(() => {
-    function onOpenAdd(e) {
-      setEditingId(null)
-      setForm({ ...emptyMethodForm, provider: e.detail?.provider || 'CBE' })
-      setError('')
-      setModal(true)
-    }
-    window.addEventListener('hivee:open-add-payment-method', onOpenAdd)
-    return () => window.removeEventListener('hivee:open-add-payment-method', onOpenAdd)
-  }, [])
-
-  return (
-    <div id="payment-methods-panel" className="card p-6 max-w-2xl mt-6">
-      <div className="flex items-start justify-between gap-3 mb-1">
-        <div>
-          <h3 className="text-sm font-semibold text-ink-800 flex items-center gap-2">
-            <Smartphone className="h-4 w-4 text-brand-600" /> Payment methods
-          </h3>
-          <p className="text-xs text-ink-400 mt-1 max-w-md">
-            Register your CBE account and/or Telebirr number — these are the only two payment providers Hivee
-            supports. Residents pick one under "Make a payment". Takes effect immediately, no committee approval
-            needed.
-          </p>
-        </div>
-        <button onClick={openAdd} className="btn-secondary shrink-0 !py-1.5 !px-3 text-xs">
-          <Plus className="h-3.5 w-3.5" /> Add method
-        </button>
-      </div>
-
-      {sorted.length === 0 ? (
-        <p className="text-sm text-ink-400 py-6 text-center">
-          No payment methods added yet — residents will see the single account above.
-        </p>
-      ) : (
-        <div className="divide-y divide-ink-100 mt-3">
-          {sorted.map((m) => (
-            <div key={m.id} className="flex items-center justify-between gap-3 py-3">
-              <div className="min-w-0">
-                <p className="text-sm font-semibold text-ink-800 truncate">{m.label}</p>
-                <p className="text-xs text-ink-400 truncate">
-                  {METHOD_PROVIDERS.find((p) => p.value === m.provider)?.label || m.provider}
-                  {m.provider === 'TELEBIRR' ? ` · ${m.phoneNumber || 'no phone set'}` : ` · ${m.accountNumber || 'no account set'}`}
-                </p>
-              </div>
-              <div className="flex items-center gap-1 shrink-0">
-                <button
-                  onClick={() => toggleActive(m)}
-                  title={m.isActive ? 'Active — click to disable' : 'Disabled — click to enable'}
-                  className={`flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium transition ${m.isActive ? 'text-emerald-700 bg-emerald-50 hover:bg-emerald-100' : 'text-ink-400 bg-ink-50 hover:bg-ink-100'}`}
-                >
-                  {m.isActive ? <ToggleRight className="h-3.5 w-3.5" /> : <ToggleLeft className="h-3.5 w-3.5" />}
-                  {m.isActive ? 'Active' : 'Disabled'}
-                </button>
-                <button onClick={() => openEdit(m)} className="p-1.5 rounded-lg text-ink-400 hover:text-brand-700 hover:bg-brand-50" title="Edit">
-                  <Pencil className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  onClick={() => handleDelete(m)}
-                  disabled={deletingId === m.id}
-                  className="p-1.5 rounded-lg text-ink-400 hover:text-rose-600 hover:bg-rose-50 disabled:opacity-50"
-                  title="Remove"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <Modal open={modal} onClose={() => setModal(false)} title={editingId ? 'Edit payment method' : 'Add payment method'}>
-        <form onSubmit={submit} className="space-y-4">
-          <div>
-            <label className="label">Provider</label>
-            <div className="grid grid-cols-2 gap-2.5">
-              {METHOD_PROVIDERS.map((p) => {
-                const selected = form.provider === p.value
-                const Icon = p.value === 'TELEBIRR' ? Smartphone : Landmark
-                return (
-                  <button
-                    key={p.value}
-                    type="button"
-                    onClick={() => setForm((f) => ({ ...f, provider: p.value }))}
-                    className={`flex flex-col items-center gap-1.5 rounded-xl px-3 py-3.5 text-center transition ring-1 ${
-                      selected
-                        ? 'bg-brand-50 ring-brand-300 text-brand-700'
-                        : 'bg-white ring-ink-200 text-ink-500 hover:bg-ink-50'
-                    }`}
-                  >
-                    <Icon className={`h-5 w-5 ${selected ? 'text-brand-600' : 'text-ink-400'}`} />
-                    <span className="text-sm font-semibold leading-tight">{p.short}</span>
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-          <div>
-            <label className="label">Label shown to residents</label>
-            <input
-              required
-              className="input"
-              placeholder="e.g. CBE main account"
-              value={form.label}
-              onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))}
-            />
-          </div>
-
-          {isTelebirr ? (
-            <>
-              <div>
-                <label className="label">Full name on the Telebirr account</label>
-                <input required className="input" value={form.fullName} onChange={(e) => setForm((f) => ({ ...f, fullName: e.target.value }))} />
-              </div>
-              <div>
-                <label className="label">Phone number</label>
-                <input required className="input font-mono" placeholder="2519XXXXXXXX" value={form.phoneNumber} onChange={(e) => setForm((f) => ({ ...f, phoneNumber: e.target.value }))} />
-              </div>
-            </>
-          ) : (
-            <>
-              <div>
-                <label className="label">Account name</label>
-                <input required className="input" value={form.accountName} onChange={(e) => setForm((f) => ({ ...f, accountName: e.target.value }))} />
-              </div>
-              <div>
-                <label className="label">Account number</label>
-                <input required className="input font-mono" value={form.accountNumber} onChange={(e) => setForm((f) => ({ ...f, accountNumber: e.target.value }))} />
-              </div>
-            </>
-          )}
-
-          <label className="flex items-center gap-2 text-sm text-ink-600 cursor-pointer select-none">
-            <input type="checkbox" className="rounded" checked={form.isActive} onChange={(e) => setForm((f) => ({ ...f, isActive: e.target.checked }))} />
-            Active (visible to residents)
-          </label>
-
-          {error && <div className="rounded-xl bg-rose-50 border border-rose-100 px-3.5 py-2.5 text-sm text-rose-600">{error}</div>}
-
-          <div className="flex gap-2 pt-2">
-            <button type="button" onClick={() => setModal(false)} className="btn-secondary flex-1">Cancel</button>
-            <button type="submit" disabled={saving} className="btn-primary flex-1">{saving ? 'Saving…' : 'Save'}</button>
-          </div>
-        </form>
-      </Modal>
-    </div>
-  )
-}
 
 // ===========================================================================
 // Approvals — per-person automation for the multi-committee sign-off flow.

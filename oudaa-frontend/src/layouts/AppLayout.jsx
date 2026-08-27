@@ -37,8 +37,17 @@ const residentNav = [
   { to: '/resident/profile', label: 'Profile', icon: UserCog },
 ]
 
-const CHANGE_TYPE_LABELS = { COMMUNITY_PAYMENT_DETAILS: 'community payment account details' }
-const DIFF_FIELD_LABELS = { paymentBankName: 'Bank name', paymentAccountName: 'Account holder', paymentAccountNumber: 'Account number' }
+const CHANGE_TYPE_LABELS = {
+  COMMUNITY_PAYMENT_DETAILS: 'community payment account details',
+  PAYMENT_METHOD_CREATE: 'a new payment method',
+  PAYMENT_METHOD_UPDATE: 'a payment method',
+  PAYMENT_METHOD_DELETE: 'removing a payment method',
+}
+const DIFF_FIELD_LABELS = {
+  paymentBankName: 'Bank name', paymentAccountName: 'Account holder', paymentAccountNumber: 'Account number',
+  provider: 'Provider', label: 'Label', bankName: 'Bank', accountName: 'Account name', accountNumber: 'Account number',
+  fullName: 'Full name', phoneNumber: 'Phone number', isActive: 'Active', removed: 'Removed',
+}
 
 function describePendingChangeDiff(diff) {
   return Object.entries(diff || {})

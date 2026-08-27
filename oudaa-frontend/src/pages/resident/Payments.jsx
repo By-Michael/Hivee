@@ -394,11 +394,32 @@ export default function ResidentPayments() {
             {activeMethods.length > 0 && (
               <div>
                 <label className="label">Pay with</label>
-                <select required className="input" value={form.paymentMethodId} onChange={(e) => selectMethod(e.target.value)}>
-                  {activeMethods.map((m) => (
-                    <option key={m.id} value={m.id}>{m.label} · {PROVIDER_LABELS[m.provider] || m.provider}</option>
-                  ))}
-                </select>
+                <div className={`grid gap-2.5 ${activeMethods.length === 1 ? 'grid-cols-1' : 'grid-cols-2'}`}>
+                  {activeMethods.map((m) => {
+                    const selected = form.paymentMethodId === m.id
+                    const Icon = m.provider === 'TELEBIRR' ? Smartphone : Landmark
+                    return (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => selectMethod(m.id)}
+                        className={`flex items-center gap-2.5 rounded-xl px-3.5 py-3 text-left transition ring-1 ${
+                          selected
+                            ? 'bg-brand-50 ring-brand-300 text-brand-700'
+                            : 'bg-white ring-ink-200 text-ink-600 hover:bg-ink-50'
+                        }`}
+                      >
+                        <Icon className={`h-5 w-5 shrink-0 ${selected ? 'text-brand-600' : 'text-ink-400'}`} />
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold leading-tight truncate">{m.label}</p>
+                          <p className={`text-xs leading-tight truncate ${selected ? 'text-brand-500' : 'text-ink-400'}`}>
+                            {PROVIDER_LABELS[m.provider] || m.provider}
+                          </p>
+                        </div>
+                      </button>
+                    )
+                  })}
+                </div>
               </div>
             )}
 

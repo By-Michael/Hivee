@@ -63,7 +63,7 @@ async function createPendingChange(req, { changeType, entityId, currentEntity, p
     // Sole committee member — nobody to approve it. Apply immediately
     // rather than creating a request that can never be resolved, but
     // still write the same audit trail shape for consistency.
-    const applied = await prisma.$transaction((tx) => def.apply(tx, entityId, diff));
+    const applied = await prisma.$transaction((tx) => def.apply(tx, entityId, diff, req.communityId));
     await recordAudit(req, {
       action: 'UPDATE',
       entityType: def.entityType,
@@ -144,7 +144,7 @@ async function createPendingChange(req, { changeType, entityId, currentEntity, p
   });
   if (stillPending === 0 && otherMembers.length > 0) {
     const [resolved] = await prisma.$transaction(async (tx) => {
-      await def.apply(tx, pendingChange.entityId, pendingChange.diff);
+      await def.apply(tx, pendingChange.entityId, pendingChange.diff, req.communityId);
       const r = await tx.pendingChange.update({
         where: { id: pendingChange.id },
         data: { status: 'APPROVED', resolvedAt: new Date() },
@@ -257,7 +257,7 @@ const respondToPendingChange = catchAsync(async (req, res) => {
   // resolving the request so a crash between the two can't leave a
   // fully-approved request that never actually took effect.
   const [updated] = await prisma.$transaction(async (tx) => {
-    await def.apply(tx, pendingChange.entityId, pendingChange.diff);
+    await def.apply(tx, pendingChange.entityId, pendingChange.diff, pendingChange.communityId);
     const resolved = await tx.pendingChange.update({
       where: { id: pendingChange.id },
       data: { status: 'APPROVED', resolvedAt: new Date() },

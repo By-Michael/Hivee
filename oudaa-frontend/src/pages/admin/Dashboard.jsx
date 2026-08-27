@@ -18,8 +18,18 @@ function monthLabel(key) {
   return new Date(Number(y), Number(m) - 1, 1).toLocaleDateString('en-US', { month: 'short' })
 }
 
-const CHANGE_TYPE_LABELS = { COMMUNITY_PAYMENT_DETAILS: 'community payment account details', PROJECT_BUDGET: 'a project budget' }
-const DIFF_FIELD_LABELS = { paymentBankName: 'Bank name', paymentAccountName: 'Account holder', paymentAccountNumber: 'Account number', budget: 'Budget' }
+const CHANGE_TYPE_LABELS = {
+  COMMUNITY_PAYMENT_DETAILS: 'community payment account details',
+  PROJECT_BUDGET: 'a project budget',
+  PAYMENT_METHOD_CREATE: 'a new payment method',
+  PAYMENT_METHOD_UPDATE: 'a payment method',
+  PAYMENT_METHOD_DELETE: 'removing a payment method',
+}
+const DIFF_FIELD_LABELS = {
+  paymentBankName: 'Bank name', paymentAccountName: 'Account holder', paymentAccountNumber: 'Account number', budget: 'Budget',
+  provider: 'Provider', label: 'Label', bankName: 'Bank', accountName: 'Account name', accountNumber: 'Account number',
+  fullName: 'Full name', phoneNumber: 'Phone number', isActive: 'Active', removed: 'Removed',
+}
 
 function describeDiff(diff) {
   return Object.entries(diff || {}).map(([field, { from, to }]) => (
