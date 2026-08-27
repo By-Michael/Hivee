@@ -17,7 +17,7 @@
 // -----------------------------------------------------------------------
 
 const AppError = require('../utils/AppError');
-const { extractReceiptFields } = require('./groqReceiptParser');
+const { extractReceiptFields, extractReceiptFieldsFromImage } = require('./groqReceiptParser');
 
 const OCR_SPACE_URL = 'https://api.ocr.space/parse/image';
 
@@ -86,14 +86,29 @@ function extractName(text) {
  * @returns {Promise<{
  *   txnId: string|null, name: string|null, amount: number|null,
  *   bankName: string|null, date: string|null,
- *   source: 'groq'|'regex', rawText: string
+ *   source: 'groq-vision'|'groq'|'regex', rawText: string
  * }>}
  */
 async function parseReceiptImage(fileBuffer, mimetype, filename) {
-  // OCR.space extracts the raw text off the screenshot first; Groq then
-  // classifies that text into structured fields (amount vs. txn ID vs.
-  // sender name, etc.) — Groq never sees the image itself, only the text
-  // OCR.space already extracted.
+  // Primary path: a Groq vision model reads the screenshot directly, no
+  // OCR.space involved. Only attempted when GROQ_API_KEY is configured;
+  // returns null (not thrown) if unconfigured, and throws on a
+  // configured-but-failed call so we can fall back to OCR.space below
+  // instead of failing the whole request.
+  try {
+    const visionResult = await extractReceiptFieldsFromImage(fileBuffer, mimetype);
+    if (visionResult) {
+      return { ...visionResult, source: 'groq-vision', rawText: '' };
+    }
+  } catch (err) {
+    console.error('[ocrReceipt] Groq vision extraction failed, falling back to OCR.space:', err.message);
+  }
+
+  // Fallback path: OCR.space extracts the raw text off the screenshot
+  // first; Groq then classifies that text into structured fields (amount
+  // vs. txn ID vs. sender name, etc.) — Groq never sees the image itself
+  // here, only the text OCR.space already extracted. Used when the vision
+  // path above isn't configured or just failed/threw.
   const rawText = await ocrSpaceParse(fileBuffer, mimetype, filename);
 
   // Regex pass always runs first — it's free, fast, and is the fallback if
@@ -133,7 +148,9 @@ async function parseReceiptImage(fileBuffer, mimetype, filename) {
 }
 
 function isStubActive() {
-  return !process.env.OCRSPACE_API_KEY;
+  // Regex-only fallback kicks in only if BOTH Groq (vision + text) and
+  // OCR.space are unconfigured.
+  return !process.env.GROQ_API_KEY && !process.env.OCRSPACE_API_KEY;
 }
 
 module.exports = { parseReceiptImage, isStubActive };

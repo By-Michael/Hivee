@@ -76,10 +76,11 @@ if (isOcrStubActive()) {
   const banner = [
     '',
     '#############################################################',
-    '#  WARNING: OCRSPACE_API_KEY is not set.                     #',
+    '#  WARNING: Neither GROQ_API_KEY nor OCRSPACE_API_KEY is set. #',
     '#  Receipt-screenshot autofill is DISABLED — any attempt to  #',
     '#  use it will fail with an error (this is not a silent      #',
-    '#  mock, it hard-fails). Set OCRSPACE_API_KEY to enable it.  #',
+    '#  mock, it hard-fails). Set GROQ_API_KEY (preferred, vision- #',
+    '#  based, no OCR.space dependency) or OCRSPACE_API_KEY.       #',
     '#############################################################',
     '',
   ].join('\n');

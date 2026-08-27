@@ -200,8 +200,99 @@ async function extractReceiptFields(rawText, regexHints = {}) {
   return normalizeParsedFields(parsed);
 }
 
+// Vision-capable Groq model — reads the screenshot image directly instead
+// of classifying pre-extracted OCR text. This is the "primary path"
+// referenced in .env.example: when configured, it skips OCR.space
+// entirely, so an OCR.space outage/throttle (e.g. free-tier "E571
+// overloaded") no longer blocks autofill as long as Groq is up.
+// NOTE: meta-llama/llama-4-scout-17b-16e-instruct and
+// meta-llama/llama-4-maverick-17b-128e-instruct (Groq's old vision models)
+// are both deprecated/in RETIRED_GROQ_MODELS above. As of mid-2026 Groq's
+// migration guidance for multimodal (image) traffic points to
+// qwen/qwen3.6-27b. Check https://console.groq.com/docs/models for the
+// current vision-capable lineup and override via GROQ_VISION_MODEL if this
+// default gets retired too — Groq's multimodal lineup changes often.
+const GROQ_VISION_MODEL = resolveModel(
+  process.env.GROQ_VISION_MODEL,
+  'qwen/qwen3.6-27b',
+  'GROQ_VISION_MODEL'
+);
+
+const VISION_SYSTEM_PROMPT = `You extract structured fields from an image of a bank payment/transfer receipt or screenshot.
+
+Return ONLY a JSON object, no prose, no markdown fences, with exactly these keys:
+{
+  "amount": number or null,       // the transferred amount, as a plain number, no currency symbol or commas
+  "name": string or null,         // the sender's / payer's name (not the recipient/bank staff)
+  "txnId": string or null,        // transaction ID / reference number / FT number
+  "bankName": string or null,     // the bank or mobile money provider name
+  "date": string or null          // transaction date, ISO 8601 (YYYY-MM-DD) if you can determine it, else null
+}
+
+Rules:
+- If a field is not clearly present in the image, use null. Never guess or invent a value.
+- amount must be a plain JSON number (e.g. 1250.5), not a string, not formatted with commas or currency symbols.
+- Do not confuse a phone number, account number, or reference-looking noise for the transaction ID unless it is labeled as such or is the most plausible candidate.
+- Respond with the JSON object only.`;
+
+/**
+ * Reads the receipt screenshot directly with a Groq vision model — no
+ * OCR.space involved. This is the preferred path when GROQ_API_KEY is
+ * configured; callers should fall back to parseReceiptImage's OCR.space +
+ * text-classification path only if this throws or Groq isn't configured.
+ *
+ * @param {Buffer} fileBuffer
+ * @param {string} mimetype - must be an image type Groq's vision models
+ *   accept (jpeg/png/webp); PDFs are not supported here.
+ * @returns {Promise<{amount:number|null,name:string|null,txnId:string|null,bankName:string|null,date:string|null}|null>}
+ *   Returns null (never throws) if Groq isn't configured — caller falls
+ *   back to OCR.space + regex/text-classification. Throws on a
+ *   configured-but-failed call so the caller can log it distinctly.
+ */
+async function extractReceiptFieldsFromImage(fileBuffer, mimetype) {
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) return null; // not configured — silent fallback to OCR.space path
+
+  const base64 = fileBuffer.toString('base64');
+  const dataUrl = `data:${mimetype};base64,${base64}`;
+
+  const res = await groqChatCompletion(apiKey, {
+    model: GROQ_VISION_MODEL,
+    temperature: 0,
+    max_tokens: 300,
+    messages: [
+      { role: 'system', content: VISION_SYSTEM_PROMPT },
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Extract the receipt fields from this screenshot.' },
+          { type: 'image_url', image_url: { url: dataUrl } },
+        ],
+      },
+    ],
+  });
+
+  if (!res.ok) {
+    const bodyText = await res.text().catch(() => '');
+    throw new Error(`Groq vision API request failed (${res.status}): ${bodyText.slice(0, 200)}`);
+  }
+
+  const data = await res.json();
+  const content = data?.choices?.[0]?.message?.content;
+  if (!content) throw new Error('Groq vision response had no content');
+
+  let parsed;
+  try {
+    parsed = JSON.parse(content);
+  } catch (err) {
+    throw new Error(`Groq vision response was not valid JSON: ${content.slice(0, 200)}`);
+  }
+
+  return normalizeParsedFields(parsed);
+}
+
 function isStubActive() {
   return !process.env.GROQ_API_KEY;
 }
 
-module.exports = { extractReceiptFields, isStubActive };
+module.exports = { extractReceiptFields, extractReceiptFieldsFromImage, isStubActive };
