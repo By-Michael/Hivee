@@ -4,7 +4,7 @@ const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/AppError');
 const { recordAudit } = require('../utils/audit');
 const { phoneSearchKeyFor } = require('../utils/phone');
-const { sendResidentDeactivatedEmail, sendResidentWelcomeEmail } = require('../utils/email');
+const { sendResidentDeactivatedEmail, sendResidentWelcomeEmail, sendNotificationEmail } = require('../utils/email');
 
 // Where the frontend's login page lives — same pattern/env var as
 // authController's password-reset link.
@@ -386,6 +386,15 @@ const reactivateResident = catchAsync(async (req, res) => {
     entityId: resident.id,
     description: `Reactivated resident "${updated.user.fullName}" (unit ${updated.unitNumber})`,
   });
+
+  const community = await prisma.community.findUnique({ where: { id: req.communityId }, select: { name: true } });
+  sendNotificationEmail({
+    to: updated.user.email,
+    fullName: updated.user.fullName,
+    subject: 'Your account has been reactivated',
+    message: 'Your resident account has been reactivated by the committee. You can log in again as normal.',
+    communityName: community?.name,
+  }).catch(() => {});
 
   res.json({ success: true, data: updated });
 });

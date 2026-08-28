@@ -3,6 +3,12 @@ const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/AppError');
 const { recordAudit } = require('../utils/audit');
 const { getChangeType } = require('../utils/pendingChanges');
+const { sendNotificationEmail } = require('../utils/email');
+
+async function communityNameFor(communityId) {
+  const community = await prisma.community.findUnique({ where: { id: communityId }, select: { name: true } });
+  return community?.name;
+}
 
 const EXPIRY_HOURS = 24;
 
@@ -136,6 +142,22 @@ async function createPendingChange(req, { changeType, entityId, currentEntity, p
     description: `Proposed change to ${def.label}, needs approval from ${otherMembers.length} other committee member(s): ${describeDiff(diff)}`,
   });
 
+  // Fire-and-forget: notify only the members who still actually need to
+  // vote (excluding anyone this request just auto-approved on behalf of).
+  const membersToNotify = otherMembers.filter((m) => !autoApprovedUserIds.has(m.id));
+  if (membersToNotify.length > 0) {
+    const communityName = await communityNameFor(req.communityId);
+    for (const member of membersToNotify) {
+      sendNotificationEmail({
+        to: member.email,
+        fullName: member.fullName,
+        subject: `A ${def.label} change needs your approval`,
+        message: `${req.user.fullName} proposed a change to ${def.label}: ${describeDiff(diff)}. Please review and respond in the app.`,
+        communityName,
+      }).catch(() => {});
+    }
+  }
+
   // If auto-approvals happened to cover everyone else already, resolve
   // immediately rather than leaving a fully-approved request sitting in
   // PENDING until someone happens to reload the list.
@@ -235,6 +257,13 @@ const respondToPendingChange = catchAsync(async (req, res) => {
       entityId: pendingChange.id,
       description: `Rejected proposed change to ${def.label}: ${describeDiff(pendingChange.diff)}`,
     });
+    sendNotificationEmail({
+      to: updated.proposedBy.email,
+      fullName: updated.proposedBy.fullName,
+      subject: `Your proposed ${def.label} change was rejected`,
+      message: `${req.user.fullName} rejected your proposed change to ${def.label}. The request has been cancelled.`,
+      communityName: await communityNameFor(req.communityId),
+    }).catch(() => {});
     return res.json({ success: true, data: updated });
   }
 
@@ -272,6 +301,14 @@ const respondToPendingChange = catchAsync(async (req, res) => {
     entityId: pendingChange.entityId,
     description: `${def.label} updated after full committee approval: ${describeDiff(pendingChange.diff)}`,
   });
+
+  sendNotificationEmail({
+    to: updated.proposedBy.email,
+    fullName: updated.proposedBy.fullName,
+    subject: `Your proposed ${def.label} change was approved`,
+    message: `Every committee member has approved your proposed change to ${def.label}, and it's now been applied.`,
+    communityName: await communityNameFor(req.communityId),
+  }).catch(() => {});
 
   res.json({ success: true, data: updated });
 });

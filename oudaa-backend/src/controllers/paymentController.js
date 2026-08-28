@@ -6,6 +6,7 @@ const { verifyBankTransaction, PROVIDERS_NEEDING_SUFFIX, PROVIDERS_NEEDING_PHONE
 const { parseReceiptImage } = require('../utils/ocrReceipt');
 const { extractCbeReferenceFromReceipt, isLikelyCbeReceiptLink } = require('../utils/receiptQrExtraction');
 const { saveReceiptFile } = require('../config/storage');
+const { sendNotificationEmail } = require('../utils/email');
 
 // Amount tolerance for the bank-verification cross-check — covers bank-fee
 // rounding, not a loophole. Absolute birr amount, not a percentage, so it
@@ -48,6 +49,26 @@ const PAYMENT_INCLUDE = {
 // community (see schema.prisma comment) — a plain equality filter instead
 // of joining out through fee/project/fund on every query.
 const communityPaymentFilter = (communityId) => ({ communityId });
+
+// Fire-and-forget acknowledgement email for a resident's own self-verified
+// payment submission — the resident sees the result immediately in the
+// UI, but many residents pay and close the tab, so an email confirming
+// what happened (auto-verified vs. queued for review) is worth sending.
+// Never blocks the request; sendEmail itself never throws.
+function notifyResidentOfSelfVerifyResult({ toEmail, fullName, communityName, amount, targetLabel, status, flags }) {
+  if (!toEmail) return;
+  const message =
+    status === 'VERIFIED'
+      ? `Your payment of ${amount} for ${targetLabel} was automatically verified against the bank. Thanks!`
+      : `Your payment of ${amount} for ${targetLabel} has been received and is waiting on a quick manual check by the committee before it's marked verified${flags ? ` (${flags})` : ''}. You'll be notified once it's reviewed.`;
+  sendNotificationEmail({
+    to: toEmail,
+    fullName,
+    subject: status === 'VERIFIED' ? 'Your payment was verified' : 'Your payment is being reviewed',
+    message,
+    communityName,
+  }).catch(() => {});
+}
 
 // The bank-verification response (Veritas) already captures who actually
 // sent the money — it's saved wholesale in verificationRaw for admin
@@ -214,6 +235,26 @@ const updatePaymentStatus = catchAsync(async (req, res) => {
     data: { status: req.body.status, verifiedBy: req.user.id },
     include: PAYMENT_INCLUDE,
   });
+
+  // Fire-and-forget: sendEmail never throws (see utils/email.js), and the
+  // status change itself must not be blocked/delayed by email latency.
+  // Only VERIFIED/REJECTED are terminal, user-meaningful outcomes worth
+  // emailing about — leaving something at PENDING isn't news.
+  if ((req.body.status === 'VERIFIED' || req.body.status === 'REJECTED') && updated.resident?.user?.email) {
+    const forLabel = updated.fee?.name || updated.project?.name || updated.fund?.name || 'your payment';
+    const community = await prisma.community.findUnique({ where: { id: req.communityId }, select: { name: true } });
+    const message =
+      req.body.status === 'VERIFIED'
+        ? `Your payment of ${updated.amount} for "${forLabel}" has been verified by the committee.`
+        : `Your payment of ${updated.amount} for "${forLabel}" was reviewed and could not be verified. Please contact the committee if you believe this is a mistake, or submit a corrected payment.`;
+    sendNotificationEmail({
+      to: updated.resident.user.email,
+      fullName: updated.resident.user.fullName,
+      subject: req.body.status === 'VERIFIED' ? 'Your payment was verified' : 'Your payment was not verified',
+      message,
+      communityName: community?.name,
+    }).catch(() => {});
+  }
 
   await recordAudit(req, {
     action: req.body.status === 'VERIFIED' ? 'VERIFY' : req.body.status === 'REJECTED' ? 'REJECT' : 'UPDATE',
@@ -548,6 +589,15 @@ const selfVerifyPayment = catchAsync(async (req, res) => {
       entityId: payment.id,
       description: `Self-verified CBE payment (${amount}) for ${targetLabel} — pending manual review (no QR reference found)`,
     });
+    notifyResidentOfSelfVerifyResult({
+      toEmail: req.user.email,
+      fullName: req.user.fullName,
+      communityName: community?.name,
+      amount,
+      targetLabel,
+      status: 'PENDING_REVIEW',
+      flags: 'receipt needs manual review',
+    });
     return res.json({ success: true, data: withSenderName(payment) });
   }
 
@@ -717,6 +767,16 @@ const selfVerifyPayment = catchAsync(async (req, res) => {
     description: status === 'VERIFIED'
       ? `Auto-verified payment of ${payment.amount} for ${targetLabel} via bank transaction lookup`
       : `Self-verified payment of ${payment.amount} for ${targetLabel} flagged for admin review: ${flags.join(' ')}`,
+  });
+
+  notifyResidentOfSelfVerifyResult({
+    toEmail: req.user.email,
+    fullName: req.user.fullName,
+    communityName: community?.name,
+    amount: payment.amount,
+    targetLabel,
+    status,
+    flags: flags.length > 0 ? flags.join(' ') : null,
   });
 
   res.status(201).json({ success: true, data: payment });

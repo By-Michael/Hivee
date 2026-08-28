@@ -2,6 +2,12 @@ const prisma = require('../config/prisma');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/AppError');
 const { recordAudit } = require('../utils/audit');
+const { sendNotificationEmail } = require('../utils/email');
+
+async function communityNameFor(communityId) {
+  const community = await prisma.community.findUnique({ where: { id: communityId }, select: { name: true } });
+  return community?.name;
+}
 
 const requestInclude = {
   fromUser: { select: { id: true, fullName: true, email: true } },
@@ -45,6 +51,30 @@ const createTransferRequest = catchAsync(async (req, res) => {
   });
 
   await recordAudit(req, { action: 'CREATE', entityType: 'CommitteeTransferRequest', entityId: request.id, description: `Requested to transfer committee seat to ${target.user.fullName}` });
+
+  // Fire-and-forget: notify every other committee member their vote is
+  // needed (or, if there are none, the resident goes straight to
+  // PENDING_RECIPIENT and gets notified below instead).
+  const communityName = await communityNameFor(req.communityId);
+  for (const member of otherMembers) {
+    sendNotificationEmail({
+      to: member.email,
+      fullName: member.fullName,
+      subject: 'A committee seat transfer needs your approval',
+      message: `${req.user.fullName} has requested to transfer their committee seat to ${target.user.fullName}. Please review and respond in the app.`,
+      communityName,
+    }).catch(() => {});
+  }
+  if (otherMembers.length === 0) {
+    sendNotificationEmail({
+      to: target.user.email,
+      fullName: target.user.fullName,
+      subject: 'You\u2019ve been offered a committee seat',
+      message: `${req.user.fullName} has offered you their committee seat. Please review and respond in the app.`,
+      communityName,
+    }).catch(() => {});
+  }
+
   res.status(201).json({ success: true, data: request });
 });
 
@@ -110,6 +140,13 @@ const respondAsCommittee = catchAsync(async (req, res) => {
       data: { status: 'REJECTED', resolvedAt: new Date() },
       include: requestInclude,
     });
+    sendNotificationEmail({
+      to: updated.fromUser.email,
+      fullName: updated.fromUser.fullName,
+      subject: 'Your committee seat transfer was declined',
+      message: `${req.user.fullName} declined your request to transfer your committee seat to ${updated.toResident.user.fullName}. The request has been cancelled.`,
+      communityName: await communityNameFor(req.communityId),
+    }).catch(() => {});
     return res.json({ success: true, data: updated });
   }
 
@@ -123,6 +160,16 @@ const respondAsCommittee = catchAsync(async (req, res) => {
     data: remaining === 0 ? { status: 'PENDING_RECIPIENT' } : {},
     include: requestInclude,
   });
+
+  if (remaining === 0) {
+    sendNotificationEmail({
+      to: updated.toResident.user.email,
+      fullName: updated.toResident.user.fullName,
+      subject: 'You\u2019ve been offered a committee seat',
+      message: `The committee has approved ${updated.fromUser.fullName}\u2019s request to transfer their seat to you. Please review and respond in the app.`,
+      communityName: await communityNameFor(req.communityId),
+    }).catch(() => {});
+  }
 
   res.json({ success: true, data: updated });
 });
@@ -146,6 +193,13 @@ const respondAsRecipient = catchAsync(async (req, res) => {
       data: { status: 'REJECTED', recipientDecision: 'REJECTED', resolvedAt: new Date() },
       include: requestInclude,
     });
+    sendNotificationEmail({
+      to: updated.fromUser.email,
+      fullName: updated.fromUser.fullName,
+      subject: 'Your committee seat offer was declined',
+      message: `${updated.toResident.user.fullName} declined the committee seat you offered them. You remain a committee member.`,
+      communityName: await communityNameFor(req.communityId),
+    }).catch(() => {});
     return res.json({ success: true, data: updated });
   }
 
@@ -161,6 +215,23 @@ const respondAsRecipient = catchAsync(async (req, res) => {
   });
 
   await recordAudit(req, { action: 'UPDATE', entityType: 'CommitteeTransferRequest', entityId: request.id, description: `Accepted committee seat transfer, becoming a committee member` });
+
+  const communityName = await communityNameFor(req.communityId);
+  sendNotificationEmail({
+    to: updated.fromUser.email,
+    fullName: updated.fromUser.fullName,
+    subject: 'Your committee seat transfer is complete',
+    message: `${updated.toResident.user.fullName} accepted your committee seat. You are now a regular resident.`,
+    communityName,
+  }).catch(() => {});
+  sendNotificationEmail({
+    to: updated.toResident.user.email,
+    fullName: updated.toResident.user.fullName,
+    subject: 'You are now a committee member',
+    message: `You\u2019ve accepted ${updated.fromUser.fullName}\u2019s committee seat and are now a committee member. Welcome aboard!`,
+    communityName,
+  }).catch(() => {});
+
   res.json({ success: true, data: updated });
 });
 
