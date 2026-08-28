@@ -221,6 +221,14 @@ export default function AdminDashboard() {
   // regardless of sort order (mapping colors off the original unsorted
   // fundSplit while rendering the sorted list would mismatch them).
   const sortedFundSplit = [...fundSplit].sort((a, b) => b.value - a.value)
+  // The chart card has a fixed height, so charting every fund on a
+  // larger community (10, 20+ funds) squeezes each bar down until the
+  // labels overlap and become unreadable. Cap what's actually plotted to
+  // the top few by balance — the ones people actually care about at a
+  // glance — and surface the rest as a count instead of cramming them in.
+  const FUND_CHART_LIMIT = 9
+  const chartedFundSplit = sortedFundSplit.slice(0, FUND_CHART_LIMIT)
+  const hiddenFundCount = sortedFundSplit.length - chartedFundSplit.length
   // magnitude/total below just gate whether there's anything to chart —
   // the bar chart itself (below) plots the real signed `value`, not this.
   const fundChartData = fundSplit.map((f) => ({ ...f, magnitude: Math.abs(f.value) }))
@@ -332,51 +340,62 @@ export default function AdminDashboard() {
                   balance at a glance (bar length = size, color/direction
                   = surplus vs. deficit), reads correctly even with two
                   funds, and needs no separate legend since each bar
-                  already carries its own label. */}
-              <ResponsiveContainer width="100%" height={190}>
-                <BarChart
-                  data={sortedFundSplit}
-                  layout="vertical"
-                  margin={{ left: 4, right: 36, top: 4, bottom: 4 }}
-                  barCategoryGap={14}
-                >
-                  <XAxis type="number" hide />
-                  <YAxis
-                    type="category"
-                    dataKey="name"
-                    width={92}
-                    tickLine={false}
-                    axisLine={false}
-                    tick={{ fill: '#8790b3', fontSize: 11 }}
-                  />
-                  <Tooltip
-                    cursor={{ fill: 'rgba(37,112,245,0.06)' }}
-                    formatter={(v) => currency(v)}
-                    contentStyle={{ borderRadius: 12, border: '1px solid #eef1f8' }}
-                  />
-                  <Bar dataKey="value" radius={[0, 6, 6, 0]} maxBarSize={22} isAnimationActive animationDuration={700}>
-                    {sortedFundSplit.map((f, i) => (
-                      <Cell
-                        key={f.name}
-                        fill={f.value < 0 ? '#e11d48' : COLORS[i % COLORS.length]}
-                        style={{ filter: 'drop-shadow(0 2px 6px rgba(16,30,66,0.18))' }}
-                      />
-                    ))}
-                    <LabelList
-                      dataKey="value"
-                      position="right"
-                      formatter={(v) => currencyBalance(v, 'short')}
-                      style={{ fill: '#4b5773', fontSize: 11, fontWeight: 600 }}
+                  already carries its own label.
+
+                  The chart fills whatever vertical room the card has
+                  left (flex-1 + height="100%") rather than a fixed px
+                  value, so on a community with only a couple of funds
+                  the bars grow to fill the card instead of leaving dead
+                  space underneath, and on one with many funds the extra
+                  room lets FUND_CHART_LIMIT show a few more before
+                  bars get cramped. */}
+              <div className="flex-1 min-h-0">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart
+                    data={chartedFundSplit}
+                    layout="vertical"
+                    margin={{ left: 4, right: 36, top: 4, bottom: 4 }}
+                    barCategoryGap="18%"
+                  >
+                    <XAxis type="number" hide />
+                    <YAxis
+                      type="category"
+                      dataKey="name"
+                      width={92}
+                      tickLine={false}
+                      axisLine={false}
+                      tick={{ fill: '#8790b3', fontSize: 11 }}
                     />
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+                    <Tooltip
+                      cursor={{ fill: 'rgba(37,112,245,0.06)' }}
+                      formatter={(v) => currency(v)}
+                      contentStyle={{ borderRadius: 12, border: '1px solid #eef1f8' }}
+                    />
+                    <Bar dataKey="value" radius={[0, 6, 6, 0]} maxBarSize={26} isAnimationActive animationDuration={700}>
+                      {chartedFundSplit.map((f, i) => (
+                        <Cell
+                          key={f.name}
+                          fill={f.value < 0 ? '#e11d48' : COLORS[i % COLORS.length]}
+                          style={{ filter: 'drop-shadow(0 2px 6px rgba(16,30,66,0.18))' }}
+                        />
+                      ))}
+                      <LabelList
+                        dataKey="value"
+                        position="right"
+                        formatter={(v) => currencyBalance(v, 'short')}
+                        style={{ fill: '#4b5773', fontSize: 11, fontWeight: 600 }}
+                      />
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
               <p className="text-[11px] text-ink-300 mt-1">
                 {hasAnyDeficit ? 'Red bars indicate a fund currently in deficit.' : 'Balance per fund, largest first.'}
+                {hiddenFundCount > 0 ? ` Showing top ${FUND_CHART_LIMIT} of ${sortedFundSplit.length} funds.` : ''}
               </p>
             </>
           ) : (
-            <div className="h-[190px] flex flex-col items-center justify-center text-center text-ink-400 gap-1.5">
+            <div className="flex-1 flex flex-col items-center justify-center text-center text-ink-400 gap-1.5">
               <Landmark className="h-6 w-6 text-ink-200" />
               <p className="text-xs">No fund balances yet</p>
               <p className="text-[11px] text-ink-300">Balances appear once payments are verified</p>
