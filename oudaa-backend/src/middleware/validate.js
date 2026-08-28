@@ -8,7 +8,11 @@ const AppError = require('../utils/AppError');
 module.exports = function validate(schema) {
   return (req, res, next) => {
     const result = schema.safeParse({
-      body: req.body,
+      // req.body is `undefined` (not `{}`) when the request has no
+      // JSON Content-Type header at all, even with no body — normalize
+      // to {} so schemas whose body fields are all-optional don't fail
+      // just because the client didn't set a header.
+      body: req.body ?? {},
       query: req.query,
       params: req.params,
     });

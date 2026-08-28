@@ -93,7 +93,7 @@ CORE MODULES
 
 YOUR JOB
 1. Answer "how do I / what does X mean / why did Y happen" questions about the platform, clearly and specifically, in plain language. Prefer short, direct, step-by-step answers pointing at real page/button names (e.g. "Go to Payments → Record payment").
-2. If the user is a committee member (ADMIN) and asks something that requires looking at their OWN community's actual data (e.g. "who hasn't paid August dues", "what's our fund balance", "any pending approvals?"), use the provided tools to fetch the real, current answer instead of guessing — never invent numbers or names. Only call a tool when the question genuinely needs live data; don't call tools for how-to questions.
+2. If the user is a committee member (ADMIN) and asks something that requires looking at their OWN community's actual data (e.g. "who hasn't paid August dues", "what's our fund balance", "any pending approvals?", "who paid this week"), use the provided tools to fetch the real, current answer instead of guessing — never invent numbers or names, and never tell someone to go filter/export it themselves in the app when a tool can just answer it directly. Try the specific tools first; if none of them fit, use query_records to build a filtered read-only lookup (date range/status/text search) instead of falling back to instructions. Only call a tool when the question genuinely needs live data; don't call tools for how-to questions.
 3. If the user is a RESIDENT, you may use the resident-scoped tools (their own payment history, outstanding fees, community funds/projects overview) but you never have access to other residents' data or committee-only actions — if asked for something committee-only, explain that this needs a committee member.
 4. Never make up figures, names, or statuses. If a tool returns nothing relevant, say so plainly.
 5. Keep answers concise — a few short sentences or a tight list. Use the resident/committee member's own language register: friendly, plain, not corporate.
@@ -189,6 +189,25 @@ const ADMIN_TOOLS = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'query_records',
+      description: 'Flexible read-only lookup for questions the other tools don\u2019t directly cover \u2014 e.g. "residents who paid this week", "payments over a date range", "expenses matching a vendor". Filter by date range, status, and/or free-text search on one entity at a time. Always scoped to this community only; cannot write, edit, or delete anything. Prefer a more specific tool above if one already fits the question exactly.',
+      parameters: {
+        type: 'object',
+        properties: {
+          entity: { type: 'string', enum: ['payment', 'resident', 'expense', 'fee'], description: 'Which record type to search.' },
+          dateFrom: { type: 'string', description: 'Inclusive start date, YYYY-MM-DD. Filters payment.paidAt, expense.spentAt, or resident/fee.createdAt depending on entity. Omit for no lower bound.' },
+          dateTo: { type: 'string', description: 'Inclusive end date, YYYY-MM-DD. Omit for no upper bound.' },
+          status: { type: 'string', description: 'Exact status filter where applicable (payment: PENDING/PENDING_REVIEW/VERIFIED/REJECTED; resident: ACTIVE/INACTIVE/MOVED_OUT). Omit for fee/expense.' },
+          textSearch: { type: 'string', description: 'Partial, case-insensitive match against the entity\u2019s main name field (resident name/unit, fee name, expense vendor/description). Not supported for payment.' },
+          limit: { type: 'integer', description: 'Max rows to return, default 20, max 50.' },
+        },
+        required: ['entity'],
+      },
+    },
+  },
 ];
 
 const RESIDENT_TOOLS = [
@@ -227,11 +246,163 @@ const RESIDENT_TOOLS = [
       parameters: { type: 'object', properties: {} },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'query_records',
+      description: 'Flexible read-only lookup for your OWN data \u2014 e.g. "my payments this month", "my payments over 500 birr". Filter by date range and/or status. Always scoped to you only; cannot write, edit, or delete anything.',
+      parameters: {
+        type: 'object',
+        properties: {
+          entity: { type: 'string', enum: ['payment'], description: 'Only your own payments can be queried this way.' },
+          dateFrom: { type: 'string', description: 'Inclusive start date, YYYY-MM-DD, filters paidAt. Omit for no lower bound.' },
+          dateTo: { type: 'string', description: 'Inclusive end date, YYYY-MM-DD. Omit for no upper bound.' },
+          status: { type: 'string', description: 'PENDING, PENDING_REVIEW, VERIFIED, or REJECTED. Omit for all.' },
+          limit: { type: 'integer', description: 'Max rows, default 20, max 50.' },
+        },
+        required: ['entity'],
+      },
+    },
+  },
 ];
 
 function capLimit(n, fallback, max) {
   const v = Number.isFinite(Number(n)) ? Math.floor(Number(n)) : fallback;
   return Math.max(1, Math.min(v || fallback, max));
+}
+
+// -----------------------------------------------------------------------
+// Generic read-only "build your own query" tool.
+//
+// The fixed tools above cover the common questions, but the model will
+// eventually get asked something none of them fit ("who paid this week",
+// "payments over 5000 birr in July", "expenses tagged MAINTENANCE last
+// month"). Rather than let the model write SQL (never happening) or
+// silently fall back to giving click-through instructions, it can call
+// this tool with a small, structured shape — entity + date range +
+// status + free-text search — and we translate that into a Prisma query
+// ourselves. Every entity's allowed filter fields and returned fields are
+// whitelisted below; the model never supplies a communityId/residentId,
+// column name, or raw operator, so it has no way to escape the scope or
+// pull a column we didn't explicitly expose.
+// -----------------------------------------------------------------------
+
+const QUERYABLE_ENTITIES = {
+  payment: {
+    dateField: 'paidAt',
+    statusValues: ['PENDING', 'PENDING_REVIEW', 'VERIFIED', 'REJECTED'],
+    searchable: false,
+    buildWhere: (communityId) => ({ communityId }),
+    include: {
+      resident: { include: { user: { select: { fullName: true } } } },
+      fee: { select: { name: true } },
+      project: { select: { name: true } },
+      fund: { select: { name: true } },
+    },
+    map: (p) => ({
+      resident: p.resident?.user?.fullName,
+      unit: p.resident?.unitNumber,
+      amount: String(p.amount),
+      method: p.method,
+      status: p.status,
+      for: p.fee?.name || p.project?.name || p.fund?.name || 'unspecified',
+      paidForMonth: p.paidForMonth,
+      paidAt: p.paidAt,
+    }),
+  },
+  resident: {
+    dateField: 'createdAt',
+    statusValues: ['ACTIVE', 'INACTIVE', 'MOVED_OUT'],
+    searchable: true,
+    searchFields: (q) => ({ OR: [{ user: { fullName: { contains: q, mode: 'insensitive' } } }, { unitNumber: { contains: q, mode: 'insensitive' } }] }),
+    buildWhere: (communityId) => ({ user: { communityId } }),
+    include: { user: { select: { fullName: true, email: true } } },
+    map: (r) => ({ name: r.user?.fullName, email: r.user?.email, unitNumber: r.unitNumber, ownerType: r.ownerType, status: r.status, createdAt: r.createdAt }),
+  },
+  expense: {
+    dateField: 'spentAt',
+    statusValues: null,
+    searchable: true,
+    searchFields: (q) => ({ OR: [{ vendor: { contains: q, mode: 'insensitive' } }, { description: { contains: q, mode: 'insensitive' } }] }),
+    buildWhere: (communityId) => ({ communityId, isVoided: false }),
+    include: { project: { select: { name: true } }, fund: { select: { name: true } } },
+    map: (e) => ({ category: e.category, amount: String(e.amount), vendor: e.vendor, description: e.description, for: e.project?.name || e.fund?.name || 'general', spentAt: e.spentAt }),
+  },
+  fee: {
+    dateField: 'createdAt',
+    statusValues: null,
+    searchable: true,
+    searchFields: (q) => ({ name: { contains: q, mode: 'insensitive' } }),
+    buildWhere: (communityId) => ({ communityId }),
+    include: {},
+    map: (f) => ({ name: f.name, amount: String(f.amount), frequency: f.frequency, dueDay: f.dueDay, createdAt: f.createdAt }),
+  },
+};
+
+function parseDateBound(str, endOfDay) {
+  if (!str) return undefined;
+  const d = new Date(str);
+  if (Number.isNaN(d.getTime())) return undefined;
+  if (endOfDay) d.setHours(23, 59, 59, 999);
+  else d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+async function toolQueryRecords(ctx, args) {
+  const entityKey = String(args.entity || '').toLowerCase();
+  const config = QUERYABLE_ENTITIES[entityKey];
+  if (!config) {
+    return { error: `Unknown entity "${args.entity}". Valid options: ${Object.keys(QUERYABLE_ENTITIES).join(', ')}.` };
+  }
+
+  const where = config.buildWhere(ctx.communityId);
+
+  // Residents only ever get their own record scope for entities that support it.
+  if (ctx.user.role !== 'ADMIN') {
+    if (entityKey === 'payment') {
+      const resident = await prisma.resident.findUnique({ where: { userId: ctx.user.id } });
+      if (!resident) return { message: 'No resident profile found for this account.' };
+      where.residentId = resident.id;
+    } else if (entityKey === 'resident') {
+      where.userId = ctx.user.id; // a resident can only look up themselves this way
+    } else if (entityKey === 'expense') {
+      return { error: 'Expenses are committee-only data.' };
+    }
+  }
+
+  const from = parseDateBound(args.dateFrom, false);
+  const to = parseDateBound(args.dateTo, true);
+  if (from || to) {
+    where[config.dateField] = { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) };
+  }
+
+  if (args.status) {
+    const status = String(args.status).toUpperCase();
+    if (!config.statusValues) {
+      return { error: `Entity "${entityKey}" has no status field.` };
+    }
+    if (!config.statusValues.includes(status)) {
+      return { error: `Invalid status "${args.status}" for ${entityKey}. Valid: ${config.statusValues.join(', ')}.` };
+    }
+    where.status = status;
+  }
+
+  if (args.textSearch) {
+    if (!config.searchable) {
+      return { error: `Entity "${entityKey}" doesn't support text search.` };
+    }
+    Object.assign(where, config.searchFields(String(args.textSearch).trim()));
+  }
+
+  const take = capLimit(args.limit, 20, 50);
+  const rows = await prisma[entityKey].findMany({
+    where,
+    include: Object.keys(config.include).length ? config.include : undefined,
+    orderBy: { [config.dateField]: 'desc' },
+    take,
+  });
+
+  return { entity: entityKey, count: rows.length, results: rows.map(config.map) };
 }
 
 // -----------------------------------------------------------------------
@@ -446,6 +617,7 @@ const ADMIN_EXECUTORS = {
   list_pending_committee_approvals: toolListPendingCommitteeApprovals,
   list_recent_expenses: toolListRecentExpenses,
   get_audit_log_summary: toolGetAuditLogSummary,
+  query_records: toolQueryRecords,
 };
 
 const RESIDENT_EXECUTORS = {
@@ -453,6 +625,7 @@ const RESIDENT_EXECUTORS = {
   get_my_outstanding_fees: toolGetMyOutstandingFees,
   get_community_funds_overview: toolGetCommunityFundsOverview,
   get_community_projects_overview: toolGetCommunityProjectsOverview,
+  query_records: toolQueryRecords,
 };
 
 function toolsForRole(role) {

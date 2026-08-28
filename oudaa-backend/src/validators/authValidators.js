@@ -33,9 +33,17 @@ const loginSchema = z.object({
 });
 
 const refreshSchema = z.object({
-  body: z.object({
-    refreshToken: z.string().min(10).optional(),
-  }),
+  // The refresh token normally comes from the httpOnly cookie, not the
+  // body, and the client may call this with no body/Content-Type at all
+  // (e.g. a bare `fetch(url, { method: 'POST' })`). Without .optional()
+  // here, express.json() leaving req.body as `undefined` (no JSON
+  // Content-Type header present) fails validation before the cookie is
+  // ever checked.
+  body: z
+    .object({
+      refreshToken: z.string().min(10).optional(),
+    })
+    .optional(),
 });
 
 const changePasswordSchema = z.object({
