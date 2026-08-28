@@ -355,10 +355,10 @@ function ChatTab({ userName }) {
               <Sparkles className="h-6 w-6 text-white" />
             </div>
             <p className="text-sm font-semibold text-ink-700 dark:text-ink-200">
-              Hi{userName ? ` ${userName.split(' ')[0]}` : ''}, I\u2019m Oudaa AI.
+              Hi{userName ? ` ${userName.split(' ')[0]}` : ''}, I'm Oudaa AI.
             </p>
             <p className="text-sm text-ink-400 max-w-xs">
-              Ask me how anything in the platform works — or, if you\u2019re on the committee, ask about your community\u2019s own data, like who hasn\u2019t paid this month.
+              Ask me how anything in the platform works — or, if you're on the committee, ask about your community's own data, like who hasn't paid this month.
             </p>
           </div>
         )}

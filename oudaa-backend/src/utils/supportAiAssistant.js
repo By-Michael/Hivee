@@ -172,12 +172,40 @@ const ADMIN_TOOLS = [
     type: 'function',
     function: {
       name: 'get_resident_info',
-      description: 'Look up a specific resident by name or unit number and return their profile, payment history summary, and any outstanding fees.',
+      description: 'Look up a specific resident by name or unit number and return their full profile (including phone, ID number, address, owner/renter type, and when they registered/joined), payment history summary, and any outstanding fees.',
       parameters: {
         type: 'object',
         properties: { query: { type: 'string', description: 'Resident full name (partial ok) or unit number.' } },
         required: ['query'],
       },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_project_budget_status',
+      description: "Get a specific project's budget vs. how much has actually been collected toward it and spent on it so far, plus which fund(s) back it. Use for questions like 'how much of the renovation budget is left' or 'are we over budget on X'.",
+      parameters: {
+        type: 'object',
+        properties: { projectName: { type: 'string', description: 'Project name (partial match ok).' } },
+        required: ['projectName'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_community_payment_info',
+      description: "Get where residents should send money \u2014 the community's registered payment methods (CBE bank account details and/or Telebirr number), or the legacy single bank account if no payment methods have been set up yet.",
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_community_info',
+      description: "Get the community's own profile: name, address, contact info, how many active residents, and how many committee members.",
+      parameters: { type: 'object', properties: {} },
     },
   },
   {
@@ -216,16 +244,24 @@ const ADMIN_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'list_committee_members',
+      description: "List the community's committee members (ADMIN-role accounts) and how many there are. Use this for questions like 'how many committee members are there', 'who's on the committee', or 'how many admins including me'.",
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'query_records',
       description: 'Flexible read-only lookup for questions the other tools don\u2019t directly cover \u2014 e.g. "residents who paid this week", "payments over a date range", "expenses matching a vendor". Filter by date range, status, and/or free-text search on one entity at a time. Always scoped to this community only; cannot write, edit, or delete anything. Prefer a more specific tool above if one already fits the question exactly.',
       parameters: {
         type: 'object',
         properties: {
-          entity: { type: 'string', enum: ['payment', 'resident', 'expense', 'fee'], description: 'Which record type to search.' },
-          dateFrom: { type: 'string', description: 'Inclusive start date, YYYY-MM-DD. Filters payment.paidAt, expense.spentAt, or resident/fee.createdAt depending on entity. Omit for no lower bound.' },
+          entity: { type: 'string', enum: ['payment', 'resident', 'expense', 'fee', 'project', 'fund'], description: 'Which record type to search.' },
+          dateFrom: { type: 'string', description: 'Inclusive start date, YYYY-MM-DD. Filters payment.paidAt, expense.spentAt, project.startDate, or resident/fee/fund.createdAt depending on entity. Omit for no lower bound.' },
           dateTo: { type: 'string', description: 'Inclusive end date, YYYY-MM-DD. Omit for no upper bound.' },
-          status: { type: 'string', description: 'Exact status filter where applicable (payment: PENDING/PENDING_REVIEW/VERIFIED/REJECTED; resident: ACTIVE/INACTIVE/MOVED_OUT). Omit for fee/expense.' },
-          textSearch: { type: 'string', description: 'Partial, case-insensitive match against the entity\u2019s main name field (resident name/unit, fee name, expense vendor/description). Not supported for payment.' },
+          status: { type: 'string', description: 'Exact status filter where applicable (payment: PENDING/PENDING_REVIEW/VERIFIED/REJECTED; resident: ACTIVE/INACTIVE/MOVED_OUT; project: PLANNED/ONGOING/COMPLETED/CANCELLED). Omit for fee/expense/fund.' },
+          textSearch: { type: 'string', description: 'Partial, case-insensitive match against the entity\u2019s main name field (resident name/unit, fee name, expense vendor/description, project/fund name). Not supported for payment.' },
           limit: { type: 'integer', description: 'Max rows to return, default 20, max 50.' },
         },
         required: ['entity'],
@@ -273,15 +309,66 @@ const RESIDENT_TOOLS = [
   {
     type: 'function',
     function: {
-      name: 'query_records',
-      description: 'Flexible read-only lookup for your OWN data \u2014 e.g. "my payments this month", "my payments over 500 birr". Filter by date range and/or status. Always scoped to you only; cannot write, edit, or delete anything.',
+      name: 'get_project_budget_status',
+      description: "Get a specific project's budget vs. how much has been collected toward it and spent on it so far, plus which fund(s) back it.",
+      parameters: {
+        type: 'object',
+        properties: { projectName: { type: 'string', description: 'Project name (partial match ok).' } },
+        required: ['projectName'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_community_payment_info',
+      description: "Get where to send money \u2014 the community's registered payment methods (CBE bank account details and/or Telebirr number), or the legacy single bank account if none are set up yet.",
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_community_info',
+      description: "Get the community's own profile: name, address, contact info, how many active residents, and how many committee members.",
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_community_spending_summary',
+      description: "Get how much the community has spent, broken down by category (SECURITY/WATER/CLEANING/MAINTENANCE/IMPROVEMENT/ADMIN/OTHER), optionally over a date range. Rollup totals only \u2014 no vendor names or who recorded it, since that line-item detail is committee-only.",
       parameters: {
         type: 'object',
         properties: {
-          entity: { type: 'string', enum: ['payment'], description: 'Only your own payments can be queried this way.' },
-          dateFrom: { type: 'string', description: 'Inclusive start date, YYYY-MM-DD, filters paidAt. Omit for no lower bound.' },
+          dateFrom: { type: 'string', description: 'Inclusive start date, YYYY-MM-DD. Omit for no lower bound.' },
           dateTo: { type: 'string', description: 'Inclusive end date, YYYY-MM-DD. Omit for no upper bound.' },
-          status: { type: 'string', description: 'PENDING, PENDING_REVIEW, VERIFIED, or REJECTED. Omit for all.' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_my_profile',
+      description: "Get the current user's own resident profile \u2014 unit number, phone, ID number, address, owner/renter type, status, and when they joined.",
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'query_records',
+      description: 'Flexible read-only lookup for your OWN data, or the community\u2019s public fee/project/fund records \u2014 e.g. "my payments this month", "my payments over 500 birr", "projects that are ongoing". Filter by date range, status, and/or text search. Payment/resident lookups are always scoped to you only; cannot write, edit, or delete anything.',
+      parameters: {
+        type: 'object',
+        properties: {
+          entity: { type: 'string', enum: ['payment', 'fee', 'project', 'fund'], description: 'payment = your own payments only. fee/project/fund = community-wide, visible to all residents.' },
+          dateFrom: { type: 'string', description: 'Inclusive start date, YYYY-MM-DD. Filters paidAt/createdAt/startDate depending on entity. Omit for no lower bound.' },
+          dateTo: { type: 'string', description: 'Inclusive end date, YYYY-MM-DD. Omit for no upper bound.' },
+          status: { type: 'string', description: 'payment: PENDING/PENDING_REVIEW/VERIFIED/REJECTED. project: PLANNED/ONGOING/COMPLETED/CANCELLED. Omit for fee/fund.' },
+          textSearch: { type: 'string', description: 'Partial, case-insensitive match against the entity\u2019s name (fee/project/fund name). Not supported for payment.' },
           limit: { type: 'integer', description: 'Max rows, default 20, max 50.' },
         },
         required: ['entity'],
@@ -335,13 +422,13 @@ const QUERYABLE_ENTITIES = {
     }),
   },
   resident: {
-    dateField: 'createdAt',
+    dateField: 'joinedAt',
     statusValues: ['ACTIVE', 'INACTIVE', 'MOVED_OUT'],
     searchable: true,
     searchFields: (q) => ({ OR: [{ user: { fullName: { contains: q, mode: 'insensitive' } } }, { unitNumber: { contains: q, mode: 'insensitive' } }] }),
     buildWhere: (communityId) => ({ user: { communityId } }),
     include: { user: { select: { fullName: true, email: true } } },
-    map: (r) => ({ name: r.user?.fullName, email: r.user?.email, unitNumber: r.unitNumber, ownerType: r.ownerType, status: r.status, createdAt: r.createdAt }),
+    map: (r) => ({ name: r.user?.fullName, email: r.user?.email, unitNumber: r.unitNumber, ownerType: r.ownerType, status: r.status, registeredAt: r.joinedAt }),
   },
   expense: {
     dateField: 'spentAt',
@@ -360,6 +447,24 @@ const QUERYABLE_ENTITIES = {
     buildWhere: (communityId) => ({ communityId }),
     include: {},
     map: (f) => ({ name: f.name, amount: String(f.amount), frequency: f.frequency, dueDay: f.dueDay, createdAt: f.createdAt }),
+  },
+  project: {
+    dateField: 'startDate',
+    statusValues: ['PLANNED', 'ONGOING', 'COMPLETED', 'CANCELLED'],
+    searchable: true,
+    searchFields: (q) => ({ OR: [{ name: { contains: q, mode: 'insensitive' } }, { description: { contains: q, mode: 'insensitive' } }] }),
+    buildWhere: (communityId) => ({ communityId }),
+    include: { fund: { select: { name: true } } },
+    map: (p) => ({ name: p.name, status: p.status, budget: String(p.budget), fund: p.fund?.name, startDate: p.startDate, endDate: p.endDate, description: p.description, cancelReason: p.cancelReason }),
+  },
+  fund: {
+    dateField: 'createdAt',
+    statusValues: null,
+    searchable: true,
+    searchFields: (q) => ({ OR: [{ name: { contains: q, mode: 'insensitive' } }, { description: { contains: q, mode: 'insensitive' } }, { category: { contains: q, mode: 'insensitive' } }] }),
+    buildWhere: (communityId) => ({ communityId }),
+    include: {},
+    map: (f) => ({ name: f.name, category: f.category, goal: f.goal ? String(f.goal) : null, description: f.description, createdAt: f.createdAt }),
   },
 };
 
@@ -533,6 +638,8 @@ async function toolGetResidentInfo(ctx, args) {
     },
   });
   if (!resident) return { message: `No resident found matching "${query}".` };
+  // resident already carries phone/idNumber/address/inactiveReason as plain
+  // columns on the model, so no extra select is needed beyond the include above.
 
   const fees = await prisma.fee.findMany({ where: { communityId } });
   const paidFeeIds = new Set(resident.payments.filter((p) => p.status !== 'REJECTED').map((p) => p.feeId));
@@ -542,8 +649,13 @@ async function toolGetResidentInfo(ctx, args) {
     name: resident.user.fullName,
     email: resident.user.email,
     unitNumber: resident.unitNumber,
+    phone: resident.phone,
+    idNumber: resident.idNumber,
+    address: resident.address,
     status: resident.status,
     ownerType: resident.ownerType,
+    registeredAt: resident.joinedAt,
+    inactiveReason: resident.inactiveReason,
     recentPayments: resident.payments.map((p) => ({ for: p.fee?.name || '(project/fund payment)', amount: String(p.amount), status: p.status, paidAt: p.paidAt })),
     outstandingFees,
   };
@@ -558,6 +670,19 @@ async function toolListPendingCommitteeApprovals(ctx) {
   return {
     pendingChanges: pendingChanges.map((c) => ({ changeType: c.changeType, proposedBy: c.proposedBy?.fullName, createdAt: c.createdAt, expiresAt: c.expiresAt })),
     pendingCommitteeTransfers: transfers.map((t) => ({ from: t.fromUser?.fullName, to: t.toResident?.user?.fullName, status: t.status })),
+  };
+}
+
+async function toolListCommitteeMembers(ctx) {
+  const { communityId } = ctx;
+  const members = await prisma.user.findMany({
+    where: { communityId, role: 'ADMIN' },
+    select: { fullName: true, email: true, createdAt: true },
+    orderBy: { createdAt: 'asc' },
+  });
+  return {
+    count: members.length,
+    members: members.map((m) => ({ name: m.fullName, email: m.email, joinedAt: m.createdAt })),
   };
 }
 
@@ -587,6 +712,98 @@ async function toolGetAuditLogSummary(ctx, args) {
   const take = capLimit(args.limit, 15, 50);
   const logs = await prisma.auditLog.findMany({ where: { communityId: ctx.communityId }, orderBy: { createdAt: 'desc' }, take });
   return { entries: logs.map((l) => ({ actor: l.actorName, action: l.action, entityType: l.entityType, description: l.description, createdAt: l.createdAt })) };
+}
+
+// --- Shared tools (both ADMIN and RESIDENT) -------------------------------
+
+async function toolGetCommunityPaymentInfo(ctx) {
+  const { communityId } = ctx;
+  const methods = await prisma.communityPaymentMethod.findMany({
+    where: { communityId, isActive: true },
+    orderBy: { sortOrder: 'asc' },
+  });
+  if (methods.length > 0) {
+    return {
+      paymentMethods: methods.map((m) => ({
+        provider: m.provider,
+        label: m.label,
+        bankName: m.bankName,
+        accountName: m.accountName,
+        accountNumber: m.accountNumber,
+        telebirrFullName: m.fullName,
+        telebirrPhoneNumber: m.phoneNumber,
+      })),
+    };
+  }
+  // Fall back to the legacy single-account fields on Community.
+  const community = await prisma.community.findUnique({
+    where: { id: communityId },
+    select: { paymentBankName: true, paymentAccountName: true, paymentAccountNumber: true },
+  });
+  if (!community || (!community.paymentBankName && !community.paymentAccountNumber)) {
+    return { message: 'No payment account has been set up for this community yet.' };
+  }
+  return {
+    paymentMethods: [{
+      provider: 'BANK_TRANSFER',
+      label: 'Bank account',
+      bankName: community.paymentBankName,
+      accountName: community.paymentAccountName,
+      accountNumber: community.paymentAccountNumber,
+    }],
+  };
+}
+
+async function toolGetCommunityInfo(ctx) {
+  const { communityId } = ctx;
+  const [community, activeResidents, committeeMembers] = await Promise.all([
+    prisma.community.findUnique({ where: { id: communityId }, select: { name: true, address: true, contactInfo: true, createdAt: true } }),
+    prisma.resident.count({ where: { user: { communityId }, status: 'ACTIVE' } }),
+    prisma.user.count({ where: { communityId, role: 'ADMIN' } }),
+  ]);
+  if (!community) return { message: 'Community not found.' };
+  return {
+    name: community.name,
+    address: community.address,
+    contactInfo: community.contactInfo,
+    onPlatformSince: community.createdAt,
+    activeResidents,
+    committeeMembers,
+  };
+}
+
+async function toolGetProjectBudgetStatus(ctx, args) {
+  const { communityId } = ctx;
+  const name = String(args.projectName || '').trim();
+  if (!name) return { message: 'No project name given.' };
+
+  const project = await prisma.project.findFirst({
+    where: { communityId, name: { contains: name, mode: 'insensitive' } },
+    include: { fund: { select: { name: true } }, fundAllocations: { include: { fund: { select: { name: true } } } } },
+  });
+  if (!project) return { message: `No project found matching "${name}".` };
+
+  const [collected, spent] = await Promise.all([
+    prisma.payment.aggregate({ where: { projectId: project.id, status: 'VERIFIED' }, _sum: { amount: true } }),
+    prisma.expense.aggregate({ where: { projectId: project.id, isVoided: false }, _sum: { amount: true } }),
+  ]);
+
+  const budget = Number(project.budget);
+  const spentAmount = Number(spent._sum.amount || 0);
+
+  return {
+    name: project.name,
+    status: project.status,
+    budget,
+    collected: Number(collected._sum.amount || 0),
+    spent: spentAmount,
+    remainingBudget: budget - spentAmount,
+    primaryFund: project.fund?.name,
+    fundAllocations: project.fundAllocations.map((a) => ({ fund: a.fund?.name, amount: String(a.amount) })),
+    startDate: project.startDate,
+    endDate: project.endDate,
+    cancelReason: project.cancelReason,
+  };
 }
 
 // --- Resident-scoped tools -------------------------------------------------
@@ -628,9 +845,55 @@ async function toolGetCommunityFundsOverview(ctx) {
   return { funds: funds.map((f) => ({ name: f.name, category: f.category, goal: f.goal ? String(f.goal) : null, description: f.description })) };
 }
 
+async function toolGetMyProfile(ctx) {
+  const resident = await requireResident(ctx);
+  if (!resident) return { message: 'No resident profile found for this account.' };
+  return {
+    name: ctx.user.fullName,
+    email: ctx.user.email,
+    unitNumber: resident.unitNumber,
+    phone: resident.phone,
+    idNumber: resident.idNumber,
+    address: resident.address,
+    ownerType: resident.ownerType,
+    status: resident.status,
+    joinedAt: resident.joinedAt,
+  };
+}
+
 async function toolGetCommunityProjectsOverview(ctx) {
   const projects = await prisma.project.findMany({ where: { communityId: ctx.communityId }, select: { name: true, status: true, budget: true, description: true } });
   return { projects: projects.map((p) => ({ name: p.name, status: p.status, budget: String(p.budget), description: p.description })) };
+}
+
+async function toolGetCommunitySpendingSummary(ctx, args) {
+  const { communityId } = ctx;
+  const where = { communityId, isVoided: false };
+
+  const from = parseDateBound(args.dateFrom, false);
+  const to = parseDateBound(args.dateTo, true);
+  if (from || to) {
+    where.spentAt = { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) };
+  }
+
+  // Rollup only — grouped totals by category, no vendor/description/recorder
+  // detail. That line-item detail (who recorded it, which vendor, receipts)
+  // stays committee-only via list_recent_expenses/query_records(expense).
+  const grouped = await prisma.expense.groupBy({
+    by: ['category'],
+    where,
+    _sum: { amount: true },
+    _count: true,
+  });
+
+  const totalSpent = grouped.reduce((sum, g) => sum + Number(g._sum.amount || 0), 0);
+
+  return {
+    totalSpent,
+    byCategory: grouped
+      .map((g) => ({ category: g.category, total: Number(g._sum.amount || 0), count: g._count }))
+      .sort((a, b) => b.total - a.total),
+  };
 }
 
 const ADMIN_EXECUTORS = {
@@ -639,8 +902,12 @@ const ADMIN_EXECUTORS = {
   list_pending_payments: toolListPendingPayments,
   get_resident_info: toolGetResidentInfo,
   list_pending_committee_approvals: toolListPendingCommitteeApprovals,
+  list_committee_members: toolListCommitteeMembers,
   list_recent_expenses: toolListRecentExpenses,
   get_audit_log_summary: toolGetAuditLogSummary,
+  get_project_budget_status: toolGetProjectBudgetStatus,
+  get_community_payment_info: toolGetCommunityPaymentInfo,
+  get_community_info: toolGetCommunityInfo,
   query_records: toolQueryRecords,
 };
 
@@ -649,6 +916,11 @@ const RESIDENT_EXECUTORS = {
   get_my_outstanding_fees: toolGetMyOutstandingFees,
   get_community_funds_overview: toolGetCommunityFundsOverview,
   get_community_projects_overview: toolGetCommunityProjectsOverview,
+  get_project_budget_status: toolGetProjectBudgetStatus,
+  get_community_payment_info: toolGetCommunityPaymentInfo,
+  get_community_info: toolGetCommunityInfo,
+  get_community_spending_summary: toolGetCommunitySpendingSummary,
+  get_my_profile: toolGetMyProfile,
   query_records: toolQueryRecords,
 };
 
