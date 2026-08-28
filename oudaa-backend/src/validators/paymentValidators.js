@@ -17,6 +17,11 @@ const createPaymentSchema = z.object({
     paymentMethod: z.enum(['CASH', 'BANK_TRANSFER', 'MOBILE_MONEY', 'CARD', 'OTHER']).optional(),
     transactionReference: z.string().optional(),
     paidAt: z.coerce.date().optional(),
+    // Which calendar month(s) this fee payment counts toward — e.g.
+    // "2026-08", or "2026-06,2026-07,2026-08" when a committee member is
+    // catching a resident up on several unpaid months at once. Only
+    // meaningful for feeId payments; ignored otherwise.
+    paidForMonth: z.string().regex(/^\d{4}-\d{2}(,\d{4}-\d{2})*$/).optional(),
   }).refine(oneTarget, oneTargetMessage),
 });
 
@@ -34,6 +39,7 @@ const updatePaymentSchema = z.object({
     paymentMethod: z.enum(['CASH', 'BANK_TRANSFER', 'MOBILE_MONEY', 'CARD', 'OTHER']).optional(),
     transactionReference: z.string().optional(),
     paidAt: z.coerce.date().optional(),
+    paidForMonth: z.string().regex(/^\d{4}-\d{2}(,\d{4}-\d{2})*$/).optional(),
   }).refine((body) => {
     if (!body.feeId && !body.projectId && !body.fundId) return true; // none touched — fine
     return oneTarget(body);
@@ -129,40 +135,10 @@ const selfVerifyPaymentSchema = z.object({
   }),
 });
 
-// Batch-verify is filter-driven, not id-list-driven — see
-// paymentController.batchVerifyPayments for why. Every field is optional
-// (an empty body just means "any pending/needs-review payment"); the
-// controller caps how many actually get processed in one run regardless
-// of how many match.
-const batchVerifyPaymentsSchema = z.object({
-  body: z.object({
-    residentQuery: z.string().trim().min(1).optional(),
-    feeId: z.string().uuid().optional(),
-    projectId: z.string().uuid().optional(),
-    fundId: z.string().uuid().optional(),
-    status: z.enum(['pending', 'pending_review', 'any']).optional(),
-    paymentMethod: z.enum(['CASH', 'BANK_TRANSFER', 'MOBILE_MONEY', 'CARD', 'OTHER']).optional(),
-    minAmount: z.number().nonnegative().optional(),
-    maxAmount: z.number().nonnegative().optional(),
-    dateFrom: z.coerce.date().optional(),
-    dateTo: z.coerce.date().optional(),
-  }).refine((body) => [!!body.feeId, !!body.projectId, !!body.fundId].filter(Boolean).length <= 1, {
-    message: 'Filter by at most one of feeId, projectId, or fundId',
-    path: ['feeId'],
-  }).refine((body) => body.minAmount === undefined || body.maxAmount === undefined || body.minAmount <= body.maxAmount, {
-    message: 'minAmount must not be greater than maxAmount',
-    path: ['minAmount'],
-  }).refine((body) => !body.dateFrom || !body.dateTo || body.dateFrom <= body.dateTo, {
-    message: 'dateFrom must not be after dateTo',
-    path: ['dateFrom'],
-  }),
-});
-
 module.exports = {
   createPaymentSchema,
   updatePaymentSchema,
   updatePaymentStatusSchema,
   idParamSchema,
   selfVerifyPaymentSchema,
-  batchVerifyPaymentsSchema,
 };

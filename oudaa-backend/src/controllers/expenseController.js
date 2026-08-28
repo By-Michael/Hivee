@@ -68,12 +68,34 @@ const createExpense = catchAsync(async (req, res) => {
         422,
       );
     }
+  } else if (req.body.fundId) {
+    // Direct-to-fund expense: a committee member spending straight out of
+    // a fund's real cash with no project in between. There's no per-project
+    // budget line to check here, only the fund's actual (verified-collected
+    // minus already-spent) balance — same guard rail a project's fund check
+    // above uses, just against a single fund instead of the set a project
+    // allocates across.
+    const fund = await prisma.fund.findFirst({ where: { id: req.body.fundId, communityId: req.communityId } });
+    if (!fund) throw new AppError('Fund not found in this community', 404);
+
+    const amount = Number(req.body.amount);
+    const byFund = await computeFundMoneyForCommunity(req.communityId, [fund.id]);
+    const available = byFund.get(fund.id)?.actualBalance || 0;
+    if (amount > available) {
+      throw new AppError(
+        available > 0
+          ? `"${fund.name}" only has ${available.toFixed(2)} available — this expense would put it into deficit.`
+          : `"${fund.name}" has a balance of ${available.toFixed(2)} — there's no money left to spend from it.`,
+        422,
+      );
+    }
   } else {
-    // No project attached — there's no fund/budget to check this against
-    // directly, so the only guard rail available is the community's real
-    // cash position as a whole: it never had a validation before, which is
-    // exactly how a committee could log a general expense with nothing
-    // backing it and drive the whole community into an impossible deficit.
+    // No project or fund attached — there's no fund/budget to check this
+    // against directly, so the only guard rail available is the
+    // community's real cash position as a whole: it never had a
+    // validation before, which is exactly how a committee could log a
+    // general expense with nothing backing it and drive the whole
+    // community into an impossible deficit.
     const amount = Number(req.body.amount);
     const available = await computeCommunityBalance(req.communityId);
     if (amount > available) {
@@ -107,6 +129,7 @@ const listExpenses = catchAsync(async (req, res) => {
       where: { communityId: req.communityId },
       include: {
         project: { select: { id: true, name: true } },
+        fund: { select: { id: true, name: true } },
         recorder: { select: { id: true, fullName: true } },
         receipts: true,
         reversal: true,
@@ -131,6 +154,7 @@ const getExpense = catchAsync(async (req, res) => {
     where: { id: req.params.id, communityId: req.communityId },
     include: {
       project: true,
+      fund: true,
       recorder: { select: { id: true, fullName: true } },
       receipts: true,
       reversal: true,
@@ -178,6 +202,7 @@ const reverseExpense = catchAsync(async (req, res) => {
       data: {
         communityId: req.communityId,
         projectId: expense.projectId,
+        fundId: expense.fundId,
         recordedBy: req.user.id,
         category: expense.category,
         description: reason ? `Reversal of ${expense.id.slice(0, 8)}: ${reason}` : `Reversal of expense ${expense.id.slice(0, 8)}`,

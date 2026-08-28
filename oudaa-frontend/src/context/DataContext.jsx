@@ -584,29 +584,6 @@ export function DataProvider({ children }) {
       }
       refresh({ silent: true })
     },
-    // Batch-verify a group of pending/needs-review payments matched by
-    // filter criteria (resident search, fee/project/fund, amount range,
-    // date range, ...) instead of a client-held id selection — see
-    // paymentController.batchVerifyPayments for why. The server caps how
-    // many it actually processes in one call (meta.verifiedCount vs
-    // meta.matchedCount), so the caller can tell the committee whether
-    // everything matching was verified or whether they'll need to run it
-    // again for the rest.
-    // NOTE: the backend endpoint is currently a placeholder that marks
-    // them verified without re-checking the bank — see the TODO in
-    // paymentController.js. Swap-in-ready once the real batch bank
-    // lookup API is wired up; this call site won't need to change.
-    batchVerifyPayments: async (filters) => {
-      const { data } = await api.post(endpoints.paymentBatchVerify(), filters)
-      const byId = new Map(data.data.map((p) => [p.id, paymentToUI(p)]))
-      patchList('payments')((list) => list.map((p) => byId.get(p.id) || p))
-      refresh({ silent: true })
-      return {
-        verifiedCount: data.meta?.verifiedCount ?? data.data.length,
-        matchedCount: data.meta?.matchedCount ?? data.data.length,
-        remainingCount: data.meta?.remainingCount ?? 0,
-      }
-    },
     // Edit a manually-recorded payment. The backend rejects this for a
     // resident's own self-verified (bank) payment — see paymentController.js.
     editPayment: async (id, form) => {
@@ -841,7 +818,7 @@ export function DataProvider({ children }) {
     },
   }), [refresh])
 
-  return <DataContext.Provider value={{ ...data, ...actions, loading, loadError, hasLoadedOnce, backgroundLoading, dataFullyLoaded, refresh }}>{children}</DataContext.Provider>
+  return <DataContext.Provider value={{ ...data, ...actions, loading, loadError, hasLoadedOnce, backgroundLoading, dataFullyLoaded, fullyLoaded, refresh }}>{children}</DataContext.Provider>
 }
 
 export function useData() {

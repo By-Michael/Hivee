@@ -79,6 +79,22 @@ const registerCommunity = catchAsync(async (req, res) => {
         role: 'ADMIN',
       },
     });
+    // Every committee member is expected to also have a Resident row (see
+    // residentToUI's isCommittee comment) — the "Committee only" filter on
+    // the Residents panel, and any other screen that lists committee
+    // members, reads off this table. Without this, the founding admin
+    // created here had no Resident row at all and simply never appeared
+    // anywhere residents are listed, including under "Committee only".
+    // unitNumber is a required column with nothing meaningful to default
+    // it to at signup time, so we use a clearly-labeled placeholder that
+    // the admin can edit later from their own resident profile.
+    await tx.resident.create({
+      data: {
+        userId: createdAdmin.id,
+        unitNumber: 'N/A',
+        status: 'ACTIVE',
+      },
+    });
     return { createdCommunity, createdAdmin };
   });
 

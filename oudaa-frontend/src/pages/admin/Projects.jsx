@@ -22,7 +22,13 @@ export default function Projects() {
   // "single fund" case (the vast majority) never has to think about it —
   // it defaults to one row that tracks form.fundId/budget automatically.
   const [splitFunds, setSplitFunds] = useState(false)
+  // Each row is { fundId, amount, manual }. `manual: false` means the amount
+  // is auto-split (equal share of whatever budget isn't claimed by manual
+  // rows) and re-computed live; `manual: true` means the user typed a
+  // specific amount for that fund and it's held fixed.
   const [allocations, setAllocations] = useState([])
+  const [primaryManual, setPrimaryManual] = useState(false)
+  const [primaryManualAmount, setPrimaryManualAmount] = useState('')
   const [saving, setSaving] = useState(false)
 
   const [cancelTarget, setCancelTarget] = useState(null)
@@ -58,13 +64,31 @@ export default function Projects() {
   }, [projects, debouncedQuery, statusFilter, fundFilter])
 
   function openAdd() {
-    setEditing(null); setForm(empty); setSplitFunds(false); setAllocations([]); setModal(true)
+    setEditing(null); setForm(empty); setSplitFunds(false); setAllocations([])
+    setPrimaryManual(false); setPrimaryManualAmount('')
+    setModal(true)
   }
   function openEdit(p) {
     setEditing(p); setForm(p)
     const multi = (p.fundAllocations || []).length > 1
     setSplitFunds(multi)
-    setAllocations(multi ? p.fundAllocations : [])
+    if (multi) {
+      // fundAllocations from the API includes the primary fund's row too —
+      // pull it out so it doesn't get rendered twice (once as "primary",
+      // once as an editable row), and treat every saved amount as manual
+      // since it was explicitly chosen when the project was last saved.
+      const primaryRow = p.fundAllocations.find((a) => a.fundId === p.fundId)
+      setPrimaryManual(true)
+      setPrimaryManualAmount(primaryRow ? String(primaryRow.amount) : '')
+      setAllocations(
+        p.fundAllocations
+          .filter((a) => a.fundId !== p.fundId)
+          .map((a) => ({ fundId: a.fundId, amount: String(a.amount), manual: true })),
+      )
+    } else {
+      setPrimaryManual(false); setPrimaryManualAmount('')
+      setAllocations([])
+    }
     setModal(true)
   }
 
@@ -86,7 +110,9 @@ export default function Projects() {
   function addAllocationRow() {
     const used = new Set([form.fundId, ...allocations.map((a) => a.fundId)])
     const next = funds.find((f) => !used.has(f.id))
-    setAllocations([...allocations, { fundId: next?.id || '', amount: '' }])
+    // New rows start in "auto" mode — no amount typed, split evenly with
+    // the other auto rows out of whatever budget the manual rows leave over.
+    setAllocations([...allocations, { fundId: next?.id || '', amount: '', manual: false }])
   }
   function updateAllocationRow(i, patch) {
     setAllocations(allocations.map((a, idx) => (idx === i ? { ...a, ...patch } : a)))
@@ -94,12 +120,29 @@ export default function Projects() {
   function removeAllocationRow(i) {
     setAllocations(allocations.filter((_, idx) => idx !== i))
   }
+  function setRowManualAmount(i, value) {
+    updateAllocationRow(i, { amount: value, manual: true })
+  }
+  function resetRowToAuto(i) {
+    updateAllocationRow(i, { amount: '', manual: false })
+  }
+
+  // ---- Auto-split math ----
+  // Manually-set rows (primary or additional) keep whatever amount the user
+  // typed. Every "auto" row splits the remaining budget evenly between them,
+  // recalculating live as other amounts or the total budget change.
+  const totalBudget = Number(form.budget || 0)
+  const manualSum = (primaryManual ? Number(primaryManualAmount || 0) : 0)
+    + allocations.reduce((s, a) => s + (a.manual ? Number(a.amount || 0) : 0), 0)
+  const autoRowCount = (primaryManual ? 0 : 1) + allocations.filter((a) => !a.manual).length
+  const autoShare = autoRowCount > 0 ? Math.max(0, totalBudget - manualSum) / autoRowCount : 0
 
   const primaryAmount = splitFunds
-    ? Math.max(0, Number(form.budget || 0) - allocations.reduce((s, a) => s + Number(a.amount || 0), 0))
-    : Number(form.budget || 0)
-  const allocationTotal = primaryAmount + allocations.reduce((s, a) => s + Number(a.amount || 0), 0)
-  const allocationMismatch = splitFunds && Math.abs(allocationTotal - Number(form.budget || 0)) > 0.01
+    ? (primaryManual ? Number(primaryManualAmount || 0) : autoShare)
+    : totalBudget
+  const allocationAmounts = allocations.map((a) => (a.manual ? Number(a.amount || 0) : autoShare))
+  const allocationTotal = primaryAmount + allocationAmounts.reduce((s, v) => s + v, 0)
+  const allocationMismatch = splitFunds && Math.abs(allocationTotal - totalBudget) > 0.01
 
   function submit(e) {
     e.preventDefault()
@@ -109,7 +152,12 @@ export default function Projects() {
     }
     setSaving(true)
     const fundAllocations = splitFunds
-      ? [{ fundId: form.fundId, amount: primaryAmount }, ...allocations.filter((a) => a.fundId)]
+      ? [
+        { fundId: form.fundId, amount: primaryAmount },
+        ...allocations
+          .map((a, i) => ({ fundId: a.fundId, amount: allocationAmounts[i] }))
+          .filter((a) => a.fundId),
+      ]
       : undefined
     const payload = { ...form, budget: Number(form.budget), fundAllocations }
     const wasEditing = !!editing
@@ -232,10 +280,13 @@ export default function Projects() {
               <select className="input" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
                 <option value="planned">Planned</option>
                 <option value="in-progress">In progress</option>
-                <option value="completed">Completed</option>
-                {/* Cancelled isn't offered here on purpose — cancellation
-                    always goes through the dedicated flow (reason +
-                    committee approval), never a plain status dropdown. */}
+                {/* Completed is only offered once a project exists — a brand
+                    new project can't be created as already-finished, it has
+                    to be moved to Completed from the edit form later.
+                    Cancelled isn't offered here at all — cancellation always
+                    goes through the dedicated flow (reason + committee
+                    approval), never a plain status dropdown. */}
+                {editing && <option value="completed">Completed</option>}
               </select>
             </div>
           </div>
@@ -258,7 +309,10 @@ export default function Projects() {
                 type="checkbox"
                 checked={splitFunds}
                 disabled={!!(editing && editing.expenseCount > 0)}
-                onChange={(e) => { setSplitFunds(e.target.checked); if (!e.target.checked) setAllocations([]) }}
+                onChange={(e) => {
+                  setSplitFunds(e.target.checked)
+                  if (!e.target.checked) { setAllocations([]); setPrimaryManual(false); setPrimaryManualAmount('') }
+                }}
               />
               Fund this project from multiple fund accounts
             </label>
@@ -267,9 +321,25 @@ export default function Projects() {
             )}
             {splitFunds && (
               <div className="mt-3 space-y-2">
-                <div className="flex items-center justify-between text-xs text-ink-500">
-                  <span>{fundOf(form.fundId) || 'Primary fund'}</span>
-                  <span>{currency(primaryAmount)}</span>
+                <p className="text-xs text-ink-400">
+                  Amounts are split evenly across funds automatically — click into any amount to set it manually, or "Auto" to hand it back.
+                </p>
+                <div className="flex gap-2 items-center">
+                  <div className="input flex-1 bg-ink-50 text-ink-600 flex items-center">{fundOf(form.fundId) || 'Primary fund'}</div>
+                  <input
+                    type="number" min="0" className="input w-32" placeholder="Auto"
+                    value={primaryManual ? primaryManualAmount : Math.round(primaryAmount)}
+                    onChange={(e) => { setPrimaryManual(true); setPrimaryManualAmount(e.target.value) }}
+                  />
+                  {primaryManual ? (
+                    <button
+                      type="button"
+                      onClick={() => { setPrimaryManual(false); setPrimaryManualAmount('') }}
+                      className="text-xs font-medium text-brand-600 hover:text-brand-700 shrink-0 w-14 text-center"
+                    >
+                      Auto
+                    </button>
+                  ) : <span className="w-14" />}
                 </div>
                 {allocations.map((a, i) => (
                   <div key={i} className="flex gap-2 items-center">
@@ -282,16 +352,19 @@ export default function Projects() {
                       {funds.filter((f) => f.id !== form.fundId).map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
                     </select>
                     <input
-                      type="number" min="0" className="input w-32" placeholder="Amount"
-                      value={a.amount}
-                      onChange={(e) => updateAllocationRow(i, { amount: e.target.value })}
+                      type="number" min="0" className="input w-32" placeholder="Auto"
+                      value={a.manual ? a.amount : Math.round(allocationAmounts[i])}
+                      onChange={(e) => setRowManualAmount(i, e.target.value)}
                     />
+                    {a.manual ? (
+                      <button type="button" onClick={() => resetRowToAuto(i)} className="text-xs font-medium text-brand-600 hover:text-brand-700 shrink-0 w-14 text-center">Auto</button>
+                    ) : <span className="w-14" />}
                     <button type="button" onClick={() => removeAllocationRow(i)} className="p-1.5 text-ink-400 hover:text-rose-500"><X className="h-4 w-4" /></button>
                   </div>
                 ))}
                 <button type="button" onClick={addAllocationRow} className="text-xs font-medium text-brand-600 hover:text-brand-700">+ Add another fund</button>
                 <p className={`text-xs ${allocationMismatch ? 'text-rose-500' : 'text-ink-400'}`}>
-                  Total allocated: {currency(allocationTotal)} of {currency(Number(form.budget || 0))} budget
+                  Total allocated: {currency(allocationTotal)} of {currency(totalBudget)} budget
                 </p>
               </div>
             )}

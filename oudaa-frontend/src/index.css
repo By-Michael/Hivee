@@ -198,6 +198,20 @@
 .dark .ring-brand-200 { --tw-ring-color: rgba(37, 112, 245, 0.35); }
 .dark .ring-orange-300 { --tw-ring-color: rgba(249, 115, 22, 0.35); }
 
+/* The "700" text colors paired with the tints above (toasts, status
+   badges, callouts) were never remapped for dark mode, so e.g. a toast
+   kept literal text-emerald-700 (#047857 — a dark, low-lightness green)
+   sitting on the new translucent dark-green background right above. The
+   two colors are too close in both hue and lightness against the dark
+   navy page behind them, so the text reads as low-contrast/fuzzy instead
+   of properly legible. Brighten each to a tint that actually contrasts
+   with the dark theme, matching the brightness level already used for
+   dark-mode borders/backgrounds. */
+.dark .text-amber-700 { color: #fbbf24; }
+.dark .text-rose-700 { color: #fb7185; }
+.dark .text-emerald-700 { color: #34d399; }
+.dark .text-orange-700 { color: #fb923c; }
+
 /* Text */
 .dark .text-ink-900 { color: #eef1fb; }
 .dark .text-ink-800 { color: #dce1f4; }

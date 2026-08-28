@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useLocation, useSearchParams } from 'react-router-dom'
 import {
   Camera, KeyRound, Mail, Phone, ShieldCheck, Loader2, Users2, Clock, XCircle, Search, Check,
-  User, Bell, Palette, Landmark, AlertTriangle, ShieldAlert, Save, CheckCircle2, Sun, Moon, Monitor,
+  User, Bell, Palette, Landmark, AlertTriangle, ShieldAlert, Save, CheckCircle2, Sun, Moon,
   Plus, Pencil, Trash2, Smartphone, ToggleLeft, ToggleRight, Wallet,
 } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
@@ -416,20 +416,7 @@ const THEME_OPTIONS = [
 ]
 
 function PreferencesTab() {
-  const { user, patchUser } = useAuth()
   const { theme, setTheme } = useTheme()
-  // Saved to the account's database preferences (see PATCH
-  // /users/me/preferences) instead of localStorage, so it applies on any
-  // device instead of resetting every time you sign in somewhere new.
-  const [defaultExportFormat, setDefaultExportFormat] = useState(() => user?.preferences?.defaultExportFormat || 'excel')
-
-  function chooseExportFormat(v) {
-    setDefaultExportFormat(v)
-    if (user) {
-      patchUser({ preferences: { ...(user.preferences || {}), defaultExportFormat: v } })
-      api.patch(endpoints.myPreferences(), { defaultExportFormat: v }).catch(() => {})
-    }
-  }
 
   return (
     <div className="max-w-2xl space-y-5">
@@ -447,27 +434,6 @@ function PreferencesTab() {
               }`}
             >
               <o.icon className="h-4 w-4" /> {o.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="card p-5">
-        <h3 className="font-semibold text-ink-800 flex items-center gap-2 mb-1"><Monitor className="h-4 w-4 text-brand-600" /> Default export format</h3>
-        <p className="text-xs text-ink-400 mb-4">
-          Which format the Reports and Audit Log export buttons put first / pre-select — doesn’t stop you choosing the other one whenever you like.
-        </p>
-        <div className="flex gap-2">
-          {[['excel', 'Excel'], ['pdf', 'PDF']].map(([v, label]) => (
-            <button
-              key={v}
-              type="button"
-              onClick={() => chooseExportFormat(v)}
-              className={`flex-1 rounded-xl border px-4 py-3 text-sm font-medium transition ${
-                defaultExportFormat === v ? 'border-brand-400 bg-brand-50 text-brand-700' : 'border-ink-200 text-ink-500 hover:bg-ink-50'
-              }`}
-            >
-              {label}
             </button>
           ))}
         </div>
@@ -596,7 +562,7 @@ const METHOD_PROVIDERS = [
   { value: 'TELEBIRR', label: 'Telebirr', short: 'Telebirr' },
 ]
 const emptyMethodForm = {
-  provider: 'CBE', label: '', bankName: '', accountName: '', accountNumber: '', fullName: '', phoneNumber: '', isActive: true,
+  provider: 'CBE', label: 'CBE', bankName: '', accountName: '', accountNumber: '', fullName: '', phoneNumber: '', isActive: true,
 }
 const MAX_PAYMENT_METHODS = 2
 
@@ -670,6 +636,14 @@ function PaymentsTab() {
     })
     setError('')
     setModal(true)
+  }
+
+  // The residents-facing label is no longer a separate field the committee
+  // fills in — it's just the provider's own display name (CBE / Telebirr),
+  // set automatically whenever the provider is chosen.
+  function chooseProvider(value) {
+    const providerLabel = METHOD_PROVIDERS.find((p) => p.value === value)?.short || value
+    setForm((f) => ({ ...f, provider: value, label: providerLabel }))
   }
 
   function flashNotice(message) {
@@ -779,7 +753,7 @@ function PaymentsTab() {
           </div>
           {!atLimit && (
             <button onClick={openAdd} className="btn-secondary shrink-0 !py-1.5 !px-3 text-xs">
-              <Plus className="h-3.5 w-3.5" /> Add payment method
+              <Plus className="h-3.5 w-3.5" /> Add payment option
             </button>
           )}
         </div>
@@ -882,7 +856,7 @@ function PaymentsTab() {
           </div>
         )}
 
-        <Modal open={modal} onClose={() => setModal(false)} title={editingId ? 'Edit payment method' : 'Add payment method'}>
+        <Modal open={modal} onClose={() => setModal(false)} title={editingId ? 'Edit payment option' : 'Add payment option'}>
           <form onSubmit={submit} className="space-y-4">
             <div>
               <label className="label">Provider</label>
@@ -894,7 +868,7 @@ function PaymentsTab() {
                     <button
                       key={p.value}
                       type="button"
-                      onClick={() => setForm((f) => ({ ...f, provider: p.value }))}
+                      onClick={() => chooseProvider(p.value)}
                       className={`flex flex-col items-center gap-1.5 rounded-xl px-3 py-3.5 text-center transition ring-1 ${
                         selected
                           ? 'bg-brand-50 ring-brand-300 text-brand-700'
@@ -907,15 +881,6 @@ function PaymentsTab() {
                   )
                 })}
               </div>
-            </div>
-            <div>
-              <label className="label">Label shown to residents</label>
-              <input
-                required
-                className="input"
-                value={form.label}
-                onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))}
-              />
             </div>
 
             {isTelebirr ? (
@@ -941,11 +906,6 @@ function PaymentsTab() {
                 </div>
               </>
             )}
-
-            <label className="flex items-center gap-2 text-sm text-ink-600 cursor-pointer select-none">
-              <input type="checkbox" className="rounded" checked={form.isActive} onChange={(e) => setForm((f) => ({ ...f, isActive: e.target.checked }))} />
-              Active (visible to residents)
-            </label>
 
             {error && <div className="rounded-xl bg-rose-50 border border-rose-100 px-3.5 py-2.5 text-sm text-rose-600">{error}</div>}
 
@@ -1011,7 +971,10 @@ function ApprovalsTab({ user }) {
     setAutoApprovalLoading(true)
     try {
       const { data } = await api.get(endpoints.committeeAutoApprovals())
-      setChangeTypes(data.data.changeTypes)
+      // "Community payment account details" is the legacy single-account
+      // toggle from before payment methods became a list (CBE/Telebirr) —
+      // no longer surfaced here since it's not something to auto-approve.
+      setChangeTypes((data.data.changeTypes || []).filter((ct) => ct.changeType !== 'COMMUNITY_PAYMENT_DETAILS'))
       setAutoApprovalSettings(data.data.settings)
       setCommitteeMembers(data.data.committeeMembers || [])
     } catch (err) {
@@ -1106,7 +1069,6 @@ function ApprovalsTab({ user }) {
             {changeTypes.map((ct) => {
               const mine = mySetting(ct.changeType)
               const mineOn = isMineEnabled(ct.changeType)
-              const othersOn = autoApprovalSettings.filter((s) => s.changeType === ct.changeType && s.userId !== user?.id && s.enabled && new Date(s.expiresAt) > new Date())
               return (
                 <div key={ct.changeType} className="py-3.5 flex items-start justify-between gap-4">
                   <div>
@@ -1119,11 +1081,6 @@ function ApprovalsTab({ user }) {
                             .map((id) => committeeMembers.find((m) => m.id === id)?.fullName || 'a former member')
                             .join(', ')}</>
                         )}
-                      </p>
-                    )}
-                    {othersOn.length > 0 && (
-                      <p className="text-xs text-ink-400 mt-0.5">
-                        Also auto-approving: {othersOn.map((s) => s.user?.fullName).join(', ')}
                       </p>
                     )}
                   </div>

@@ -11,7 +11,6 @@ const {
   updatePaymentStatusSchema,
   idParamSchema,
   selfVerifyPaymentSchema,
-  batchVerifyPaymentsSchema,
 } = require('../validators/paymentValidators');
 
 const router = express.Router();
@@ -43,10 +42,6 @@ router.post(
   screenshotUpload.single('screenshot'),
   ctrl.parsePaymentScreenshot
 );
-
-// Batch-verify: must be registered before '/:id' routes or 'batch-verify'
-// would be swallowed as an :id param.
-router.post('/batch-verify', authorize('ADMIN'), validate(batchVerifyPaymentsSchema), ctrl.batchVerifyPayments);
 
 router.get('/:id', authorize('ADMIN', 'RESIDENT'), validate(idParamSchema), ctrl.getPayment);
 // Resident self-serve retraction of their OWN still-pending self-verified

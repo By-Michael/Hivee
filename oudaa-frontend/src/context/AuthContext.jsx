@@ -86,10 +86,21 @@ export function AuthProvider({ children }) {
     api
       .get(endpoints.me())
       .then(({ data }) => setUser(normalizeUser(data.data)))
-      .catch(() => {
-        localStorage.removeItem('oudaa_token')
-        localStorage.removeItem('oudaa_user')
-        setUser(null)
+      .catch((err) => {
+        // Only treat this as "the session is really gone" on a definitive
+        // 401 that survived the api client's own refresh-and-retry (see
+        // lib/api.js) — that's the one case where clearing the cached user
+        // is correct. Anything else (a dropped connection, a slow backend
+        // waking up, a one-off 500) is a transient failure, not proof the
+        // token is invalid, and was previously logging people out of an
+        // otherwise-live session just because /auth/me hiccuped once on
+        // page load. Leave the cached user in place so the UI keeps
+        // working off it; the next successful request will refresh it.
+        if (err?.response?.status === 401) {
+          localStorage.removeItem('oudaa_token')
+          localStorage.removeItem('oudaa_user')
+          setUser(null)
+        }
       })
       .finally(() => setBootstrapped(true))
   }, [])

@@ -27,6 +27,7 @@ const committeeTransferRoutes = require('./routes/committeeTransferRoutes');
 const pendingChangeRoutes = require('./routes/pendingChangeRoutes');
 const auditRoutes = require('./routes/auditRoutes');
 const committeeAutoApprovalRoutes = require('./routes/committeeAutoApprovalRoutes');
+const supportRoutes = require('./routes/supportRoutes');
 
 const app = express();
 
@@ -137,6 +138,7 @@ app.use(`${API_PREFIX}/committee-transfers`, committeeTransferRoutes);
 app.use(`${API_PREFIX}/pending-changes`, pendingChangeRoutes);
 app.use(`${API_PREFIX}/audit-logs`, auditRoutes);
 app.use(`${API_PREFIX}/committee-auto-approvals`, committeeAutoApprovalRoutes);
+app.use(`${API_PREFIX}/support`, supportRoutes);
 
 // Unmatched routes.
 app.use((req, res, next) => {

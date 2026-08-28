@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Wallet, Landmark, FolderKanban, Users, ArrowUpRight, Clock, Receipt, ShieldCheck, Check, X } from 'lucide-react'
-import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, CartesianGrid, BarChart, Bar } from 'recharts'
+import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, CartesianGrid, BarChart, Bar, LabelList } from 'recharts'
 import { useData } from '../../context/DataContext'
 import { useAuth } from '../../context/AuthContext'
 import api, { endpoints } from '../../lib/api'
@@ -216,12 +216,13 @@ export default function AdminDashboard() {
   }, [monthly])
 
   const fundSplit = funds.map((f) => ({ name: f.name.replace(' Fund', ''), value: f.balance }))
-  // Recharts' Pie can't render negative slice values — if a fund is in
-  // deficit (spent > verified collected, which is common for young/active
-  // funds), a signed value would silently collapse the whole donut to
-  // nothing even though the legend below still lists every fund. We chart
-  // the magnitude of each balance (so the donut always reflects relative
-  // size) while the legend/tooltip continue to show the true signed amount.
+  // Sorted once and reused for both the bars and their matching Cell
+  // colors below, so a fund's color stays tied to its name/position
+  // regardless of sort order (mapping colors off the original unsorted
+  // fundSplit while rendering the sorted list would mismatch them).
+  const sortedFundSplit = [...fundSplit].sort((a, b) => b.value - a.value)
+  // magnitude/total below just gate whether there's anything to chart —
+  // the bar chart itself (below) plots the real signed `value`, not this.
   const fundChartData = fundSplit.map((f) => ({ ...f, magnitude: Math.abs(f.value) }))
   const hasAnyDeficit = fundSplit.some((f) => f.value < 0)
   const fundChartTotal = fundChartData.reduce((s, f) => s + f.magnitude, 0)
@@ -318,45 +319,61 @@ export default function AdminDashboard() {
         <div className="card p-5 animate-fade-up h-[430px] flex flex-col">
           <h3 className="font-semibold text-ink-800 mb-1">Fund Distribution</h3>
           <p className="text-xs text-ink-400 mb-2">
-            {hasAnyDeficit ? 'Relative size by fund — some funds are running a deficit' : 'Balance share by fund'}
+            {hasAnyDeficit ? 'Actual balance by fund — some are running a deficit' : 'Actual balance by fund'}
           </p>
           {fundChartTotal > 0 ? (
             <>
+              {/* A donut only communicates relative size, and most
+                  communities have just 2–4 funds whose balances are
+                  either close together or, when one's running a deficit,
+                  actively misleading as unsigned "slices" — the chart
+                  looked fine but wasn't telling anyone anything useful.
+                  A horizontal bar per fund shows the actual signed
+                  balance at a glance (bar length = size, color/direction
+                  = surplus vs. deficit), reads correctly even with two
+                  funds, and needs no separate legend since each bar
+                  already carries its own label. */}
               <ResponsiveContainer width="100%" height={190}>
-                <PieChart>
-                  <Pie
-                    data={fundChartData}
-                    dataKey="magnitude"
-                    nameKey="name"
-                    innerRadius={56}
-                    outerRadius={78}
-                    paddingAngle={3}
-                    cornerRadius={7}
-                    stroke="none"
-                    startAngle={90}
-                    endAngle={-270}
-                    isAnimationActive
-                    animationDuration={700}
-                    animationEasing="ease-out"
-                  >
-                    {fundChartData.map((_, i) => (
-                      <Cell key={i} fill={COLORS[i % COLORS.length]} style={{ filter: 'drop-shadow(0 2px 6px rgba(16,30,66,0.18))' }} />
+                <BarChart
+                  data={sortedFundSplit}
+                  layout="vertical"
+                  margin={{ left: 4, right: 36, top: 4, bottom: 4 }}
+                  barCategoryGap={14}
+                >
+                  <XAxis type="number" hide />
+                  <YAxis
+                    type="category"
+                    dataKey="name"
+                    width={92}
+                    tickLine={false}
+                    axisLine={false}
+                    tick={{ fill: '#8790b3', fontSize: 11 }}
+                  />
+                  <Tooltip
+                    cursor={{ fill: 'rgba(37,112,245,0.06)' }}
+                    formatter={(v) => currency(v)}
+                    contentStyle={{ borderRadius: 12, border: '1px solid #eef1f8' }}
+                  />
+                  <Bar dataKey="value" radius={[0, 6, 6, 0]} maxBarSize={22} isAnimationActive animationDuration={700}>
+                    {sortedFundSplit.map((f, i) => (
+                      <Cell
+                        key={f.name}
+                        fill={f.value < 0 ? '#e11d48' : COLORS[i % COLORS.length]}
+                        style={{ filter: 'drop-shadow(0 2px 6px rgba(16,30,66,0.18))' }}
+                      />
                     ))}
-                  </Pie>
-                  <Tooltip formatter={(_, __, item) => currency(item?.payload?.value ?? 0)} contentStyle={{ borderRadius: 12, border: '1px solid #eef1f8' }} />
-                </PieChart>
+                    <LabelList
+                      dataKey="value"
+                      position="right"
+                      formatter={(v) => currencyBalance(v, 'short')}
+                      style={{ fill: '#4b5773', fontSize: 11, fontWeight: 600 }}
+                    />
+                  </Bar>
+                </BarChart>
               </ResponsiveContainer>
-              <div className="space-y-2 mt-1 flex-1 min-h-0 overflow-y-auto pr-1">
-                {fundSplit.map((f, i) => (
-                  <div key={f.name} className="flex items-center justify-between text-xs">
-                    <span className="flex items-center gap-2 text-ink-500">
-                      <span className="h-2 w-2 rounded-full shrink-0" style={{ background: COLORS[i % COLORS.length] }} />
-                      {f.name}
-                    </span>
-                    <span className="font-semibold text-ink-700">{currencyBalance(f.value, 'short')}</span>
-                  </div>
-                ))}
-              </div>
+              <p className="text-[11px] text-ink-300 mt-1">
+                {hasAnyDeficit ? 'Red bars indicate a fund currently in deficit.' : 'Balance per fund, largest first.'}
+              </p>
             </>
           ) : (
             <div className="h-[190px] flex flex-col items-center justify-center text-center text-ink-400 gap-1.5">

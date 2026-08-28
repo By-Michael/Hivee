@@ -1,31 +1,26 @@
-import { useState } from 'react'
-import { Plus, Trash2, FileText, Paperclip, Eye, Download, Upload, CheckCircle2, CircleDashed, RotateCcw, Ban } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { Plus, Trash2, FileText, Paperclip, Eye, Download, Upload, CheckCircle2, CircleDashed } from 'lucide-react'
 import { useData } from '../../context/DataContext'
-import { useAuth } from '../../context/AuthContext'
-import { PageHeader, Modal, EmptyState, currency, formatDate, ConfirmDialog, notify, usePagedList, Pager } from '../../components/ui'
+import {
+  PageHeader, Modal, EmptyState, currency, formatDate, ConfirmDialog, notify, usePagedList, Pager,
+  FilterPopover, FilterGrid, FilterField, FilterTextInput, FilterSelectInput, FilterDateInput,
+} from '../../components/ui'
 import { fileUrl, downloadFile } from '../../lib/api'
 
-const empty = { projectId: '', description: '', amount: '', vendor: '', date: '', bankName: '', transactionReference: '', file: null }
+function inRange(dateStr, from, to) {
+  if (!dateStr) return false
+  const t = new Date(dateStr).getTime()
+  if (from && t < new Date(from).getTime()) return false
+  if (to && t > new Date(to).getTime() + 86399999) return false
+  return true
+}
 
-const ETHIOPIAN_BANKS = [
-  'Telebirr', 'Commercial Bank of Ethiopia', 'Awash Bank', 'Dashen Bank', 'Bank of Abyssinia',
-  'Wegagen Bank', 'United Bank', 'Nib International Bank', 'Cooperative Bank of Oromia',
-  'Lion International Bank', 'Zemen Bank', 'Oromia International Bank', 'Bunna Bank',
-  'Berhan Bank', 'Abay Bank', 'Addis International Bank', 'Debub Global Bank', 'Enat Bank',
-  'Hijra Bank', 'Shabelle Bank', 'Siinqee Bank', 'Goh Betoch Bank', 'Amhara Bank',
-  'Tsehay Bank', 'Gadaa Bank', 'Ethio-China Africa Bank', 'Rammis Bank', 'Ahadu Bank',
-  'Sinqee Microfinance', 'Development Bank of Ethiopia', 'Other',
-]
+const empty = { targetType: 'project', projectId: '', fundId: '', reason: '', description: '', amount: '', vendor: '', date: '', bankName: '', transactionReference: '', file: null }
 
-// Mirrors the backend's DELETE_GRACE_WINDOW_MS (expenseController.js) —
-// used only to decide whether to show the delete option at all. The
-// backend is the actual source of truth and will reject a stale request
-// with an explanatory message even if this check is somehow bypassed.
-const DELETE_GRACE_WINDOW_MS = 15 * 60 * 1000
+const EXPENSE_PAYMENT_OPTIONS = ['Telebirr', 'Commercial Bank of Ethiopia']
 
 export default function Expenses() {
-  const { expenses, projects, receipts, addExpense, reverseExpense, removeExpense, addReceipt, updateReceipt } = useData()
-  const { user } = useAuth()
+  const { expenses, projects, funds, receipts, addExpense, reverseExpense, addReceipt, updateReceipt } = useData()
   const [modal, setModal] = useState(false)
   const [form, setForm] = useState(empty)
   const [submitting, setSubmitting] = useState(false)
@@ -34,27 +29,36 @@ export default function Expenses() {
   const [uploadingFor, setUploadingFor] = useState(null)
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [deleting, setDeleting] = useState(false)
-  const [reverseTarget, setReverseTarget] = useState(null)
-  const [reversing, setReversing] = useState(false)
-  const [reverseReason, setReverseReason] = useState('')
+
+  // ---- Filters: search + project/fund target + receipt status + date range ----
+  const [query, setQuery] = useState('')
+  const [targetFilter, setTargetFilter] = useState('all') // 'all' | 'project' | 'fund' | a specific project/fund id
+  const [receiptFilter, setReceiptFilter] = useState('all') // 'all' | 'attached' | 'none'
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
+
+  const activeFilterCount = [
+    !!query.trim(), targetFilter !== 'all', receiptFilter !== 'all', !!(dateFrom || dateTo),
+  ].filter(Boolean).length
+
+  function clearFilters() {
+    setQuery('')
+    setTargetFilter('all')
+    setReceiptFilter('all')
+    setDateFrom('')
+    setDateTo('')
+  }
 
   const projectOf = (id) => projects.find((p) => p.id === id)?.name || '—'
+  const fundOf = (id) => funds.find((f) => f.id === id)?.name || '—'
   const receiptOf = (id) => receipts.find((r) => r.id === id)
-
-  // Expenses are append-only, so this is deliberately narrow: only the
-  // person who recorded it, only within a short window, and only before a
-  // receipt has been attached or it's part of a reversal. Everything else
-  // is corrected via reverse, not delete.
-  function canDelete(e) {
-    if (e.isVoided || e.isReversal) return false
-    if (e.recordedBy && user?.id && e.recordedBy !== user.id) return false
-    if ((e.receiptId)) return false
-    if (!e.createdAt) return true // be permissive if the field is missing rather than hide a legitimate option
-    return Date.now() - new Date(e.createdAt).getTime() <= DELETE_GRACE_WINDOW_MS
-  }
 
   async function submit(e) {
     e.preventDefault()
+    if (form.targetType === 'fund' && !form.reason.trim()) {
+      setError('A reason is required when deducting directly from a fund.')
+      return
+    }
     setSubmitting(true)
     setError('')
     try {
@@ -82,66 +86,131 @@ export default function Expenses() {
     }
   }
 
+  // "Delete" here is what the user sees; under the hood it's still a
+  // reversal (a linked, offsetting entry — see reverseExpense in
+  // DataContext), because expenses are append-only and never actually
+  // erased from the record. Kept as a single, no-frills confirm — no
+  // separate reason step — since the person just wants the row gone from
+  // view, not a mini financial-correction workflow.
   function confirmDelete() {
     if (!deleteTarget) return
     setDeleting(true)
-    removeExpense(deleteTarget.id)
-      .then(() => { setDeleteTarget(null); notify('Expense deleted.', 'success') })
+    reverseExpense(deleteTarget.id)
+      .then(() => {
+        setDeleteTarget(null)
+        setDetail(null)
+        notify('Expense deleted.', 'success')
+      })
       .catch((err) => notify(err?.response?.data?.message || err.message))
       .finally(() => setDeleting(false))
   }
 
-  function confirmReverse() {
-    if (!reverseTarget) return
-    setReversing(true)
-    reverseExpense(reverseTarget.id, reverseReason.trim() || undefined)
-      .then(() => {
-        setReverseTarget(null)
-        setReverseReason('')
-        setDetail(null)
-        notify('Expense reversed. The offsetting entry is now in the trail.', 'success')
-      })
-      .catch((err) => notify(err?.response?.data?.message || err.message))
-      .finally(() => setReversing(false))
-  }
-
   const total = expenses.reduce((s, e) => s + e.amount, 0)
+
+  // Reversal entries are just the internal, offsetting rows created when
+  // something is "deleted" — an implementation detail, not something a
+  // committee member should have to look at or make sense of. Hide them
+  // from the visible list; `total` above still nets them in so the
+  // header figure stays accurate.
+  const visibleExpenses = expenses.filter((e) => !e.isReversal)
+
+  const filteredExpenses = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    return visibleExpenses.filter((e) => {
+      const matchesQuery = !q || [e.description, e.vendor, e.bankName, e.transactionReference, projectOf(e.projectId), fundOf(e.fundId)]
+        .filter(Boolean).join(' ').toLowerCase().includes(q)
+      const matchesTarget = targetFilter === 'all'
+        || (targetFilter === 'project' && !!e.projectId)
+        || (targetFilter === 'fund' && !!e.fundId)
+        || e.projectId === targetFilter
+        || e.fundId === targetFilter
+      const matchesReceipt = receiptFilter === 'all'
+        || (receiptFilter === 'attached' && !!e.receiptId)
+        || (receiptFilter === 'none' && !e.receiptId)
+      const matchesDate = !(dateFrom || dateTo) || inRange(e.date, dateFrom, dateTo)
+      return matchesQuery && matchesTarget && matchesReceipt && matchesDate
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleExpenses, query, targetFilter, receiptFilter, dateFrom, dateTo, projects, funds])
 
   // Render at most 50 rows at a time — with thousands of expenses,
   // rendering every row into the DOM on every render is what made
   // switching to/around this page slow. `total` above still sums every
   // expense, so the header stays accurate.
-  const { pageItems: pagedExpenses, page: tablePage, totalPages: tableTotalPages, total: tableTotal, setPage: setTablePage } = usePagedList(expenses, 50)
+  const { pageItems: pagedExpenses, page: tablePage, totalPages: tableTotalPages, total: tableTotal, setPage: setTablePage } = usePagedList(filteredExpenses, 50)
 
   return (
     <div>
       <PageHeader
         title="Expenses"
-        subtitle={`${expenses.length} records · ${currency(total)} net spend · tap a row for details — corrections are made by reversing, not editing`}
+        subtitle={`${filteredExpenses.length} of ${visibleExpenses.length} records · ${currency(total)} net spend · tap a row for details`}
         action={<button onClick={() => setModal(true)} className="btn-primary"><Plus className="h-4 w-4" /> Log expense</button>}
       />
 
+      {visibleExpenses.length > 0 && (
+        <div className="card p-4 mb-5 flex flex-wrap items-center gap-3">
+          <FilterPopover active={activeFilterCount} onClear={clearFilters}>
+            <FilterGrid>
+              <FilterField label="Search" full>
+                <FilterTextInput placeholder="Search by description, vendor, bank, reference…" value={query} onChange={setQuery} />
+              </FilterField>
+              <FilterField label="Target">
+                <FilterSelectInput
+                  value={targetFilter}
+                  onChange={setTargetFilter}
+                  options={[
+                    ['all', 'All expenses'],
+                    ['project', 'Any project'],
+                    ['fund', 'Any fund (direct)'],
+                    ...projects.map((p) => [p.id, `Project · ${p.name}`]),
+                    ...funds.map((f) => [f.id, `Fund · ${f.name}`]),
+                  ]}
+                />
+              </FilterField>
+              <FilterField label="Receipt">
+                <FilterSelectInput
+                  value={receiptFilter}
+                  onChange={setReceiptFilter}
+                  options={[['all', 'Any'], ['attached', 'Attached'], ['none', 'No receipt']]}
+                />
+              </FilterField>
+              <FilterField label="Date range">
+                <div className="flex items-center gap-2">
+                  <FilterDateInput value={dateFrom} onChange={setDateFrom} />
+                  <span className="text-ink-400 text-xs">to</span>
+                  <FilterDateInput value={dateTo} onChange={setDateTo} />
+                </div>
+              </FilterField>
+            </FilterGrid>
+          </FilterPopover>
+        </div>
+      )}
+
       <div className="card overflow-hidden">
-        {expenses.length === 0 ? (
+        {visibleExpenses.length === 0 ? (
           <EmptyState icon={FileText} title="No expenses logged" subtitle="Log an expense against a project to track spend." action={<button onClick={() => setModal(true)} className="btn-primary"><Plus className="h-4 w-4" /> Log expense</button>} />
+        ) : filteredExpenses.length === 0 ? (
+          <EmptyState icon={FileText} title="No expenses match your filters" subtitle="Try a different search term or clear the filters." action={<button onClick={clearFilters} className="btn-secondary">Clear filters</button>} />
         ) : (
           <div className="table-wrap !border-0">
             <table className="data-table">
-              <thead><tr><th>Description</th><th>Project</th><th>Vendor</th><th>Amount</th><th>Date</th><th>Receipt</th><th /></tr></thead>
+              <thead><tr><th>Description</th><th>Project / Fund</th><th>Vendor</th><th>Amount</th><th>Date</th><th>Receipt</th><th /></tr></thead>
               <tbody>
                 {pagedExpenses.map((e) => {
                   const rc = receiptOf(e.receiptId)
-                  const deletable = canDelete(e)
                   return (
-                    <tr key={e.id} className={`cursor-pointer ${e.isVoided ? 'opacity-60' : ''}`} onClick={() => setDetail(e)}>
+                    <tr key={e.id} className={`cursor-pointer ${e.isVoided ? 'opacity-40 blur-[0.4px] hover:blur-0 hover:opacity-60 transition' : ''}`} onClick={() => setDetail(e)}>
                       <td className="font-medium text-ink-800">
                         {e.description}
-                        {e.isVoided && <span className="badge bg-ink-100 text-ink-500 ml-2"><Ban className="h-3 w-3" /> Reversed</span>}
-                        {e.isReversal && <span className="badge bg-amber-50 text-amber-700 ring-1 ring-amber-200 ml-2"><RotateCcw className="h-3 w-3" /> Reversal</span>}
+                        {e.isVoided && <span className="badge bg-ink-100 text-ink-500 ml-2">Deleted</span>}
                       </td>
-                      <td>{projectOf(e.projectId)}</td>
+                      <td>
+                        {e.projectId ? projectOf(e.projectId) : e.fundId ? (
+                          <span className="badge bg-violet-50 text-violet-700 ring-1 ring-violet-200">Fund · {fundOf(e.fundId)}</span>
+                        ) : '—'}
+                      </td>
                       <td>{e.vendor}</td>
-                      <td className={`font-semibold ${e.amount < 0 ? 'text-rose-600' : ''}`}>{currency(e.amount)}</td>
+                      <td className="font-semibold">{currency(e.amount)}</td>
                       <td>{formatDate(e.date)}</td>
                       <td>
                         {rc ? (
@@ -152,13 +221,8 @@ export default function Expenses() {
                       </td>
                       <td onClick={(ev) => ev.stopPropagation()}>
                         <div className="flex items-center gap-1">
-                          {!e.isVoided && !e.isReversal && (
-                            <button onClick={() => setReverseTarget(e)} title="Reverse this expense with a linked offsetting entry" className="p-2 rounded-lg text-ink-400 hover:bg-amber-50 hover:text-amber-600">
-                              <RotateCcw className="h-4 w-4" />
-                            </button>
-                          )}
-                          {deletable && (
-                            <button onClick={() => setDeleteTarget(e)} title="Delete (only available briefly after recording, before any receipt is attached)" className="p-2 rounded-lg text-ink-400 hover:bg-rose-50 hover:text-rose-500">
+                          {!e.isVoided && (
+                            <button onClick={() => setDeleteTarget(e)} title="Delete this expense" className="p-2 rounded-lg text-ink-400 hover:bg-rose-50 hover:text-rose-500">
                               <Trash2 className="h-4 w-4" />
                             </button>
                           )}
@@ -182,12 +246,44 @@ export default function Expenses() {
             <input required className="input" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Fencing materials — Phase 2" />
           </div>
           <div>
-            <label className="label">Project</label>
-            <select required className="input" value={form.projectId} onChange={(e) => setForm({ ...form, projectId: e.target.value })}>
-              <option value="">Select project</option>
-              {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
+            <label className="label">Spending from</label>
+            <div className="flex gap-2 mb-2">
+              {['project', 'fund'].map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setForm({ ...form, targetType: t, projectId: '', fundId: '', reason: '' })}
+                  className={`badge capitalize border ${form.targetType === t ? 'bg-brand-gradient text-white border-transparent' : 'bg-white text-ink-500 border-ink-200 hover:border-brand-300'}`}
+                >
+                  {t === 'project' ? 'A project' : 'A fund directly'}
+                </button>
+              ))}
+            </div>
+            {form.targetType === 'project' ? (
+              <select required className="input" value={form.projectId} onChange={(e) => setForm({ ...form, projectId: e.target.value })}>
+                <option value="">Select project</option>
+                {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            ) : (
+              <select required className="input" value={form.fundId} onChange={(e) => setForm({ ...form, fundId: e.target.value })}>
+                <option value="">Select fund</option>
+                {funds.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+              </select>
+            )}
+            {form.targetType === 'project' && projects.length === 0 && (
+              <p className="mt-1.5 text-xs text-amber-600">No projects set up yet — add one under Projects first.</p>
+            )}
+            {form.targetType === 'fund' && (
+              <p className="mt-1.5 text-xs text-ink-400">Deducted straight from the fund's balance — enter whatever amount was actually spent below.</p>
+            )}
           </div>
+          {form.targetType === 'fund' && (
+            <div>
+              <label className="label">Reason <span className="text-rose-500">*</span></label>
+              <textarea required rows={2} className="input" placeholder="Why this was spent directly from the fund"
+                value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} />
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="label">Amount (ETB)</label>
@@ -206,13 +302,13 @@ export default function Expenses() {
             <div>
               <label className="label">Bank</label>
               <select className="input" value={form.bankName} onChange={(e) => setForm({ ...form, bankName: e.target.value })}>
-                <option value="">Select bank (optional)</option>
-                {ETHIOPIAN_BANKS.map((b) => <option key={b} value={b}>{b}</option>)}
+                <option value="">Select (optional)</option>
+                {EXPENSE_PAYMENT_OPTIONS.map((b) => <option key={b} value={b}>{b}</option>)}
               </select>
             </div>
             <div>
-              <label className="label">Transaction ID</label>
-              <input className="input" placeholder="e.g. FT2408..." value={form.transactionReference} onChange={(e) => setForm({ ...form, transactionReference: e.target.value })} />
+              <label className="label">{form.bankName === 'Telebirr' ? 'Reference ID' : 'Transaction ID'}</label>
+              <input className="input" placeholder={form.bankName === 'Telebirr' ? 'e.g. CFE1A2B3...' : 'e.g. FT2408...'} value={form.transactionReference} onChange={(e) => setForm({ ...form, transactionReference: e.target.value })} />
             </div>
           </div>
           <div>
@@ -225,7 +321,7 @@ export default function Expenses() {
             </div>
           </div>
           <p className="text-xs text-ink-400 -mt-1">
-            Once logged, this record can't be edited. Mistakes are corrected by reversing the entry and, if needed, logging a fresh one — both stay visible in the trail.
+            Once logged, this record can't be edited — only deleted.
           </p>
           {error && <div className="rounded-xl bg-rose-50 border border-rose-100 px-3.5 py-2.5 text-sm text-rose-600">{error}</div>}
           <div className="flex gap-2 pt-2">
@@ -240,12 +336,13 @@ export default function Expenses() {
         {detail && (
           <ExpenseDetail
             expense={detail}
-            project={projectOf(detail.projectId)}
+            project={detail.projectId ? projectOf(detail.projectId) : null}
+            fund={detail.fundId ? fundOf(detail.fundId) : null}
             receipt={receiptOf(detail.receiptId)}
             onAttach={(file) => attachReceipt(detail.id, file)}
             uploading={uploadingFor === detail.id}
             onToggleVerified={(rc) => updateReceipt(rc.id, { verified: !rc.verified })}
-            onReverse={() => setReverseTarget(detail)}
+            onDelete={() => setDeleteTarget(detail)}
           />
         )}
       </Modal>
@@ -253,37 +350,16 @@ export default function Expenses() {
       <ConfirmDialog
         open={!!deleteTarget}
         title="Delete expense?"
-        message={deleteTarget ? `This will permanently delete "${deleteTarget.description}". Only available briefly after recording, with no receipt attached — this action cannot be undone. For anything else, use Reverse instead.` : ''}
+        message={deleteTarget ? `This will delete "${deleteTarget.description}" and can't be undone.` : ''}
         loading={deleting}
         onConfirm={confirmDelete}
         onCancel={() => setDeleteTarget(null)}
       />
-
-      {/* Reverse — the normal way to correct an expense. Creates a linked,
-          offsetting entry rather than touching the original row. */}
-      <Modal open={!!reverseTarget} onClose={() => { setReverseTarget(null); setReverseReason('') }} title="Reverse expense">
-        {reverseTarget && (
-          <div className="space-y-4">
-            <p className="text-sm text-ink-600">
-              This creates a new entry for <span className="font-semibold">-{currency(reverseTarget.amount)}</span> that offsets
-              "{reverseTarget.description}". The original stays in the record, marked as reversed — nothing is deleted or edited.
-            </p>
-            <div>
-              <label className="label">Reason (optional, recommended)</label>
-              <input className="input" value={reverseReason} onChange={(e) => setReverseReason(e.target.value)} placeholder="e.g. Wrong amount entered, corrected below" />
-            </div>
-            <div className="flex gap-2 pt-2">
-              <button type="button" onClick={() => { setReverseTarget(null); setReverseReason('') }} disabled={reversing} className="btn-secondary flex-1">Cancel</button>
-              <button type="button" onClick={confirmReverse} disabled={reversing} className="btn-primary flex-1">{reversing ? 'Reversing…' : 'Reverse expense'}</button>
-            </div>
-          </div>
-        )}
-      </Modal>
     </div>
   )
 }
 
-function ExpenseDetail({ expense, project, receipt, onAttach, uploading, onToggleVerified, onReverse }) {
+function ExpenseDetail({ expense, project, fund, receipt, onAttach, uploading, onToggleVerified, onDelete }) {
   const url = receipt ? fileUrl(receipt.fileUrl) : null
   const handleDownload = async () => {
     try {
@@ -296,22 +372,18 @@ function ExpenseDetail({ expense, project, receipt, onAttach, uploading, onToggl
   return (
     <div className="space-y-4">
       {expense.isVoided && (
-        <div className="rounded-xl bg-ink-50 border border-ink-200 px-3.5 py-2.5 text-sm text-ink-600 flex items-center gap-2">
-          <Ban className="h-4 w-4" /> This expense has been reversed by a linked offsetting entry.
-        </div>
-      )}
-      {expense.isReversal && (
-        <div className="rounded-xl bg-amber-50 border border-amber-200 px-3.5 py-2.5 text-sm text-amber-700 flex items-center gap-2">
-          <RotateCcw className="h-4 w-4" /> This is a reversal entry, offsetting an earlier expense.
+        <div className="rounded-xl bg-ink-50 border border-ink-200 px-3.5 py-2.5 text-sm text-ink-600">
+          This expense has been deleted.
         </div>
       )}
       <div className="grid grid-cols-2 gap-3 text-sm">
-        <div><p className="text-ink-400 text-xs uppercase font-semibold">Project</p><p className="text-ink-800">{project}</p></div>
+        <div><p className="text-ink-400 text-xs uppercase font-semibold">{fund ? 'Fund' : 'Project'}</p><p className="text-ink-800">{fund || project || '—'}</p></div>
         <div><p className="text-ink-400 text-xs uppercase font-semibold">Vendor</p><p className="text-ink-800">{expense.vendor}</p></div>
         <div><p className="text-ink-400 text-xs uppercase font-semibold">Amount</p><p className="text-ink-800 font-semibold">{currency(expense.amount)}</p></div>
         <div><p className="text-ink-400 text-xs uppercase font-semibold">Date</p><p className="text-ink-800">{formatDate(expense.date)}</p></div>
         {expense.bankName && <div><p className="text-ink-400 text-xs uppercase font-semibold">Bank</p><p className="text-ink-800">{expense.bankName}</p></div>}
-        {expense.transactionReference && <div><p className="text-ink-400 text-xs uppercase font-semibold">Transaction ID</p><p className="text-ink-800 font-mono text-xs">{expense.transactionReference}</p></div>}
+        {expense.transactionReference && <div><p className="text-ink-400 text-xs uppercase font-semibold">{expense.bankName === 'Telebirr' ? 'Reference ID' : 'Transaction ID'}</p><p className="text-ink-800 font-mono text-xs">{expense.transactionReference}</p></div>}
+        {fund && expense.reason && <div className="col-span-2"><p className="text-ink-400 text-xs uppercase font-semibold">Reason</p><p className="text-ink-800">{expense.reason}</p></div>}
       </div>
 
       <div className="border-t border-ink-100 pt-4">
@@ -331,7 +403,7 @@ function ExpenseDetail({ expense, project, receipt, onAttach, uploading, onToggl
             </div>
           </div>
         ) : expense.isVoided ? (
-          <p className="text-sm text-ink-400">No receipt was attached, and this expense has been reversed — no new receipts can be added.</p>
+          <p className="text-sm text-ink-400">No receipt was attached, and this expense has been deleted — no new receipts can be added.</p>
         ) : (
           <div>
             <p className="text-sm text-ink-400 mb-2">No receipt attached yet.</p>
@@ -344,10 +416,9 @@ function ExpenseDetail({ expense, project, receipt, onAttach, uploading, onToggl
         )}
       </div>
 
-      {!expense.isVoided && !expense.isReversal && (
+      {!expense.isVoided && (
         <div className="border-t border-ink-100 pt-4">
-          <button onClick={onReverse} className="btn-secondary"><RotateCcw className="h-4 w-4" /> Reverse this expense</button>
-          <p className="text-xs text-ink-400 mt-1.5">Creates a linked offsetting entry instead of editing or deleting this record.</p>
+          <button onClick={onDelete} className="btn-secondary text-rose-600 hover:bg-rose-50"><Trash2 className="h-4 w-4" /> Delete this expense</button>
         </div>
       )}
     </div>

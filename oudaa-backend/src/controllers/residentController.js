@@ -4,7 +4,11 @@ const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/AppError');
 const { recordAudit } = require('../utils/audit');
 const { phoneSearchKeyFor } = require('../utils/phone');
-const { sendResidentDeactivatedEmail } = require('../utils/email');
+const { sendResidentDeactivatedEmail, sendResidentWelcomeEmail } = require('../utils/email');
+
+// Where the frontend's login page lives — same pattern/env var as
+// authController's password-reset link.
+const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
 
 // Preset list of common deactivation reasons, surfaced in the UI as
 // one-click chips so the committee doesn't have to type the same handful
@@ -76,6 +80,21 @@ const createResident = catchAsync(async (req, res) => {
     entityId: user.resident?.id,
     description: `Added resident "${fullName}" (unit ${unitNumber})`,
   });
+
+  // The temp password is shown on screen exactly once (see the frontend's
+  // "created" state in Residents.jsx) — mail it too, along with a direct
+  // login link, so the resident can actually get in even if the committee
+  // forgets to relay it, loses the screen before copying it, etc. This is
+  // fire-and-forget: a failed/absent email must never fail resident
+  // creation itself (see utils/email.js's stub-mode comment).
+  const community = await prisma.community.findUnique({ where: { id: req.communityId } });
+  sendResidentWelcomeEmail({
+    to: email,
+    fullName,
+    tempPassword: password,
+    loginUrl: `${FRONTEND_URL.replace(/\/$/, '')}/login`,
+    communityName: community?.name,
+  }).catch(() => {});
 
   const { passwordHash: _omit, ...safeUser } = user;
   res.status(201).json({ success: true, data: safeUser });

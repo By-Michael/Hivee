@@ -4,7 +4,7 @@ import {
 } from 'lucide-react'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell, Legend,
-  AreaChart, Area, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar,
+  AreaChart, Area, LabelList,
 } from 'recharts'
 import { useData } from '../../context/DataContext'
 import {
@@ -147,7 +147,7 @@ export default function Reports() {
   const trendChartRef = useRef(null)
   const residentStatusChartRef = useRef(null)
   const projectBudgetChartRef = useRef(null)
-  const radarChartRef = useRef(null)
+  const utilisationChartRef = useRef(null)
 
   const [exportingSummary, setExportingSummary] = useState(false)
   const [exportingEverything, setExportingEverything] = useState(false)
@@ -236,10 +236,19 @@ export default function Reports() {
     return [{ name: 'Active', value: active, fill: STATUS_COLORS.active }, { name: 'Inactive', value: inactive, fill: STATUS_COLORS.inactive }]
   }, [summary])
 
-  const projectRadar = useMemo(() => projects.slice(0, 8).map((p) => ({
-    name: p.name.length > 12 ? `${p.name.slice(0, 12)}…` : p.name,
-    utilisation: p.budget > 0 ? Math.min(200, Math.round((p.spent / p.budget) * 100)) : 0,
-  })), [projects])
+  const projectUtilisation = useMemo(() => (
+    projects
+      .filter((p) => p.budget > 0)
+      .map((p) => ({
+        name: p.name,
+        shortName: p.name.length > 18 ? `${p.name.slice(0, 18)}…` : p.name,
+        utilisation: Math.round((p.spent / p.budget) * 100),
+        budget: p.budget,
+        spent: p.spent,
+      }))
+      .sort((a, b) => b.utilisation - a.utilisation)
+      .slice(0, 10)
+  ), [projects])
 
   const totalCollected = summary?.totalCollected ?? 0
   const totalExpenses = summary?.totalExpenses ?? 0
@@ -307,7 +316,8 @@ export default function Reports() {
   const expenseColumns = [
     { header: 'Description', key: 'description', width: 28 },
     { header: 'Category', key: 'category', width: 14 },
-    { header: 'Project', value: (e) => projects.find((p) => p.id === e.projectId)?.name || '—', width: 22 },
+    { header: 'Project / Fund', value: (e) => (e.projectId ? projects.find((p) => p.id === e.projectId)?.name : e.fundId ? `Fund · ${funds.find((f) => f.id === e.fundId)?.name || ''}` : '—') || '—', width: 24 },
+    { header: 'Reason', value: (e) => e.reason || '', width: 24 },
     { header: 'Vendor', key: 'vendor', width: 20 },
     { header: 'Amount', key: 'amount', width: 14 },
     { header: 'Date', value: (e) => formatDate(e.date), width: 16 },
@@ -359,7 +369,7 @@ export default function Reports() {
       { title: 'Income vs. expenses trend', ref: trendChartRef },
       { title: 'Resident status', ref: residentStatusChartRef },
       { title: 'Project budget vs. spend', ref: projectBudgetChartRef },
-      { title: 'Budget utilisation (%)', ref: radarChartRef },
+      { title: 'Budget utilisation (%)', ref: utilisationChartRef },
     ]
     const results = []
     for (const t of targets) {
@@ -654,17 +664,34 @@ export default function Reports() {
           </ResponsiveContainer>
         </div>
 
-        <div className="card p-5" ref={radarChartRef}>
-          <h3 className="font-semibold text-ink-800 mb-4">Budget utilisation (%)</h3>
-          <ResponsiveContainer width="100%" height={280}>
-            <RadarChart data={projectRadar}>
-              <PolarGrid stroke="#dbe1ee" />
-              <PolarAngleAxis dataKey="name" tick={{ fill: '#4f5779', fontSize: 11 }} />
-              <PolarRadiusAxis tick={{ fill: '#8790b3', fontSize: 10 }} />
-              <Radar dataKey="utilisation" stroke="#1554d6" fill="#2570f5" fillOpacity={0.4} />
-              <Tooltip formatter={(v) => `${v}%`} contentStyle={{ borderRadius: 12, border: '1px solid #eef1f8' }} />
-            </RadarChart>
-          </ResponsiveContainer>
+        <div className="card p-5" ref={utilisationChartRef}>
+          <h3 className="font-semibold text-ink-800 mb-4">Budget utilisation by project (%)</h3>
+          {projectUtilisation.length === 0 ? (
+            <ChartPlaceholder label="No budgeted projects yet" height={280} />
+          ) : (
+            <ResponsiveContainer width="100%" height={Math.max(280, projectUtilisation.length * 34)}>
+              <BarChart data={projectUtilisation} layout="vertical" margin={{ left: 8, right: 24 }}>
+                <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#eef1f8" />
+                <XAxis type="number" domain={[0, (max) => Math.max(120, Math.ceil(max / 10) * 10)]} tickFormatter={(v) => `${v}%`} tick={{ fill: '#8790b3', fontSize: 11 }} />
+                <YAxis type="category" dataKey="shortName" width={130} tick={{ fill: '#4f5779', fontSize: 11 }} />
+                <Tooltip
+                  formatter={(v, key, entry) => (
+                    key === 'utilisation'
+                      ? [`${v}% (${currency(entry.payload.spent)} of ${currency(entry.payload.budget)})`, 'Utilisation']
+                      : v
+                  )}
+                  labelFormatter={(_, payload) => payload?.[0]?.payload?.name ?? ''}
+                  contentStyle={{ borderRadius: 12, border: '1px solid #eef1f8' }}
+                />
+                <Bar dataKey="utilisation" radius={[0, 6, 6, 0]}>
+                  {projectUtilisation.map((entry) => (
+                    <Cell key={entry.name} fill={entry.utilisation > 100 ? '#dc2626' : entry.utilisation >= 80 ? '#f59e0b' : '#2570f5'} />
+                  ))}
+                  <LabelList dataKey="utilisation" position="right" formatter={(v) => `${v}%`} fill="#4f5779" fontSize={11} />
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          )}
         </div>
       </div>
 
@@ -830,7 +857,7 @@ export default function Reports() {
                 <tr key={e.id}>
                   <td className="font-medium text-ink-800">{e.description || '—'}</td>
                   <td><span className="badge" style={{ background: `${EXPENSE_COLORS[e.category] || '#64748b'}1a`, color: EXPENSE_COLORS[e.category] || '#64748b' }}>{e.category}</span></td>
-                  <td>{projects.find((p) => p.id === e.projectId)?.name || '—'}</td>
+                  <td>{e.projectId ? (projects.find((p) => p.id === e.projectId)?.name || '—') : e.fundId ? `Fund · ${funds.find((f) => f.id === e.fundId)?.name || ''}` : '—'}</td>
                   <td className="text-ink-500">{e.vendor || '—'}</td>
                   <td className="font-semibold">{currency(e.amount)}</td>
                   <td className="text-ink-500">{formatDate(e.date)}</td>

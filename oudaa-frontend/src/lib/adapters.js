@@ -35,6 +35,12 @@ const PAYMENT_METHOD_TO_API = {
 // PENDING_REVIEW = bank lookup matched, but our safeguard check (name/amount
 // cross-check, or above the auto-verify threshold) flagged it for an admin
 // to confirm — distinct from a plain PENDING (no bank match attempted yet).
+// PENDING_REVIEW is kept as its own value here because some backend
+// behavior still depends on it (e.g. a resident can only retract a
+// self-submitted payment while it's PENDING_REVIEW — see
+// paymentController.js). It's never shown to anyone as its own status
+// label though: Badge renders it as "pending", same as plain PENDING, and
+// nowhere offers "needs review" as a selectable status.
 const PAYMENT_STATUS_TO_UI = { PENDING: 'pending', PENDING_REVIEW: 'pending_review', VERIFIED: 'paid', REJECTED: 'rejected' }
 
 const PROJECT_STATUS_TO_UI = { PLANNED: 'planned', ONGOING: 'in-progress', COMPLETED: 'completed', CANCELLED: 'cancelled' }
@@ -51,8 +57,11 @@ export const FUND_CATEGORIES = [
 
 // ------------------------------ residents -------------------------------
 // phone, idNumber, address, and ownerType are real columns on Resident.
-const OWNER_TYPE_TO_UI = { OWNER: 'owner', RENTER: 'renter' }
-const OWNER_TYPE_TO_API = { owner: 'OWNER', renter: 'RENTER' }
+// The UI-facing value is 'tenant' (label: "Tenant") even though the
+// backend/DB enum is still OWNER/RENTER — renaming the DB enum would need
+// a migration for no real benefit, so only the user-facing word changes.
+const OWNER_TYPE_TO_UI = { OWNER: 'owner', RENTER: 'tenant' }
+const OWNER_TYPE_TO_API = { owner: 'OWNER', tenant: 'RENTER' }
 
 export function residentToUI(r) {
   return {
@@ -129,6 +138,11 @@ export function feeToUI(f) {
     // except one-time (see AddFee form in Fees.jsx).
     dueDay: f.dueDay ?? '',
     category: f.description || 'Security',
+    // When this fee was set up — a resident who joined before the fee
+    // existed obviously can't owe it for those earlier months (see
+    // unpaidMonthsFor in admin/Payments.jsx, which anchors on whichever
+    // of this and the resident's join date is later).
+    createdAt: f.createdAt,
   }
 }
 
@@ -192,6 +206,11 @@ export function paymentToUI(p) {
     method: PAYMENT_METHOD_TO_UI[p.paymentMethod] || 'Cash',
     status: PAYMENT_STATUS_TO_UI[p.status] || 'pending',
     reference: p.transactionReference || '',
+    // Which calendar month(s) this fee payment counts toward — e.g.
+    // "2026-08", or "2026-06,2026-07,2026-08" for a multi-month catch-up.
+    // Empty for project/fund payments and for fee payments recorded
+    // before this existed.
+    paidForMonth: p.paidForMonth || '',
     payerName: p.payerName || '',
     reason: p.reason || '',
     reviewFlags: p.reviewFlags || '',
@@ -223,6 +242,7 @@ export function paymentToCreateAPI(form) {
     amount: Number(form.amount),
     paymentMethod: PAYMENT_METHOD_TO_API[form.method] || 'CASH',
     transactionReference: form.reference || undefined,
+    paidForMonth: form.targetType === 'fee' ? (form.paidForMonth || undefined) : undefined,
   }
 }
 
@@ -348,6 +368,8 @@ export function expenseToUI(e) {
   return {
     id: e.id,
     projectId: e.projectId,
+    fundId: e.fundId,
+    reason: e.reason || '',
     category: e.category || 'OTHER',
     description: e.description || '',
     amount: Number(e.amount),
@@ -372,7 +394,9 @@ export function expenseToUI(e) {
 
 export function expenseToAPI(form) {
   return {
-    projectId: form.projectId || undefined,
+    projectId: form.targetType === 'fund' ? undefined : (form.projectId || undefined),
+    fundId: form.targetType === 'fund' ? (form.fundId || undefined) : undefined,
+    reason: form.targetType === 'fund' ? form.reason : undefined,
     category: form.category || 'OTHER',
     description: form.description,
     vendor: form.vendor,

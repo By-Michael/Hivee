@@ -39,7 +39,7 @@ const getFund = catchAsync(async (req, res) => {
 // projectId/status), and combines the results in memory — a handful of
 // rows per fund, not every transaction ever recorded.
 async function computeFundMoneyForCommunity(communityId, fundIds) {
-  const [allocationTotals, projectCounts, expenseTotals, paymentsViaProjects, paymentsDirect] = await Promise.all([
+  const [allocationTotals, projectCounts, expenseTotals, paymentsViaProjects, paymentsDirect, expensesDirect] = await Promise.all([
     // A project's budget can now be split across several funds
     // (ProjectFundAllocation), so "allocated" per fund is the sum of this
     // fund's own slice, not the whole project.budget — see schema.prisma
@@ -89,18 +89,27 @@ async function computeFundMoneyForCommunity(communityId, fundIds) {
       where: { communityId, status: 'VERIFIED', fundId: { in: fundIds } },
       _sum: { amount: true },
     }),
+    // Expenses recorded straight against a fund (no project attached) —
+    // mirrors paymentsDirect above. See Expense.fundId comment in
+    // schema.prisma.
+    prisma.expense.groupBy({
+      by: ['fundId'],
+      where: { communityId, fundId: { in: fundIds } },
+      _sum: { amount: true },
+    }),
   ]);
 
   const allocatedByFund = new Map(allocationTotals.map((r) => [r.fundId, Number(r.total || 0)]));
   const projectCountByFund = new Map(projectCounts.map((r) => [r.fundId, r.count]));
-  const spentByFund = new Map(expenseTotals.map((r) => [r.fundId, Number(r.total || 0)]));
+  const spentViaProjectsByFund = new Map(expenseTotals.map((r) => [r.fundId, Number(r.total || 0)]));
+  const spentDirectByFund = new Map(expensesDirect.map((r) => [r.fundId, Number(r._sum.amount || 0)]));
   const collectedViaProjectsByFund = new Map(paymentsViaProjects.map((r) => [r.fundId, Number(r.total || 0)]));
   const collectedDirectByFund = new Map(paymentsDirect.map((r) => [r.fundId, Number(r._sum.amount || 0)]));
 
   const byFund = new Map();
   for (const fundId of fundIds) {
     const allocated = allocatedByFund.get(fundId) || 0;
-    const spent = spentByFund.get(fundId) || 0;
+    const spent = (spentViaProjectsByFund.get(fundId) || 0) + (spentDirectByFund.get(fundId) || 0);
     const verifiedCollected = (collectedViaProjectsByFund.get(fundId) || 0) + (collectedDirectByFund.get(fundId) || 0);
     byFund.set(fundId, {
       totalAllocated: allocated,

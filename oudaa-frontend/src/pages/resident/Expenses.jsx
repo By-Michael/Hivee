@@ -5,11 +5,15 @@ import { PageHeader, Modal, currency, formatDate, usePagedList, Pager, notify } 
 import { fileUrl, downloadFile } from '../../lib/api'
 
 export default function ResidentExpenses() {
-  const { expenses, projects, receipts } = useData()
+  const { expenses, projects, funds, receipts } = useData()
   const [detail, setDetail] = useState(null)
   const projectOf = (id) => projects.find((p) => p.id === id)?.name || '—'
+  const fundOf = (id) => funds.find((f) => f.id === id)?.name || '—'
   const receiptOf = (id) => receipts.find((r) => r.id === id)
-  const { pageItems: pagedExpenses, page, totalPages, total, setPage } = usePagedList(expenses, 50)
+  // Reversal entries are just the internal offsetting rows created when the
+  // committee deletes an expense — not something a resident needs to see.
+  const visibleExpenses = expenses.filter((e) => !e.isReversal)
+  const { pageItems: pagedExpenses, page, totalPages, total, setPage } = usePagedList(visibleExpenses, 50)
 
   function open(e) {
     setDetail(e)
@@ -31,14 +35,21 @@ export default function ResidentExpenses() {
       <div className="card overflow-hidden">
         <div className="table-wrap !border-0">
           <table className="data-table">
-            <thead><tr><th>Description</th><th>Project</th><th>Vendor</th><th>Amount</th><th>Date</th><th>Receipt</th></tr></thead>
+            <thead><tr><th>Description</th><th>Project / Fund</th><th>Vendor</th><th>Amount</th><th>Date</th><th>Receipt</th></tr></thead>
             <tbody>
               {pagedExpenses.map((e) => {
                 const r = receiptOf(e.receiptId)
                 return (
-                  <tr key={e.id} className="cursor-pointer" onClick={() => open(e)}>
-                    <td className="font-medium text-ink-800">{e.description}</td>
-                    <td>{projectOf(e.projectId)}</td>
+                  <tr key={e.id} className={`cursor-pointer ${e.isVoided ? 'opacity-40 blur-[0.4px] hover:blur-0 hover:opacity-60 transition' : ''}`} onClick={() => open(e)}>
+                    <td className="font-medium text-ink-800">
+                      {e.description}
+                      {e.isVoided && <span className="badge bg-ink-100 text-ink-500 ml-2">Deleted</span>}
+                    </td>
+                    <td>
+                      {e.projectId ? projectOf(e.projectId) : e.fundId ? (
+                        <span className="badge bg-violet-50 text-violet-700 ring-1 ring-violet-200">Fund · {fundOf(e.fundId)}</span>
+                      ) : '—'}
+                    </td>
                     <td>{e.vendor}</td>
                     <td className="font-semibold">{currency(e.amount)}</td>
                     <td>{formatDate(e.date)}</td>
@@ -62,12 +73,13 @@ export default function ResidentExpenses() {
         {detail && (
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-3 text-sm">
-              <div><p className="text-ink-400 text-xs uppercase font-semibold">Project</p><p className="text-ink-800">{projectOf(detail.projectId)}</p></div>
+              <div><p className="text-ink-400 text-xs uppercase font-semibold">{detail.fundId ? 'Fund' : 'Project'}</p><p className="text-ink-800">{detail.fundId ? fundOf(detail.fundId) : projectOf(detail.projectId)}</p></div>
               <div><p className="text-ink-400 text-xs uppercase font-semibold">Vendor</p><p className="text-ink-800">{detail.vendor}</p></div>
               <div><p className="text-ink-400 text-xs uppercase font-semibold">Amount</p><p className="text-ink-800 font-semibold">{currency(detail.amount)}</p></div>
               <div><p className="text-ink-400 text-xs uppercase font-semibold">Date</p><p className="text-ink-800">{formatDate(detail.date)}</p></div>
               {detail.bankName && <div><p className="text-ink-400 text-xs uppercase font-semibold">Bank</p><p className="text-ink-800">{detail.bankName}</p></div>}
-              {detail.transactionReference && <div><p className="text-ink-400 text-xs uppercase font-semibold">Transaction ID</p><p className="text-ink-800 font-mono text-xs">{detail.transactionReference}</p></div>}
+              {detail.transactionReference && <div><p className="text-ink-400 text-xs uppercase font-semibold">{detail.bankName === 'Telebirr' ? 'Reference ID' : 'Transaction ID'}</p><p className="text-ink-800 font-mono text-xs">{detail.transactionReference}</p></div>}
+              {detail.fundId && detail.reason && <div className="col-span-2"><p className="text-ink-400 text-xs uppercase font-semibold">Reason</p><p className="text-ink-800">{detail.reason}</p></div>}
             </div>
             <div className="border-t border-ink-100 pt-4">
               <p className="text-xs uppercase font-semibold text-ink-400 mb-2">Receipt</p>

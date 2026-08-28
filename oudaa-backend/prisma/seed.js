@@ -118,8 +118,14 @@ async function main() {
       role: 'ADMIN',
     },
   });
+  // Committee members are expected to have a Resident row too (see
+  // residentToUI on the frontend) — without one they never show up in the
+  // Residents panel, including under the "Committee only" filter.
+  await prisma.resident.create({
+    data: { userId: admin.id, unitNumber: 'N/A', status: 'ACTIVE' },
+  });
 
-  await prisma.user.create({
+  const secondAdmin = await prisma.user.create({
     data: {
       communityId: community.id,
       fullName: 'Yonas Committee',
@@ -127,6 +133,9 @@ async function main() {
       passwordHash,
       role: 'ADMIN',
     },
+  });
+  await prisma.resident.create({
+    data: { userId: secondAdmin.id, unitNumber: 'N/A', status: 'ACTIVE' },
   });
 
   // -------------------------------------------------------------------

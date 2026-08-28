@@ -238,9 +238,60 @@ model User {
   pendingChangeApprovals    PendingChangeApproval[]
   autoApprovals             CommitteeAutoApproval[]
   auditLogs                 AuditLog[]
+  supportChatSessions       SupportChatSession[]
 
   @@index([communityId])
   @@map("users")
+}
+
+// ---------------------------------------------------------------------------
+// HELP & SUPPORT — AI ASSISTANT ("Ask Oudaa AI")
+//
+// A per-user chat session with the Groq-backed support assistant (see
+// src/utils/supportAiAssistant.js). Sessions are ephemeral by default —
+// the frontend keeps an in-memory conversation and only ever calls
+// POST /support/chat/sessions to actually persist one once the user
+// explicitly opts in ("Save this conversation"). `saved=false` rows are
+// not created at all; there is no "unsaved session" row sitting in the
+// DB, since the user may never opt in.
+// ---------------------------------------------------------------------------
+
+model SupportChatSession {
+  id          String   @id @default(uuid())
+  userId      String
+  // Denormalized at creation time so a committee member's saved sessions
+  // stay scoped to their community even if their own communityId ever
+  // changes later (transfer, etc.) — mirrors Payment.communityId reasoning.
+  communityId String?
+  // Short auto-generated label from the first user message, editable
+  // later — shown in the "saved conversations" list.
+  title       String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user     User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages SupportChatMessage[]
+
+  @@index([userId])
+  @@index([communityId])
+  @@map("support_chat_sessions")
+}
+
+model SupportChatMessage {
+  id        String   @id @default(uuid())
+  sessionId String
+  // "user" | "assistant" — mirrors the Groq/OpenAI chat message role.
+  // Tool-call plumbing (which internal query the assistant ran) is never
+  // persisted, only the resulting user-facing text, so saved transcripts
+  // stay small and readable.
+  role      String
+  content   String   @db.Text
+  createdAt DateTime @default(now())
+
+  session SupportChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@map("support_chat_messages")
 }
 
 // ---------------------------------------------------------------------------
@@ -394,6 +445,12 @@ model Payment {
   // method later doesn't touch historical payment records.
   paymentMethodId    String?
   transactionReference String?
+  // Which calendar month(s) a *fee* payment counts toward, e.g. "2026-08"
+  // (one month) or "2026-06,2026-07,2026-08" (a committee member catching
+  // a resident up on several unpaid months in one go). Null for
+  // project/fund payments, and for older fee payments recorded before
+  // this existed — those just have no month attached to display.
+  paidForMonth       String?
   // Name typed in by the resident submitting the payment — the person who
   // actually sent the money, which may not be the resident themselves
   // (e.g. a family member paying on their behalf). Kept separate from the
@@ -484,6 +541,10 @@ model Fund {
   // must combine both; see getFundSummary in fundController.js.
   payments  Payment[]
   projectAllocations ProjectFundAllocation[]
+  // Direct-to-fund expenses only (see Expense.fundId comment) — a
+  // committee member spending straight out of a fund with no project
+  // attached. Mirrors the payments relation above.
+  expenses  Expense[]
 
   @@index([communityId])
   @@map("funds")
@@ -543,6 +604,16 @@ model Expense {
   // comment and migration 20260813052537_denormalize_community_id for why.
   communityId String
   projectId   String?
+  // Direct-to-fund expense: a committee member spending straight out of a
+  // fund's real cash with no project attached (e.g. an unplanned repair).
+  // Mirrors Payment.fundId — at most one of projectId/fundId is set; both
+  // may be empty for a general community expense checked only against the
+  // community's overall balance (see computeCommunityBalance in
+  // expenseController.js). `reason` is mandatory whenever fundId is set
+  // (enforced in expenseValidators.js) since there's no project budget
+  // line to justify the spend against.
+  fundId      String?
+  reason      String?
   recordedBy  String
   category    ExpenseCategory @default(OTHER)
   description String?
@@ -573,12 +644,14 @@ model Expense {
 
   community Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
   project  Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  fund     Fund?     @relation(fields: [fundId], references: [id], onDelete: SetNull)
   recorder User      @relation("ExpenseRecordedBy", fields: [recordedBy], references: [id], onDelete: Restrict)
   receipts Receipt[]
   reverses  Expense? @relation("ExpenseReversal", fields: [reversesId], references: [id], onDelete: SetNull)
   reversal  Expense? @relation("ExpenseReversal")
 
   @@index([projectId])
+  @@index([fundId])
   @@index([recordedBy])
   @@index([spentAt])
   @@index([communityId])

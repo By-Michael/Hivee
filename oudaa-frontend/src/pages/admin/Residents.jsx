@@ -370,10 +370,10 @@ export default function Residents() {
             </div>
           </div>
           <div>
-            <label className="label">Owner or renter</label>
+            <label className="label">Owner or tenant</label>
             <select className="input" value={form.ownerType} onChange={(e) => setForm({ ...form, ownerType: e.target.value })}>
               <option value="owner">Owner</option>
-              <option value="renter">Renter</option>
+              <option value="tenant">Tenant</option>
             </select>
           </div>
           <div>
@@ -501,10 +501,10 @@ export default function Residents() {
                   <input className="input" value={infoForm.idNumber} onChange={(e) => setInfoForm({ ...infoForm, idNumber: e.target.value })} />
                 </div>
                 <div>
-                  <label className="label">Owner or renter</label>
+                  <label className="label">Owner or tenant</label>
                   <select className="input" value={infoForm.ownerType} onChange={(e) => setInfoForm({ ...infoForm, ownerType: e.target.value })}>
                     <option value="owner">Owner</option>
-                    <option value="renter">Renter</option>
+                    <option value="tenant">Tenant</option>
                   </select>
                 </div>
               </div>

@@ -13,6 +13,7 @@ import { useTheme } from '../context/ThemeContext'
 import api, { endpoints, fileUrl } from '../lib/api'
 import { currency, formatDate, Modal, PageSkeleton, notify } from '../components/ui'
 import { getNotificationPrefs, onNotificationPrefsChanged } from '../lib/notificationPrefs'
+import HelpSupportPanel from '../components/HelpSupportPanel'
 
 const adminNav = [
   { to: '/admin', label: 'Dashboard', icon: LayoutDashboard, end: true },
@@ -59,6 +60,7 @@ export default function AppLayout({ role }) {
   const nav = role === 'admin' ? adminNav : residentNav
   const base = role === 'admin' ? '/admin' : '/resident'
   const [open, setOpen] = useState(false)
+  const [helpOpen, setHelpOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [notifOpen, setNotifOpen] = useState(false)
   const { user, logout, patchUser } = useAuth()
@@ -530,6 +532,7 @@ export default function AppLayout({ role }) {
           collapsed={collapsed}
           navCollapsed={navCollapsed}
           onLogout={handleLogout}
+          onOpenHelp={() => setHelpOpen(true)}
         />
       </aside>
 
@@ -556,10 +559,13 @@ export default function AppLayout({ role }) {
               collapsed={false}
               navCollapsed={false}
               onLogout={handleLogout}
+              onOpenHelp={() => { setOpen(false); setHelpOpen(true) }}
             />
           </aside>
         </div>
       )}
+
+      <HelpSupportPanel open={helpOpen} onClose={() => setHelpOpen(false)} />
 
       {/* Main column */}
       <div className="flex-1 min-w-0 flex flex-col">
@@ -650,7 +656,7 @@ function Avatar({ user }) {
   )
 }
 
-function SidebarFooter({ user, collapsed, navCollapsed, onLogout }) {
+function SidebarFooter({ user, collapsed, navCollapsed, onLogout, onOpenHelp }) {
   // Sidebar footer: account summary + help + sign out. Kept as three
   // distinct, individually-clickable rows (not one big card) so each
   // affordance has its own hit target and hover state, same pattern as
@@ -662,16 +668,17 @@ function SidebarFooter({ user, collapsed, navCollapsed, onLogout }) {
         Signed in as <span className="font-semibold text-ink-700 dark:text-ink-200">{user?.name}</span>
       </p>
 
-      <a
-        href="mailto:support@oudaa.app"
+      <button
+        type="button"
+        onClick={onOpenHelp}
         title={collapsed ? 'Help and support' : undefined}
-        className={`sidebar-link ${navCollapsed ? 'collapsed' : ''}`}
+        className={`sidebar-link w-full ${navCollapsed ? 'collapsed' : ''}`}
       >
         <HelpCircle className="h-4.5 w-4.5 shrink-0" />
         <span className={`overflow-hidden whitespace-nowrap transition-all duration-300 ease-in-out ${collapsed ? 'max-w-0 opacity-0' : 'max-w-[160px] opacity-100'}`}>
           Help and support
         </span>
-      </a>
+      </button>
 
       <button
         type="button"
@@ -725,8 +732,8 @@ function Brand({ collapsed = false, onToggle }) {
       ) : (
         LogoMark
       )}
-      <div className={`overflow-hidden flex items-center transition-all duration-300 ease-in-out ${collapsed ? 'max-w-0 opacity-0' : 'max-w-[90px] opacity-100 ml-0.5'}`}>
-        <p className="font-display font-bold text-xl bg-brand-gradient bg-clip-text text-transparent whitespace-nowrap">
+      <div className={`overflow-hidden flex items-center transition-all duration-300 ease-in-out ${collapsed ? 'max-w-0 opacity-0' : 'max-w-[110px] opacity-100 ml-1'}`}>
+        <p className="font-display font-bold text-2xl bg-brand-gradient bg-clip-text text-transparent whitespace-nowrap">
           udaa
         </p>
       </div>

@@ -111,7 +111,6 @@ export const endpoints = {
   paymentReceipt: (id) => `/payments/${id}/receipt`,
   paymentSelfVerify: () => '/payments/self-verify',
   paymentSelfVerifyReceipt: () => '/payments/self-verify/receipt',
-  paymentBatchVerify: () => '/payments/batch-verify',
   paymentParseScreenshot: () => '/payments/parse-screenshot',
   paymentRetract: (id) => `/payments/${id}/retract`,
 
@@ -164,6 +163,16 @@ export const endpoints = {
   // for the very first thing an admin/resident sees after login.
   dashboardAdmin: () => '/dashboard/admin',
   dashboardResident: () => '/dashboard/resident',
+
+  // Help & Support panel — role-filtered FAQ list, whether the AI
+  // assistant is configured on this server, one chat turn, and saved
+  // conversation management (a session is only ever created once the
+  // user explicitly opts in to saving — see SupportPanel.jsx).
+  supportFaqs: () => '/support/faqs',
+  supportAiStatus: () => '/support/ai-status',
+  supportChat: () => '/support/chat',
+  supportChatSessions: () => '/support/chat/sessions',
+  supportChatSession: (id) => `/support/chat/sessions/${id}`,
 }
 
 // Uploaded files (receipts) are served from the API host's root

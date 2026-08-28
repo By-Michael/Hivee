@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 import {
   Wallet, Plus, Copy, Check, Landmark, Camera, Loader2, ShieldCheck, Clock, RotateCw, Upload, FileCheck2, Smartphone, Link2,
+  Download, UserCog,
 } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import { useData } from '../../context/DataContext'
@@ -15,6 +16,27 @@ const PROVIDER_TO_HINT = {
 }
 const PROVIDER_LABELS = {
   CBE: 'Commercial Bank of Ethiopia (CBE)', TELEBIRR: 'Telebirr',
+}
+
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
+
+// Turns a raw paidForMonth value ("2026-08" or "2026-06,2026-07,2026-08")
+// into something readable, and flags whether any part of it is a future
+// month — i.e. a prepayment the committee recorded ahead of when it was
+// actually due.
+function describeForMonth(paidForMonth) {
+  if (!paidForMonth) return null
+  const keys = paidForMonth.split(',').filter(Boolean)
+  if (keys.length === 0) return null
+  const label = (key) => {
+    const [y, m] = key.split('-').map(Number)
+    return `${MONTH_NAMES[m - 1]} ${y}`
+  }
+  const now = new Date()
+  const nowKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+  const isFuture = keys.some((k) => k > nowKey)
+  const text = keys.length === 1 ? label(keys[0]) : `${label(keys[0])} – ${label(keys[keys.length - 1])}`
+  return { text, isFuture }
 }
 
 // Small "value + copy button" row used in the "pay to" block.
@@ -47,6 +69,20 @@ function CopyRow({ label, value, mono }) {
   )
 }
 
+// Read-only "view details" row used in the payment detail modal — just a
+// label/value pair, no inputs. Residents can look but not touch, since
+// this is here so they can double-check a committee-recorded entry is
+// accurate, not edit it.
+function DetailRow({ label, value, mono }) {
+  if (value === null || value === undefined || value === '') return null
+  return (
+    <div className="flex items-start justify-between gap-3 py-2 border-b border-ink-100 last:border-0">
+      <span className="text-xs uppercase tracking-wide text-ink-400 shrink-0 pt-0.5">{label}</span>
+      <span className={`text-sm font-medium text-ink-800 text-right ${mono ? 'font-mono' : ''}`}>{value}</span>
+    </div>
+  )
+}
+
 const emptyForm = { feeId: '', paymentMethodId: '', payerName: '', txnId: '', phoneNumber: '', reason: '' }
 
 export default function ResidentPayments() {
@@ -62,6 +98,7 @@ export default function ResidentPayments() {
   const resident = residents.find((r) => r.id === user?.residentId) || residents[0]
   const mine = payments.filter((p) => p.residentId === resident?.id).sort((a, b) => new Date(b.date) - new Date(a.date))
   const feeOf = (id) => fees.find((f) => f.id === id)
+  const [detailTarget, setDetailTarget] = useState(null)
   const { pageItems: pagedMine, page: tablePage, totalPages: tableTotalPages, total: tableTotal, setPage: setTablePage } = usePagedList(mine, 50)
 
   const [modal, setModal] = useState(false)
@@ -299,8 +336,16 @@ export default function ResidentPayments() {
               <thead><tr><th>Fee</th><th>Amount</th><th>Method</th><th>Paid by</th><th>Reference</th><th>Date</th><th>Status</th><th></th></tr></thead>
               <tbody>
                 {pagedMine.map((p) => (
-                  <tr key={p.id}>
-                    <td className="font-medium text-ink-800">{feeOf(p.feeId)?.name}</td>
+                  <tr key={p.id} onClick={() => setDetailTarget(p)} className="cursor-pointer hover:bg-brand-50/40">
+                    <td className="font-medium text-ink-800">
+                      {feeOf(p.feeId)?.name || (p.projectName || '—')}
+                      {p.feeId && describeForMonth(p.paidForMonth) && (
+                        <div className={`text-[11px] font-normal ${describeForMonth(p.paidForMonth).isFuture ? 'text-brand-600' : 'text-ink-400'}`}>
+                          For {describeForMonth(p.paidForMonth).text}
+                          {describeForMonth(p.paidForMonth).isFuture ? ' (prepayment)' : ''}
+                        </div>
+                      )}
+                    </td>
                     <td className="font-semibold">{currency(p.amount)}</td>
                     <td>{p.method}</td>
                     <td className="text-ink-500">{p.payerName || '—'}</td>
@@ -310,7 +355,7 @@ export default function ResidentPayments() {
                     <td>
                       {p.status === 'pending_review' && (
                         <button
-                          onClick={() => handleRetract(p.id)}
+                          onClick={(e) => { e.stopPropagation(); handleRetract(p.id) }}
                           disabled={retractingId === p.id}
                           className="text-xs font-medium text-rose-600 hover:text-rose-700 disabled:opacity-50"
                           title="Retract — only possible before an admin reviews it"
@@ -603,6 +648,70 @@ export default function ResidentPayments() {
               <button type="submit" className="btn-primary flex-1" disabled={isAdminPreview} title={isAdminPreview ? 'Admins are previewing this page — submission is resident-only' : undefined}>Submit payment</button>
             </div>
           </form>
+        )}
+      </Modal>
+
+      {/* Read-only payment detail — lets a resident confirm a payment
+          (whether they submitted it themselves or a committee member
+          recorded it for them) is accurate. No fields are editable here;
+          that only happens from the admin side. */}
+      <Modal open={!!detailTarget} onClose={() => setDetailTarget(null)} title="Payment details">
+        {detailTarget && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-lg font-bold text-ink-900">{currency(detailTarget.amount)}</p>
+                <p className="text-sm text-ink-500">
+                  {feeOf(detailTarget.feeId)?.name || detailTarget.projectName || '—'}
+                </p>
+              </div>
+              <Badge status={detailTarget.status} />
+            </div>
+
+            <div className="rounded-xl border border-ink-100 px-3.5">
+              <DetailRow label="Method" value={detailTarget.method} />
+              {detailTarget.feeId && describeForMonth(detailTarget.paidForMonth) && (
+                <div className="flex items-start justify-between gap-3 py-2 border-b border-ink-100">
+                  <span className="text-xs uppercase tracking-wide text-ink-400 shrink-0 pt-0.5">For month</span>
+                  <span className={`text-sm font-medium text-right ${describeForMonth(detailTarget.paidForMonth).isFuture ? 'text-brand-700' : 'text-ink-800'}`}>
+                    {describeForMonth(detailTarget.paidForMonth).text}
+                    {describeForMonth(detailTarget.paidForMonth).isFuture ? ' · Prepayment' : ''}
+                  </span>
+                </div>
+              )}
+              <DetailRow label="Reference" value={detailTarget.reference} mono />
+              <DetailRow label="Date" value={formatDate(detailTarget.date)} />
+              <DetailRow label="Paid by" value={detailTarget.payerName} />
+              <DetailRow label="Reason" value={detailTarget.reason} />
+              <DetailRow label="Bank sender name" value={detailTarget.senderName} />
+              {detailTarget.recordedByName && (
+                <div className="flex items-start justify-between gap-3 py-2">
+                  <span className="text-xs uppercase tracking-wide text-ink-400 shrink-0 pt-0.5">Recorded by</span>
+                  <span className="text-sm font-medium text-ink-800 text-right flex items-center gap-1.5">
+                    <UserCog className="h-3.5 w-3.5 text-ink-400" /> {detailTarget.recordedByName} (committee)
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {detailTarget.receiptUrl ? (
+              <a
+                href={detailTarget.receiptUrl}
+                target="_blank"
+                rel="noreferrer"
+                download
+                className="w-full flex items-center justify-center gap-2 rounded-xl border border-ink-200 px-4 py-2.5 text-sm font-semibold text-ink-700 hover:border-brand-300 hover:text-brand-700 transition"
+              >
+                <Download className="h-4 w-4" /> View / download receipt
+              </a>
+            ) : (
+              <p className="text-xs text-ink-400 text-center">No receipt was attached to this payment.</p>
+            )}
+
+            <button type="button" onClick={() => setDetailTarget(null)} className="btn-secondary w-full">
+              Close
+            </button>
+          </div>
         )}
       </Modal>
     </div>

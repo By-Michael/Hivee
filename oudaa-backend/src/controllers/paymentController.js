@@ -132,6 +132,7 @@ const createPayment = catchAsync(async (req, res) => {
       paymentMethod: req.body.paymentMethod,
       transactionReference: req.body.transactionReference,
       paidAt: req.body.paidAt,
+      paidForMonth: target.feeId ? (req.body.paidForMonth || undefined) : undefined,
       // A committee member recording a payment has, by definition, already
       // received the money (cash in hand, receipt in front of them) — so
       // it's marked verified immediately instead of sitting in a PENDING
@@ -222,119 +223,6 @@ const updatePaymentStatus = catchAsync(async (req, res) => {
   });
 
   res.json({ success: true, data: updated });
-});
-
-// ADMIN batch-verifies a group of pending payments matched by filter
-// criteria, instead of a client-supplied list of ids. Ticking rows one by
-// one (or "select all") doesn't scale once a community has thousands of
-// payments — the UI would have to either hold a giant selection Set across
-// pages (laggy) or only ever select what's currently rendered (confusing,
-// silently incomplete). Filtering server-side and capping the result is
-// both faster and safer: the committee describes *which* payments they
-// mean ("this fee, this month, under 500 birr") and the server finds and
-// verifies exactly that group, up to a hard ceiling per run.
-//
-// MAX_BATCH_VERIFY caps how many payments a single run can touch — keeps
-// each request fast, keeps the resulting audit-log burst bounded, and
-// forces a large backlog to be worked through in deliberate, reviewable
-// chunks rather than one enormous blind action.
-//
-// PLACEHOLDER IMPLEMENTATION: batch lookup against Veritas isn't wired up
-// yet (single-transaction /verify only, see bankVerification.js) — this
-// currently just marks every matched pending/pending_review payment as
-// VERIFIED without re-checking the bank, per explicit instruction to ship
-// the button now and fill in the real batch call later.
-//
-// TODO(batch-verification-api): once the batch endpoint is available,
-// replace the block below with a single call like
-// `verifyBankTransactionsBatch(matched.map(p => p.transactionReference))`
-// and only mark as VERIFIED the ones that come back matched — mirroring
-// the safeguard flagging in selfVerifyPayment above (do NOT blind-trust a
-// batch "matched: true" any more than the single-lookup path does).
-const MAX_BATCH_VERIFY = 100;
-
-const batchVerifyPayments = catchAsync(async (req, res) => {
-  const {
-    residentQuery, feeId, projectId, fundId, status, paymentMethod,
-    minAmount, maxAmount, dateFrom, dateTo,
-  } = req.body || {};
-
-  const statusFilter = status === 'pending'
-    ? ['PENDING']
-    : status === 'pending_review'
-      ? ['PENDING_REVIEW']
-      : ['PENDING', 'PENDING_REVIEW']; // 'any' or omitted — both queues
-
-  const where = {
-    ...communityPaymentFilter(req.communityId),
-    status: { in: statusFilter },
-    ...(feeId ? { feeId } : {}),
-    ...(projectId ? { projectId } : {}),
-    ...(fundId ? { fundId } : {}),
-    ...(paymentMethod ? { paymentMethod } : {}),
-    ...((minAmount !== undefined || maxAmount !== undefined) ? {
-      amount: {
-        ...(minAmount !== undefined ? { gte: minAmount } : {}),
-        ...(maxAmount !== undefined ? { lte: maxAmount } : {}),
-      },
-    } : {}),
-    ...((dateFrom || dateTo) ? {
-      paidAt: {
-        ...(dateFrom ? { gte: new Date(dateFrom) } : {}),
-        ...(dateTo ? { lte: new Date(dateTo) } : {}),
-      },
-    } : {}),
-    ...(residentQuery ? {
-      resident: {
-        OR: [
-          { user: { fullName: { contains: residentQuery, mode: 'insensitive' } } },
-          { unitNumber: { contains: residentQuery, mode: 'insensitive' } },
-          { phone: { contains: residentQuery, mode: 'insensitive' } },
-        ],
-      },
-    } : {}),
-  };
-
-  const matchedCount = await prisma.payment.count({ where });
-  if (matchedCount === 0) throw new AppError('No pending payments match those filters', 404);
-
-  // Oldest first — works through the backlog in order rather than
-  // whatever order the DB happens to return, so repeated runs on a group
-  // larger than MAX_BATCH_VERIFY make steady forward progress.
-  const payments = await prisma.payment.findMany({
-    where,
-    orderBy: { paidAt: 'asc' },
-    take: MAX_BATCH_VERIFY,
-  });
-
-  // ---- BLIND MARK-AS-VERIFIED (placeholder — see TODO above) ----
-  await prisma.payment.updateMany({
-    where: { id: { in: payments.map((p) => p.id) } },
-    data: { status: 'VERIFIED', verifiedBy: req.user.id },
-  });
-  // ---- end placeholder ----
-
-  await Promise.all(payments.map((p) => recordAudit(req, {
-    action: 'VERIFY',
-    entityType: 'Payment',
-    entityId: p.id,
-    description: `Batch-verified payment ${p.id.slice(0, 8)} (blind mark — batch bank lookup not yet integrated)`,
-  })));
-
-  const updated = await prisma.payment.findMany({
-    where: { id: { in: payments.map((p) => p.id) } },
-    include: PAYMENT_INCLUDE,
-  });
-
-  res.json({
-    success: true,
-    data: updated.map(withSenderName),
-    meta: {
-      verifiedCount: updated.length,
-      matchedCount,
-      remainingCount: Math.max(0, matchedCount - updated.length),
-    },
-  });
 });
 
 // ADMIN edits a payment they (or a fellow committee member) typed in
@@ -809,6 +697,11 @@ const selfVerifyPayment = catchAsync(async (req, res) => {
       transactionReference: effectiveTxnId,
       payerName: payerName.trim(),
       reason: reason?.trim() || undefined,
+      // Self-service payments always cover the month they're made in — no
+      // catch-up/prepayment picking happens on this flow (that's admin-only,
+      // see createPayment), so just tag it with today's month for fee
+      // payments so the resident's own history can show "for" a month.
+      paidForMonth: fee ? `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}` : undefined,
       status,
       receiptUrl: isCbe ? receiptUrl : undefined,
       verificationRaw: result.raw ?? undefined,
@@ -898,7 +791,6 @@ module.exports = {
   listPayments,
   getPayment,
   updatePaymentStatus,
-  batchVerifyPayments,
   updatePayment,
   deletePayment,
   uploadPaymentReceipt,
