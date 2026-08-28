@@ -58,8 +58,32 @@ function resolveModel(envValue, fallback, label) {
 // parsing uses.
 const SUPPORT_MODEL = resolveModel(process.env.SUPPORT_AI_MODEL || process.env.GROQ_MODEL, 'openai/gpt-oss-120b', 'SUPPORT_AI_MODEL');
 
+// Fallback chain, tried in order if the primary model is rate-limited or
+// erroring. Groq tracks TPM/RPM limits PER MODEL, not per account — so a
+// model swap gets an entirely separate token budget rather than just
+// waiting out the same one. Both defaults are real, currently-active,
+// tool-calling-capable Groq models as of when this was written; override
+// with a comma-separated SUPPORT_AI_FALLBACK_MODELS if Groq's lineup
+// changes. Retired names are filtered out the same way SUPPORT_MODEL is,
+// and the primary model is de-duped out of its own fallback list.
+const SUPPORT_MODEL_CHAIN = [
+  SUPPORT_MODEL,
+  ...(process.env.SUPPORT_AI_FALLBACK_MODELS || 'openai/gpt-oss-20b,llama-3.1-70b-versatile')
+    .split(',')
+    .map((m) => m.trim())
+    .filter(Boolean),
+]
+  .filter((m) => !RETIRED_GROQ_MODELS.has(m))
+  .filter((m, i, arr) => arr.indexOf(m) === i);
+
 const MAX_TOOL_HOOPS = 4; // hard cap on tool-call round trips per user message
-const MAX_HISTORY_MESSAGES = 16; // keep the context window bounded on long saved chats
+// Every history message gets resent, in full, on every hop of every turn —
+// on Groq's free/on-demand tier (shared TPM-per-minute budget across the
+// whole app, not per-conversation) a long saved chat plus a multi-hop tool
+// call can burn through the quota in a couple of messages. 8 keeps enough
+// context for the conversation to make sense without ballooning the
+// per-request token count on longer saved sessions.
+const MAX_HISTORY_MESSAGES = 8;
 
 // -----------------------------------------------------------------------
 // Platform knowledge. Kept in one place (not split per-role) so the model
@@ -636,6 +660,19 @@ function executorsForRole(role) {
   return role === 'ADMIN' ? ADMIN_EXECUTORS : RESIDENT_EXECUTORS;
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Groq's rate-limit body looks like:
+//   {"error":{"message":"Rate limit reached ... Please try again in 7.86s. ...","type":"tokens","code":"rate_limit_exceeded"}}
+// Pull the "try again in Xs" hint out so we can back off for roughly the
+// right amount of time instead of guessing.
+function parseRetryAfterSeconds(groqMessage) {
+  const match = /try again in ([\d.]+)s/i.exec(groqMessage || '');
+  return match ? Math.min(Number(match[1]), 10) : 2; // never wait more than 10s for one turn
+}
+
 async function callGroq(apiKey, body) {
   const res = await fetch(GROQ_API_URL, {
     method: 'POST',
@@ -644,13 +681,73 @@ async function callGroq(apiKey, body) {
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    throw new Error(`Groq API request failed (${res.status}): ${text.slice(0, 300)}`);
+    let groqMessage = text;
+    try {
+      groqMessage = JSON.parse(text)?.error?.message || text;
+    } catch {
+      // not JSON — fall back to raw text
+    }
+    if (res.status === 429) {
+      throw Object.assign(new Error(groqMessage || 'Rate limit reached.'), {
+        code: 'RATE_LIMITED',
+        retryAfterSeconds: parseRetryAfterSeconds(groqMessage),
+      });
+    }
+    // Any other Groq-side failure: keep it out of the user-facing message
+    // (it's raw provider internals) but keep the detail in the server log.
+    console.error(`[supportAiAssistant] Groq API request failed (${res.status}): ${groqMessage.slice(0, 500)}`);
+    throw Object.assign(new Error('Support AI is temporarily unavailable — please try again shortly.'), { code: 'PROVIDER_ERROR' });
   }
   return res.json();
 }
 
 function isConfigured() {
   return Boolean(process.env.GROQ_API_KEY);
+}
+
+// -----------------------------------------------------------------------
+// Intent classification — decides how much context this turn actually
+// needs, WITHOUT spending a model call to figure it out (that would just
+// add another request to the same rate-limited budget). Cheap keyword
+// heuristics, checked before every Groq call:
+//
+//   'query' — asking about the community's own live data ("who paid this
+//     week", "our fund balance", "unpaid residents"). Doesn't need the
+//     platform manual at all — it just needs enough instruction to call a
+//     tool and report the result tersely. Tools are included, the full
+//     PLATFORM_KNOWLEDGE block is not.
+//
+//   'help'  — asking how something works ("how do I add a fee", "what
+//     does Pending Review mean"). Needs the platform manual to answer
+//     accurately, but doesn't need live data — tools are left out
+//     entirely, which also drops their JSON schemas (a non-trivial chunk
+//     of tokens on their own) from every request.
+//
+//   'mixed' — ambiguous, or hits both signals ("why haven't I been paid
+//     this month and how do refunds work"). Falls back to sending both,
+//     same as before this split existed — correctness over savings when
+//     we can't tell.
+//
+// This is intentionally conservative: a false positive just means one
+// turn gets more context than strictly necessary, never less than a
+// correct answer needs.
+// -----------------------------------------------------------------------
+const QUERY_SIGNALS = /\b(who|how many|how much|list|show me|find|search|paid|unpaid|owe[sd]?|overdue|balance|pending|this week|this month|last month|today|yesterday|recent|total|sum)\b/i;
+const HELP_SIGNALS = /\b(how do i|how to|what is|what does|what's|why (did|is|does|isn'?t)|explain|mean[s]?|difference between|where (do|can) i|help me understand)\b/i;
+
+function classifyIntent(message) {
+  const hasQuery = QUERY_SIGNALS.test(message);
+  const hasHelp = HELP_SIGNALS.test(message);
+  if (hasQuery && !hasHelp) return 'query';
+  if (hasHelp && !hasQuery) return 'help';
+  return 'mixed';
+}
+
+// Deliberately short — this is the ENTIRE system prompt for a 'query'
+// turn, replacing the full platform manual. Just enough for the model to
+// know its job is "call a tool, report the number/name, nothing else."
+function buildQuerySystemPrompt(roleLabel, fullName) {
+  return `You are Oudaa AI, the data assistant for Hivee (Oudaa), a residential community finance platform. The person asking is ${roleLabel} named ${fullName}. Use the provided tools to answer with their community's real, current data — never guess or invent numbers/names. Reply in 1-3 short sentences, just the answer (names/amounts/counts), no platform explanations or feature descriptions. If a tool returns nothing relevant, say so plainly. You are read-only — you cannot make changes.`;
 }
 
 /**
@@ -672,24 +769,87 @@ async function runSupportChat(ctx, history, userMessage) {
   const roleLabel = ctx.user.role === 'ADMIN' ? 'a committee member (ADMIN)' : 'a resident';
   const trimmedHistory = history.slice(-MAX_HISTORY_MESSAGES);
 
+  const intent = classifyIntent(userMessage);
+  const systemPrompt = intent === 'help'
+    ? `${PLATFORM_KNOWLEDGE}\n\nThe person you're talking to is ${roleLabel} named ${ctx.user.fullName}.`
+    : buildQuerySystemPrompt(roleLabel, ctx.user.fullName);
+
   const messages = [
-    { role: 'system', content: `${PLATFORM_KNOWLEDGE}\n\nThe person you're talking to is ${roleLabel} named ${ctx.user.fullName}.` },
+    { role: 'system', content: systemPrompt },
     ...trimmedHistory.map((m) => ({ role: m.role, content: m.content })),
     { role: 'user', content: userMessage },
   ];
 
-  const tools = toolsForRole(ctx.user.role);
+  // 'help' turns don't touch live data, so skip sending the tool schemas
+  // at all — that's a real chunk of tokens on its own (10+ function
+  // definitions with descriptions) that a how-to answer never uses.
+  const tools = intent === 'help' ? [] : toolsForRole(ctx.user.role);
   const executors = executorsForRole(ctx.user.role);
 
+  let lastFallbackError = null;
+  for (let modelIndex = 0; modelIndex < SUPPORT_MODEL_CHAIN.length; modelIndex++) {
+    const model = SUPPORT_MODEL_CHAIN[modelIndex];
+    const isLastModel = modelIndex === SUPPORT_MODEL_CHAIN.length - 1;
+    // Fresh copy per model attempt — the tool loop mutates this array by
+    // appending assistant/tool turns as it goes, and a failed attempt on
+    // model A shouldn't carry its half-finished conversation into model B.
+    const attemptMessages = messages.map((m) => ({ ...m }));
+    try {
+      return await runToolLoop(apiKey, model, attemptMessages, tools, executors, ctx, { allowRetry: isLastModel });
+    } catch (err) {
+      if (err.code === 'RATE_LIMITED' || err.code === 'PROVIDER_ERROR') {
+        lastFallbackError = err;
+        if (!isLastModel) {
+          console.warn(`[supportAiAssistant] ${model} ${err.code === 'RATE_LIMITED' ? 'rate-limited' : 'failed'}, falling back to ${SUPPORT_MODEL_CHAIN[modelIndex + 1]}.`);
+          continue; // try the next model in the chain — separate token budget on Groq
+        }
+        throw err; // exhausted the whole chain
+      }
+      throw err; // not a fallback-worthy error (bad request, empty response, etc.) — don't waste other models on it
+    }
+  }
+  // Unreachable in practice (loop always returns or throws), but keeps a
+  // defined fallback if SUPPORT_MODEL_CHAIN were ever empty.
+  throw lastFallbackError || new Error('No support AI model available.');
+}
+
+/**
+ * Runs the tool-calling hop loop against a single model. Throws
+ * RATE_LIMITED/PROVIDER_ERROR (caught by the caller to try the next model
+ * in the chain) or returns the final assistant text reply.
+ */
+async function runToolLoop(apiKey, model, messages, tools, executors, ctx, { allowRetry }) {
+  const buildRequestBody = () => ({
+    model,
+    temperature: 0.3,
+    max_tokens: 800,
+    messages,
+    // Omit tools/tool_choice entirely (not just an empty array) on 'help'
+    // turns — some providers reject tool_choice:'auto' paired with a
+    // tools:[] array, and omitting is also fewer bytes over the wire.
+    ...(tools.length ? { tools, tool_choice: 'auto' } : {}),
+  });
+
   for (let hop = 0; hop < MAX_TOOL_HOOPS; hop++) {
-    const data = await callGroq(apiKey, {
-      model: SUPPORT_MODEL,
-      temperature: 0.3,
-      max_tokens: 800,
-      messages,
-      tools,
-      tool_choice: 'auto',
-    });
+    let data;
+    try {
+      data = await callGroq(apiKey, buildRequestBody());
+    } catch (err) {
+      // Only worth an in-place retry (same model, short wait) once we're
+      // on the LAST model in the fallback chain — for every earlier model,
+      // the caller will just move on to the next one immediately instead,
+      // which is faster than waiting out a rate limit.
+      if (err.code === 'RATE_LIMITED' && allowRetry) {
+        await sleep(err.retryAfterSeconds * 1000);
+        try {
+          data = await callGroq(apiKey, buildRequestBody());
+        } catch (retryErr) {
+          throw Object.assign(new Error("Oudaa AI is getting a lot of questions right now — give it a few seconds and try again."), { code: 'RATE_LIMITED' });
+        }
+      } else {
+        throw err;
+      }
+    }
 
     const choice = data?.choices?.[0];
     const msg = choice?.message;

@@ -97,11 +97,11 @@ export default function Login() {
       {/* Right - form */}
       <div className="flex items-center justify-center px-6 py-12 bg-white">
         <div className="w-full max-w-sm animate-fade-up">
-          <div className="lg:hidden flex items-center gap-1 mb-8">
-            <span className="h-12 w-12 grid place-items-center shrink-0">
-              <img src="/oudaa-h-mark.png" alt="Oudaa" className="h-10 w-10 object-contain" />
+          <div className="lg:hidden flex items-center justify-center gap-1.5 mb-8">
+            <span className="h-14 w-14 grid place-items-center shrink-0">
+              <img src="/oudaa-h-mark.png" alt="Oudaa" className="h-12 w-12 object-contain" />
             </span>
-            <span className="font-display font-bold text-2xl bg-brand-gradient bg-clip-text text-transparent">udaa</span>
+            <span className="font-display font-bold text-3xl bg-brand-gradient bg-clip-text text-transparent">udaa</span>
           </div>
 
           <h2 className="text-2xl font-bold text-ink-900">Welcome back</h2>

@@ -162,7 +162,7 @@ function FaqTab({ onAskAi }) {
           className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-brand-gradient text-white font-semibold text-sm py-3 shadow-glow hover:brightness-[1.06] active:brightness-95 transition-all"
         >
           <Sparkles className="h-4.5 w-4.5" />
-          Didn\u2019t find it? Ask Oudaa AI
+          Didn't find it? Ask Oudaa AI
         </button>
       </div>
     </div>

@@ -42,6 +42,12 @@ const chat = catchAsync(async (req, res) => {
     if (err.code === 'NOT_CONFIGURED') {
       throw new AppError('The AI assistant isn\u2019t set up on this server yet — please use the FAQ above or contact your committee directly.', 503);
     }
+    if (err.code === 'RATE_LIMITED') {
+      throw new AppError(err.message, 429);
+    }
+    if (err.code === 'PROVIDER_ERROR') {
+      throw new AppError(err.message, 502);
+    }
     throw err;
   }
 
