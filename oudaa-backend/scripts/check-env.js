@@ -243,27 +243,28 @@ async function checkGroq() {
   }
 }
 
-// ---- 6. SMTP ----
+// ---- 6. Brevo (transactional email) ----
 async function checkSmtp() {
-  const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS } = process.env;
-  if (!SMTP_HOST || !SMTP_PORT || !SMTP_USER || !SMTP_PASS) {
-    return log('SMTP', 'SKIP', 'not fully set — email runs in STUB mode (logs only)');
+  const { BREVO_API_KEY, BREVO_SENDER_EMAIL } = process.env;
+  if (!BREVO_API_KEY || !BREVO_SENDER_EMAIL) {
+    return log('BREVO', 'SKIP', 'BREVO_API_KEY / BREVO_SENDER_EMAIL not fully set — email runs in STUB mode (logs only)');
   }
   try {
-    const nodemailer = require('nodemailer');
-    const transporter = nodemailer.createTransport({
-      host: SMTP_HOST,
-      port: Number(SMTP_PORT),
-      secure: Number(SMTP_PORT) === 465,
-      auth: { user: SMTP_USER, pass: SMTP_PASS },
-    });
-    await withTimeout(transporter.verify(), 10000, 'smtp');
-    log('SMTP', 'PASS', `${SMTP_HOST}:${SMTP_PORT} accepted credentials`);
-  } catch (err) {
-    if (err.message.includes("Cannot find module 'nodemailer'")) {
-      return log('SMTP', 'SKIP', 'nodemailer not installed — check src/utils/email.js for the actual mail lib used');
+    const res = await withTimeout(
+      fetch('https://api.brevo.com/v3/account', {
+        method: 'GET',
+        headers: { accept: 'application/json', 'api-key': BREVO_API_KEY },
+      }),
+      10000,
+      'brevo',
+    );
+    if (!res.ok) {
+      const body = await res.text();
+      return log('BREVO', 'FAIL', `HTTP ${res.status}: ${body.slice(0, 120)}`);
     }
-    log('SMTP', 'FAIL', err.message.split('\n')[0]);
+    log('BREVO', 'PASS', `API key accepted, sender ${BREVO_SENDER_EMAIL}`);
+  } catch (err) {
+    log('BREVO', 'FAIL', err.message.split('\n')[0]);
   }
 }
 

@@ -31,13 +31,13 @@ if (isEmailStubActive()) {
   const banner = [
     '',
     '#############################################################',
-    '#  WARNING: SMTP_HOST / SMTP_USER / SMTP_PASS not set.       #',
+    '#  WARNING: BREVO_API_KEY / BREVO_SENDER_EMAIL not set.      #',
     '#  Outbound email (password resets, deactivation notices,   #',
     '#  etc.) is running in STUB MODE — emails are only logged   #',
     '#  to the console, never actually sent. Password-reset      #',
     '#  links will NOT reach real users while this is active.    #',
-    '#  Set SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS /       #',
-    '#  SMTP_FROM before relying on email in production.          #',
+    '#  Set BREVO_API_KEY / BREVO_SENDER_EMAIL / BREVO_SENDER_NAME#',
+    '#  before relying on email in production.                    #',
     '#############################################################',
     '',
   ].join('\n');
@@ -47,7 +47,7 @@ if (isEmailStubActive()) {
     console.warn(banner);
   }
 } else {
-  // SMTP creds are present — verify they actually authenticate, rather
+  // Brevo creds are present — verify they actually authenticate, rather
   // than waiting for the first real password-reset request to find out.
   verifyEmailTransport();
 }

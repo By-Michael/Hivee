@@ -1,129 +1,98 @@
 // -----------------------------------------------------------------------
-// Outbound email.
+// Outbound email — sent via Brevo's transactional email HTTP API.
 //
-// Two backends, tried in this order:
+// See: https://developers.brevo.com/docs/send-a-transactional-email
 //
-//   1) Resend (https://resend.com), via a plain HTTPS API call — no SMTP
-//      socket involved at all. This is the recommended path on Render:
-//      Render's network resolves many SMTP hosts' AAAA (IPv6) records but
-//      can't actually route to them, which shows up as exactly
-//      "Connection timeout" even though the same SMTP credentials work
-//      fine from a home/office network. An HTTPS API call doesn't hit
-//      that problem. Configure with RESEND_API_KEY (+ optionally
-//      RESEND_FROM).
+// Brevo is called as a plain HTTPS request to
+// https://api.brevo.com/v3/smtp/email — there is no SMTP socket
+// involved, which sidesteps the class of "Connection timeout" problems
+// PaaS hosts like Render have with raw SMTP (their network resolves
+// many SMTP hosts' AAAA/IPv6 records but can't actually route to them).
 //
-//   2) SMTP via nodemailer, if Resend isn't configured. Forces IPv4
-//      (family: 4) for the reason above, and sets explicit timeouts so a
-//      genuinely unreachable host fails fast with a clear error instead
-//      of hanging until nodemailer's much longer default.
+// Configure with:
+//   BREVO_API_KEY       - required. From Brevo > Settings > SMTP & API > API Keys.
+//   BREVO_SENDER_EMAIL   - required to actually send. Must be a verified
+//                          sender/domain in your Brevo account.
+//   BREVO_SENDER_NAME    - optional, defaults to "Oudaa".
 //
-// If neither is configured, this module runs in STUB MODE — the email is
-// logged to the console instead of actually sent, so local dev keeps
-// working without needing real mail credentials (same pattern as
-// bankVerification.js's Veritas stub mode). Never throws: a failed/absent
-// email should never block the API action that triggered it (e.g.
-// deactivating a resident still succeeds even if the notification email
-// fails to send).
+// If BREVO_API_KEY (or BREVO_SENDER_EMAIL) isn't configured, this module
+// runs in STUB MODE — the email is logged to the console instead of
+// actually sent, so local dev keeps working without needing real mail
+// credentials (same pattern as bankVerification.js's Veritas stub mode).
+// Never throws: a failed/absent email should never block the API action
+// that triggered it (e.g. deactivating a resident still succeeds even if
+// the notification email fails to send).
 // -----------------------------------------------------------------------
 
-const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
-const RESEND_API_URL = 'https://api.resend.com/emails';
+const BREVO_API_KEY = process.env.BREVO_API_KEY || '';
+const BREVO_API_URL = 'https://api.brevo.com/v3/smtp/email';
+const BREVO_SENDER_EMAIL = process.env.BREVO_SENDER_EMAIL || '';
+const BREVO_SENDER_NAME = process.env.BREVO_SENDER_NAME || 'Oudaa';
 
-const SMTP_HOST = process.env.SMTP_HOST || '';
-const SMTP_PORT = Number(process.env.SMTP_PORT) || 587;
-const SMTP_USER = process.env.SMTP_USER || '';
-const SMTP_PASS = process.env.SMTP_PASS || '';
-const SMTP_FROM = process.env.SMTP_FROM || 'Oudaa <no-reply@oudaa.local>';
-const RESEND_FROM = process.env.RESEND_FROM || SMTP_FROM;
-
-// SMTP connections that will never succeed (bad host, network can't route
-// to it, wrong port) should fail loudly within a few seconds — not hang
-// until nodemailer's much longer built-in default, which is what turns a
-// misconfiguration into a request that just "spins" from the frontend's
-// point of view.
-const SMTP_TIMEOUT_MS = 15000;
-
-function usingResend() {
-  return Boolean(RESEND_API_KEY);
+function isConfigured() {
+  return Boolean(BREVO_API_KEY && BREVO_SENDER_EMAIL);
 }
 
 function isStubActive() {
-  return !usingResend() && (!SMTP_HOST || !SMTP_USER || !SMTP_PASS);
-}
-
-let transporterPromise = null;
-function getTransporter() {
-  if (!transporterPromise) {
-    transporterPromise = (async () => {
-      // eslint-disable-next-line global-require
-      const nodemailer = require('nodemailer');
-      return nodemailer.createTransport({
-        host: SMTP_HOST,
-        port: SMTP_PORT,
-        secure: SMTP_PORT === 465,
-        auth: { user: SMTP_USER, pass: SMTP_PASS },
-        // Forces the SMTP connection over IPv4. Without this, Node's DNS
-        // resolver can hand nodemailer an IPv6 (AAAA) address for the
-        // host that resolves fine but is completely unroutable from
-        // Render's network — the TCP handshake then just hangs until it
-        // times out, which is indistinguishable from a slow/down mail
-        // server ("Connection timeout") even though the SMTP credentials
-        // themselves are perfectly correct. Forcing IPv4 sidesteps this
-        // entirely; virtually every SMTP provider still answers on IPv4.
-        family: 4,
-        connectionTimeout: SMTP_TIMEOUT_MS,
-        greetingTimeout: SMTP_TIMEOUT_MS,
-        socketTimeout: SMTP_TIMEOUT_MS,
-      });
-    })();
-  }
-  return transporterPromise;
+  return !isConfigured();
 }
 
 /**
  * Verifies the outbound email path at boot so a bad config shows up
  * immediately in the server logs instead of silently failing the first
  * time a real user requests a password reset. Never throws.
+ *
+ * Brevo has no dedicated "verify credentials" call, so this pings the
+ * account endpoint (GET /v3/account), which requires a valid api-key
+ * and is a lightweight way to confirm the key actually authenticates.
  */
 async function verifyEmailTransport() {
-  if (usingResend()) {
-    // Resend has no separate "verify" call — a bad/revoked key only shows
-    // up on the first actual send. Report it as configured-but-unverified
-    // rather than pretending we checked something we didn't.
-    console.log('[email] Using Resend for outbound email (RESEND_API_KEY set).');
-    return { ok: true, stub: false, provider: 'resend' };
-  }
-
   if (isStubActive()) return { ok: false, stub: true };
 
   try {
-    const transporter = await getTransporter();
-    await transporter.verify();
-    console.log('[email] SMTP connection verified — outbound email is live.');
-    return { ok: true, stub: false, provider: 'smtp' };
+    const res = await fetch('https://api.brevo.com/v3/account', {
+      method: 'GET',
+      headers: {
+        accept: 'application/json',
+        'api-key': BREVO_API_KEY,
+      },
+    });
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`Brevo API rejected the key (${res.status}): ${body.slice(0, 300)}`);
+    }
+
+    console.log('[email] Brevo API key verified — outbound email is live.');
+    return { ok: true, stub: false, provider: 'brevo' };
   } catch (err) {
     console.error(
-      `[email] SMTP is configured but the connection/login FAILED — emails will NOT be sent until this is fixed: ${err.message}. ` +
-        'If this says "Connection timeout" on a host like Render, try setting RESEND_API_KEY instead (see .env.example) — ' +
-        'raw SMTP sockets are often unreliable from PaaS hosts even with correct credentials.',
+      `[email] Brevo is configured but the API key FAILED to verify — emails will NOT be sent until this is fixed: ${err.message}.`,
     );
-    return { ok: false, stub: false, provider: 'smtp', error: err.message };
+    return { ok: false, stub: false, provider: 'brevo', error: err.message };
   }
 }
 
-async function sendViaResend({ to, subject, text, html }) {
-  const res = await fetch(RESEND_API_URL, {
+async function sendViaBrevo({ to, subject, text, html }) {
+  const res = await fetch(BREVO_API_URL, {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${RESEND_API_KEY}`,
+      accept: 'application/json',
+      'content-type': 'application/json',
+      'api-key': BREVO_API_KEY,
     },
-    body: JSON.stringify({ from: RESEND_FROM, to, subject, text, html }),
+    body: JSON.stringify({
+      sender: { name: BREVO_SENDER_NAME, email: BREVO_SENDER_EMAIL },
+      to: [{ email: to }],
+      subject,
+      htmlContent: html || `<pre>${text}</pre>`,
+      textContent: text,
+    }),
   });
 
   if (!res.ok) {
     const body = await res.text().catch(() => '');
-    throw new Error(`Resend API request failed (${res.status}): ${body.slice(0, 300)}`);
+    throw new Error(`Brevo API request failed (${res.status}): ${body.slice(0, 300)}`);
   }
   return res.json();
 }
@@ -137,34 +106,17 @@ async function sendEmail({ to, subject, text, html }) {
   if (!to) return { sent: false, stub: isStubActive() };
 
   if (isStubActive()) {
-    console.warn('[email] No email provider configured — running in STUB mode, email logged instead of sent.');
+    console.warn('[email] Brevo not configured (BREVO_API_KEY / BREVO_SENDER_EMAIL) — running in STUB mode, email logged instead of sent.');
     console.warn(`[email:STUB] To: ${to} | Subject: ${subject}\n${text}`);
     return { sent: false, stub: true };
   }
 
-  if (usingResend()) {
-    try {
-      await sendViaResend({ to, subject, text, html });
-      return { sent: true, stub: false, provider: 'resend' };
-    } catch (err) {
-      console.error('[email] Failed to send email via Resend:', err.message);
-      return { sent: false, stub: false, provider: 'resend', error: err.message };
-    }
-  }
-
   try {
-    const transporter = await getTransporter();
-    await transporter.sendMail({ from: SMTP_FROM, to, subject, text, html });
-    return { sent: true, stub: false, provider: 'smtp' };
+    await sendViaBrevo({ to, subject, text, html });
+    return { sent: true, stub: false, provider: 'brevo' };
   } catch (err) {
-    console.error(
-      '[email] Failed to send email via SMTP:',
-      err.message,
-      /timeout/i.test(err.message)
-        ? '— this specific error is commonly the host network being unable to route to the SMTP server (see RESEND_API_KEY in .env.example for a more reliable alternative).'
-        : '',
-    );
-    return { sent: false, stub: false, provider: 'smtp', error: err.message };
+    console.error('[email] Failed to send email via Brevo:', err.message);
+    return { sent: false, stub: false, provider: 'brevo', error: err.message };
   }
 }
 

@@ -347,7 +347,7 @@ const deactivateResident = catchAsync(async (req, res) => {
   const community = await prisma.community.findUnique({ where: { id: req.communityId } });
 
   // Fire-and-forget: sendEmail never throws (see utils/email.js), and the
-  // deactivation itself must not be blocked/delayed by SMTP latency.
+  // deactivation itself must not be blocked/delayed by email API latency.
   sendResidentDeactivatedEmail({
     to: updated.user.email,
     fullName: updated.user.fullName,
