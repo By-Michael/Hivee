@@ -17,6 +17,8 @@ import {
   ArrowRight,
   Sun,
   Moon,
+  CheckCircle2,
+  Sparkles,
 } from 'lucide-react'
 import HexHive from '../components/HexHive'
 import { useTheme } from '../context/ThemeContext'
@@ -27,16 +29,33 @@ const NAV_LINKS = [
   { href: '#faq', label: 'FAQ' },
 ]
 
+/* ---------------------------------- Logo --------------------------------- */
+
+function Logo({ size = 'md', withWordmark = true }) {
+  const dims = size === 'sm' ? 'h-7 w-7' : size === 'lg' ? 'h-11 w-11' : 'h-8 w-8'
+  return (
+    <span className="flex items-center gap-2.5">
+      <img src="/landing/oudaa-h-mark-sm.png" alt="Oudaa" className={`${dims} object-contain dark:hidden`} />
+      <img src="/oudaa-icon-dark-bg.png" alt="Oudaa" className={`${dims} hidden object-contain dark:block`} />
+      {withWordmark && (
+        <span className={`font-display font-bold text-ink-900 dark:text-white ${size === 'lg' ? 'text-2xl' : 'text-lg'}`}>
+          Oudaa
+        </span>
+      )}
+    </span>
+  )
+}
+
+/* --------------------------------- Navbar --------------------------------- */
+
 function Navbar() {
   const [open, setOpen] = useState(false)
   const { theme, toggleTheme } = useTheme()
   return (
     <header className="sticky top-0 z-40 border-b border-ink-100/70 bg-white/80 backdrop-blur-md dark:border-[#1f2a49] dark:bg-[#0b1120]/80">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-3.5">
-        <a href="#top" className="flex items-center gap-2">
-          <img src="/landing/oudaa-h-mark-sm.png" alt="" className="h-8 w-8 dark:hidden" />
-          <img src="/oudaa-icon-dark-bg.png" alt="" className="hidden h-8 w-8 dark:block" />
-          <span className="font-display text-lg font-bold text-ink-900 dark:text-white">Oudaa</span>
+        <a href="#top" aria-label="Oudaa home">
+          <Logo />
         </a>
 
         <nav className="hidden items-center gap-8 md:flex">
@@ -116,6 +135,8 @@ function Navbar() {
   )
 }
 
+/* ---------------------------------- Hero ---------------------------------- */
+
 function Hero() {
   const [pulse, setPulse] = useState(false)
   useEffect(() => {
@@ -125,13 +146,21 @@ function Hero() {
 
   return (
     <section id="top" className="relative overflow-hidden">
-      <div className="mx-auto grid max-w-6xl items-stretch gap-12 px-5 pb-24 pt-16 md:grid-cols-[1.1fr_0.9fr] md:pt-24">
+      {/* soft brand glow behind the hero */}
+      <div
+        className="pointer-events-none absolute -top-40 left-1/2 h-[520px] w-[900px] -translate-x-1/2 rounded-full opacity-30 blur-3xl"
+        style={{ background: 'radial-gradient(closest-side, #2fc39d, #2570f5 55%, transparent 75%)' }}
+      />
+
+      <div className="relative mx-auto grid max-w-6xl items-stretch gap-12 px-5 pb-4 pt-16 md:grid-cols-[1.1fr_0.9fr] md:pt-24">
         <div className="relative z-10 flex flex-col justify-center">
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-brand-200 bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-700 dark:border-[#1f3a44] dark:bg-brand-500/10 dark:text-brand-300">
+          <span className="inline-flex w-fit items-center gap-1.5 rounded-full border border-brand-200 bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-700 dark:border-[#1f3a44] dark:bg-brand-500/10 dark:text-brand-300">
+            <Sparkles size={12} />
             Built for committees, trusted by residents
           </span>
           <h1 className="mt-5 max-w-xl font-display text-4xl font-bold leading-[1.1] text-ink-900 sm:text-5xl dark:text-white">
-            Run your community's money in the open.
+            Run your community's money{' '}
+            <span className="bg-brand-gradient bg-clip-text text-transparent">in the open.</span>
           </h1>
           <p className="mt-5 max-w-md text-base leading-relaxed text-ink-600 dark:text-ink-300">
             Oudaa gives HOAs, condos and residential compounds one place to
@@ -141,6 +170,7 @@ function Hero() {
           <div className="mt-8 flex flex-wrap items-center gap-3">
             <Link to="/login" className="btn-primary px-6 py-3 text-[0.95rem]">
               Create your platform
+              <ArrowRight size={16} />
             </Link>
             <a href="#how-it-works" className="btn-secondary px-6 py-3 text-[0.95rem]">
               See how it works
@@ -162,7 +192,7 @@ function Hero() {
           </dl>
         </div>
 
-        <div className="relative min-h-[420px]">
+        <div className="relative min-h-[440px]">
           <div
             className="absolute inset-0 overflow-hidden rounded-3xl"
             style={{
@@ -171,6 +201,14 @@ function Hero() {
           >
             <HexHive intensity="vivid" />
           </div>
+
+          {/* watermark brand mark */}
+          <img
+            src="/oudaa-icon-dark-bg.png"
+            alt=""
+            aria-hidden="true"
+            className="pointer-events-none absolute -right-10 -top-10 h-40 w-40 object-contain opacity-20"
+          />
 
           <div className="absolute inset-0 flex items-center justify-center p-6">
             <div className="relative w-full max-w-sm rounded-2xl border border-white/10 bg-white p-5 shadow-glow dark:border-[#263255] dark:bg-[#131b30]">
@@ -192,6 +230,9 @@ function Hero() {
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-ink-500 dark:text-ink-400">Fee collection</span>
                   <span className="font-semibold text-ink-800 dark:text-ink-100">94%</span>
+                </div>
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-ink-100 dark:bg-[#1f2a49]">
+                  <div className="h-full w-[94%] rounded-full bg-brand-gradient" />
                 </div>
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-ink-500 dark:text-ink-400">Pending review</span>
@@ -220,21 +261,47 @@ function Hero() {
   )
 }
 
+/* ------------------------------- Trust strip ------------------------------- */
+
+function TrustStrip() {
+  const items = [
+    'Bank-verified payments',
+    'Role-based access',
+    'Full audit trail',
+    'Transparent by default',
+  ]
+  return (
+    <section className="border-y border-ink-100 bg-white/60 py-6 dark:border-[#1f2a49] dark:bg-white/[0.02]">
+      <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-center gap-x-10 gap-y-3 px-5">
+        {items.map((t) => (
+          <span key={t} className="inline-flex items-center gap-2 text-sm font-medium text-ink-500 dark:text-ink-400">
+            <CheckCircle2 size={15} className="text-brand-500" />
+            {t}
+          </span>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+/* ------------------------------ Showcase (bento) ---------------------------- */
+
 const SHOWCASE = [
   {
     icon: Wallet,
     title: 'Fees & payments, verified against the bank',
     body: "Residents submit a payment, and it's checked against real bank transactions instead of an honor system — so the committee never has to chase down whether something actually cleared.",
+    big: true,
   },
   {
     icon: PiggyBank,
     title: 'Shared funds, visible to everyone',
-    body: 'Every birr that moves through a community fund is logged and attributed. Residents see the same balances and history the committee sees — no separate spreadsheet, no year-end surprises.',
+    body: 'Every birr that moves through a community fund is logged and attributed. Residents see the same balances the committee sees.',
   },
   {
     icon: FileBarChart,
-    title: 'Reports that answer the question before it\u2019s asked',
-    body: 'Income, expenses, fund balances and project spend roll up into reports either side can open at any time, instead of being assembled by hand before a meeting.',
+    title: 'Reports that answer the question first',
+    body: 'Income, expenses, fund balances and project spend roll up into reports either side can open at any time.',
   },
 ]
 
@@ -242,7 +309,8 @@ function ShowcaseSection() {
   return (
     <section id="features" className="mx-auto max-w-6xl px-5 py-20">
       <div className="max-w-xl">
-        <h2 className="font-display text-3xl font-bold text-ink-900 dark:text-white">
+        <span className="text-xs font-semibold uppercase tracking-wide text-brand-600 dark:text-brand-300">What it does</span>
+        <h2 className="mt-2 font-display text-3xl font-bold text-ink-900 dark:text-white">
           Everything a committee tracks, in one place
         </h2>
         <p className="mt-3 text-ink-600 dark:text-ink-300">
@@ -251,24 +319,20 @@ function ShowcaseSection() {
         </p>
       </div>
 
-      <div className="mt-14 space-y-16">
-        {SHOWCASE.map((item, i) => (
+      <div className="mt-10 grid gap-5 lg:grid-cols-3">
+        {SHOWCASE.map((item) => (
           <div
             key={item.title}
-            className={`grid items-center gap-8 md:grid-cols-2 ${i % 2 === 1 ? 'md:[&>*:first-child]:order-2' : ''}`}
+            className={`card relative overflow-hidden p-7 ${item.big ? 'lg:col-span-2' : ''}`}
           >
-            <div>
-              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-brand-gradient text-white shadow-glow">
-                <item.icon size={20} />
-              </div>
-              <h3 className="mt-4 font-display text-xl font-semibold text-ink-900 dark:text-white">
-                {item.title}
-              </h3>
-              <p className="mt-3 max-w-md text-ink-600 dark:text-ink-300">{item.body}</p>
+            <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-mesh opacity-70" />
+            <div className="relative z-10 flex h-11 w-11 items-center justify-center rounded-xl bg-brand-gradient text-white shadow-glow">
+              <item.icon size={20} />
             </div>
-            <div className="card flex h-48 items-center justify-center bg-mesh md:h-56">
-              <item.icon size={64} strokeWidth={1.25} className="text-brand-400/70" />
-            </div>
+            <h3 className="relative z-10 mt-4 font-display text-xl font-semibold text-ink-900 dark:text-white">
+              {item.title}
+            </h3>
+            <p className="relative z-10 mt-3 max-w-lg text-ink-600 dark:text-ink-300">{item.body}</p>
           </div>
         ))}
       </div>
@@ -276,12 +340,49 @@ function ShowcaseSection() {
   )
 }
 
+/* ------------------------------ More features ------------------------------ */
+
+const MORE_FEATURES = [
+  { icon: Users, title: 'Resident directory', body: 'Every unit and household in one roster, with self-service profiles.' },
+  { icon: Receipt, title: 'Receipts & OCR', body: 'Snap a receipt and let it read the amount and vendor automatically.' },
+  { icon: FolderKanban, title: 'Projects', body: 'Track shared projects from budget to completion, funded from the community pool.' },
+  { icon: BellRing, title: 'Email notifications', body: 'Welcome messages, password resets and account alerts, sent automatically.' },
+  { icon: History, title: 'Audit log', body: 'Every change a committee member makes is recorded and reviewable.' },
+  { icon: ScanLine, title: 'Expense tracking', body: 'Log community expenses against the right fund, with a paper trail.' },
+]
+
+function MoreFeaturesSection() {
+  return (
+    <section className="border-y border-ink-100 bg-white/60 py-20 dark:border-[#1f2a49] dark:bg-white/[0.02]">
+      <div className="mx-auto max-w-6xl px-5">
+        <h2 className="font-display text-2xl font-bold text-ink-900 dark:text-white">And the rest of the day-to-day</h2>
+        <div className="mt-10 grid gap-x-6 gap-y-6 sm:grid-cols-2 lg:grid-cols-3">
+          {MORE_FEATURES.map((f) => (
+            <div key={f.title} className="card flex gap-3.5 p-5 transition-shadow hover:shadow-glow">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-600 dark:bg-brand-500/10 dark:text-brand-300">
+                <f.icon size={18} />
+              </span>
+              <div>
+                <h3 className="text-sm font-semibold text-ink-900 dark:text-ink-100">{f.title}</h3>
+                <p className="mt-1 text-sm text-ink-500 dark:text-ink-400">{f.body}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  )
+}
+
+/* -------------------------------- Community -------------------------------- */
+
 function CommunitySection() {
   return (
-    <section className="mx-auto max-w-6xl px-5 pb-20">
+    <section className="mx-auto max-w-6xl px-5 py-20">
       <div className="grid items-center gap-10 md:grid-cols-2">
         <div>
-          <h2 className="font-display text-3xl font-bold text-ink-900 dark:text-white">
+          <span className="text-xs font-semibold uppercase tracking-wide text-brand-600 dark:text-brand-300">Built to scale</span>
+          <h2 className="mt-2 font-display text-3xl font-bold text-ink-900 dark:text-white">
             Built for communities like yours
           </h2>
           <p className="mt-4 text-ink-600 dark:text-ink-300">
@@ -292,15 +393,15 @@ function CommunitySection() {
           </p>
           <ul className="mt-6 space-y-3 text-sm text-ink-600 dark:text-ink-300">
             <li className="flex items-start gap-2.5">
-              <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-brand-500" />
+              <CheckCircle2 size={17} className="mt-0.5 shrink-0 text-brand-500" />
               Any number of units, from a small compound to a full estate
             </li>
             <li className="flex items-start gap-2.5">
-              <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-brand-500" />
+              <CheckCircle2 size={17} className="mt-0.5 shrink-0 text-brand-500" />
               Shared amenities and common-area projects tracked against the community fund
             </li>
             <li className="flex items-start gap-2.5">
-              <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-brand-500" />
+              <CheckCircle2 size={17} className="mt-0.5 shrink-0 text-brand-500" />
               One admin team, any number of resident households
             </li>
           </ul>
@@ -318,35 +419,7 @@ function CommunitySection() {
   )
 }
 
-const MORE_FEATURES = [
-  { icon: Users, title: 'Resident directory', body: 'Every unit and household in one roster, with self-service profiles.' },
-  { icon: Receipt, title: 'Receipts & OCR', body: 'Snap a receipt and let it read the amount and vendor automatically.' },
-  { icon: FolderKanban, title: 'Projects', body: 'Track shared projects from budget to completion, funded from the community pool.' },
-  { icon: BellRing, title: 'Email notifications', body: 'Welcome messages, password resets and account alerts, sent automatically.' },
-  { icon: History, title: 'Audit log', body: 'Every change a committee member makes is recorded and reviewable.' },
-  { icon: ScanLine, title: 'Expense tracking', body: 'Log community expenses against the right fund, with a paper trail.' },
-]
-
-function MoreFeaturesSection() {
-  return (
-    <section className="border-y border-ink-100 bg-white/60 py-20 dark:border-[#1f2a49] dark:bg-white/[0.02]">
-      <div className="mx-auto max-w-6xl px-5">
-        <h2 className="font-display text-2xl font-bold text-ink-900 dark:text-white">And the rest of the day-to-day</h2>
-        <div className="mt-10 grid gap-x-8 gap-y-8 sm:grid-cols-2 lg:grid-cols-3">
-          {MORE_FEATURES.map((f) => (
-            <div key={f.title} className="flex gap-3.5 border-t border-ink-100 pt-4 dark:border-[#1f2a49]">
-              <f.icon size={20} className="mt-0.5 shrink-0 text-brand-500" />
-              <div>
-                <h3 className="text-sm font-semibold text-ink-900 dark:text-ink-100">{f.title}</h3>
-                <p className="mt-1 text-sm text-ink-500 dark:text-ink-400">{f.body}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </section>
-  )
-}
+/* ------------------------------- How it works ------------------------------- */
 
 const STEPS = [
   { title: 'Create your community', body: 'Set the community name, currency and the fees residents pay.' },
@@ -357,22 +430,28 @@ const STEPS = [
 
 function HowItWorks() {
   return (
-    <section id="how-it-works" className="mx-auto max-w-6xl px-5 py-20">
-      <h2 className="font-display text-3xl font-bold text-ink-900 dark:text-white">From zero to running in four steps</h2>
-      <div className="mt-12 grid gap-8 sm:grid-cols-2 lg:grid-cols-4">
-        {STEPS.map((s, i) => (
-          <div key={s.title} className="relative">
-            <span className="font-display text-4xl font-bold text-brand-200 dark:text-brand-500/30">
-              {String(i + 1).padStart(2, '0')}
-            </span>
-            <h3 className="mt-2 font-display text-lg font-semibold text-ink-900 dark:text-white">{s.title}</h3>
-            <p className="mt-2 text-sm text-ink-600 dark:text-ink-300">{s.body}</p>
-          </div>
-        ))}
+    <section id="how-it-works" className="border-y border-ink-100 bg-white/60 py-20 dark:border-[#1f2a49] dark:bg-white/[0.02]">
+      <div className="mx-auto max-w-6xl px-5">
+        <span className="text-xs font-semibold uppercase tracking-wide text-brand-600 dark:text-brand-300">How it works</span>
+        <h2 className="mt-2 font-display text-3xl font-bold text-ink-900 dark:text-white">From zero to running in four steps</h2>
+        <div className="relative mt-12 grid gap-8 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="pointer-events-none absolute left-0 right-0 top-6 hidden h-px bg-ink-100 dark:bg-[#1f2a49] lg:block" />
+          {STEPS.map((s, i) => (
+            <div key={s.title} className="relative">
+              <span className="relative z-10 flex h-12 w-12 items-center justify-center rounded-full bg-brand-gradient font-display text-lg font-bold text-white shadow-glow">
+                {i + 1}
+              </span>
+              <h3 className="mt-4 font-display text-lg font-semibold text-ink-900 dark:text-white">{s.title}</h3>
+              <p className="mt-2 text-sm text-ink-600 dark:text-ink-300">{s.body}</p>
+            </div>
+          ))}
+        </div>
       </div>
     </section>
   )
 }
+
+/* ----------------------------------- FAQ ------------------------------------ */
 
 const FAQS = [
   {
@@ -426,17 +505,28 @@ function FaqSection() {
   )
 }
 
+/* --------------------------------- CTA band --------------------------------- */
+
 function CtaBand() {
   return (
     <section className="mx-auto max-w-6xl px-5 pb-20">
       <div className="relative overflow-hidden rounded-3xl bg-brand-gradient px-8 py-14 text-center shadow-glow sm:px-16">
-        <h2 className="font-display text-3xl font-bold text-white">Ready to see it running with your community?</h2>
-        <p className="mx-auto mt-3 max-w-md text-brand-50/90">
+        <div className="absolute inset-0 opacity-40">
+          <HexHive intensity="vivid" />
+        </div>
+        <img
+          src="/oudaa-icon-dark-bg.png"
+          alt=""
+          aria-hidden="true"
+          className="pointer-events-none relative z-10 mx-auto mb-5 h-14 w-14 object-contain drop-shadow-lg"
+        />
+        <h2 className="relative z-10 font-display text-3xl font-bold text-white">Ready to see it running with your community?</h2>
+        <p className="relative z-10 mx-auto mt-3 max-w-md text-brand-50/90">
           Set up your community and start collecting fees the transparent way.
         </p>
         <Link
           to="/login"
-          className="mt-8 inline-flex items-center gap-2 rounded-xl bg-white px-6 py-3 text-sm font-semibold text-brand-700 shadow-soft transition hover:brightness-95"
+          className="relative z-10 mt-8 inline-flex items-center gap-2 rounded-xl bg-white px-6 py-3 text-sm font-semibold text-brand-700 shadow-soft transition hover:brightness-95"
         >
           Create your platform
           <ArrowRight size={16} />
@@ -446,15 +536,14 @@ function CtaBand() {
   )
 }
 
+/* ---------------------------------- Footer ---------------------------------- */
+
 function Footer() {
   return (
     <footer className="border-t border-ink-100 bg-white py-12 dark:border-[#1f2a49] dark:bg-[#0b1120]">
       <div className="mx-auto flex max-w-6xl flex-col gap-8 px-5 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <div className="flex items-center gap-2">
-            <img src="/landing/oudaa-logo-light-sm.png" alt="Oudaa" className="h-7 dark:hidden" />
-            <img src="/landing/oudaa-logo-dark-sm.png" alt="Oudaa" className="hidden h-7 dark:block" />
-          </div>
+          <Logo size="sm" />
           <p className="mt-3 max-w-xs text-sm text-ink-500 dark:text-ink-400">
             Community finance, run in the open.
           </p>
@@ -484,11 +573,14 @@ function Footer() {
   )
 }
 
+/* ---------------------------------- Page ------------------------------------ */
+
 export default function Landing() {
   return (
     <div className="min-h-screen bg-transparent">
       <Navbar />
       <Hero />
+      <TrustStrip />
       <ShowcaseSection />
       <CommunitySection />
       <MoreFeaturesSection />
