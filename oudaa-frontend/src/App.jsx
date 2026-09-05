@@ -5,6 +5,9 @@ import AppLayout from './layouts/AppLayout'
 import Login from './pages/Login'
 import ForgotPassword from './pages/ForgotPassword'
 import ResetPassword from './pages/ResetPassword'
+import Landing from './pages/Landing'
+import Privacy from './pages/Privacy'
+import Terms from './pages/Terms'
 import { Toaster } from './components/ui'
 
 import AdminDashboard from './pages/admin/Dashboard'
@@ -66,6 +69,9 @@ export default function App() {
       <Toaster />
       <ScrollToTop />
       <Routes>
+      <Route path="/" element={user ? <Navigate to={user.role === 'admin' ? '/admin' : '/resident'} replace /> : <Landing />} />
+      <Route path="/privacy" element={<Privacy />} />
+      <Route path="/terms" element={<Terms />} />
       <Route path="/login" element={user ? <Navigate to={user.role === 'admin' ? '/admin' : '/resident'} replace /> : <Login />} />
       <Route path="/forgot-password" element={user ? <Navigate to={user.role === 'admin' ? '/admin' : '/resident'} replace /> : <ForgotPassword />} />
       <Route path="/reset-password" element={user ? <Navigate to={user.role === 'admin' ? '/admin' : '/resident'} replace /> : <ResetPassword />} />
@@ -94,7 +100,7 @@ export default function App() {
         <Route path="profile" element={<Profile />} />
       </Route>
 
-      <Route path="*" element={<Navigate to={user ? (user.role === 'admin' ? '/admin' : '/resident') : '/login'} replace />} />
+      <Route path="*" element={<Navigate to={user ? (user.role === 'admin' ? '/admin' : '/resident') : '/'} replace />} />
       </Routes>
     </>
   )

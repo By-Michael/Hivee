@@ -15,11 +15,8 @@ import {
   X,
   ChevronDown,
   ArrowRight,
-  Sun,
-  Moon,
 } from 'lucide-react'
 import HexHive from '../components/HexHive'
-import { useTheme } from '../context/ThemeContext'
 
 const NAV_LINKS = [
   { href: '#features', label: 'What it does' },
@@ -29,7 +26,6 @@ const NAV_LINKS = [
 
 function Navbar() {
   const [open, setOpen] = useState(false)
-  const { theme, toggleTheme } = useTheme()
   return (
     <header className="sticky top-0 z-40 border-b border-ink-100/70 bg-white/80 backdrop-blur-md dark:border-[#1f2a49] dark:bg-[#0b1120]/80">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-3.5">
@@ -51,15 +47,7 @@ function Navbar() {
           ))}
         </nav>
 
-        <div className="hidden items-center gap-2 md:flex">
-          <button
-            type="button"
-            onClick={toggleTheme}
-            aria-label="Toggle dark mode"
-            className="mr-1 flex h-9 w-9 items-center justify-center rounded-lg text-ink-500 transition-colors hover:bg-ink-100/70 dark:text-ink-300 dark:hover:bg-[#1c2947]"
-          >
-            {theme === 'dark' ? <Sun size={17} /> : <Moon size={17} />}
-          </button>
+        <div className="hidden items-center gap-3 md:flex">
           <Link to="/login" className="btn-ghost text-sm">
             Log in
           </Link>
@@ -68,24 +56,14 @@ function Navbar() {
           </Link>
         </div>
 
-        <div className="flex items-center gap-1 md:hidden">
-          <button
-            type="button"
-            onClick={toggleTheme}
-            aria-label="Toggle dark mode"
-            className="flex h-9 w-9 items-center justify-center rounded-lg text-ink-500 dark:text-ink-300"
-          >
-            {theme === 'dark' ? <Sun size={17} /> : <Moon size={17} />}
-          </button>
-          <button
-            type="button"
-            className="rounded-lg p-2 text-ink-600 dark:text-ink-300"
-            onClick={() => setOpen((v) => !v)}
-            aria-label="Toggle menu"
-          >
-            {open ? <X size={22} /> : <Menu size={22} />}
-          </button>
-        </div>
+        <button
+          type="button"
+          className="rounded-lg p-2 text-ink-600 md:hidden dark:text-ink-300"
+          onClick={() => setOpen((v) => !v)}
+          aria-label="Toggle menu"
+        >
+          {open ? <X size={22} /> : <Menu size={22} />}
+        </button>
       </div>
 
       {open && (
@@ -239,48 +217,6 @@ function ShowcaseSection() {
             </div>
           </div>
         ))}
-      </div>
-    </section>
-  )
-}
-
-function CommunitySection() {
-  return (
-    <section className="mx-auto max-w-6xl px-5 pb-20">
-      <div className="grid items-center gap-10 md:grid-cols-2">
-        <div>
-          <h2 className="font-display text-3xl font-bold text-ink-900 dark:text-white">
-            Built for communities like yours
-          </h2>
-          <p className="mt-4 text-ink-600 dark:text-ink-300">
-            Whether it's a row of villas, a condo tower, or a gated compound
-            with shared roads and gardens, Oudaa scales to however your
-            community is laid out — one fee schedule, one fund, one shared
-            view of the books for every unit.
-          </p>
-          <ul className="mt-6 space-y-3 text-sm text-ink-600 dark:text-ink-300">
-            <li className="flex items-start gap-2.5">
-              <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-brand-500" />
-              Any number of units, from a small compound to a full estate
-            </li>
-            <li className="flex items-start gap-2.5">
-              <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-brand-500" />
-              Shared amenities and common-area projects tracked against the community fund
-            </li>
-            <li className="flex items-start gap-2.5">
-              <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-brand-500" />
-              One admin team, any number of resident households
-            </li>
-          </ul>
-        </div>
-        <div className="overflow-hidden rounded-2xl border border-ink-100 shadow-card dark:border-[#263255]">
-          <img
-            src="/landing/community-aerial.jpg"
-            alt="Aerial view of a residential villa community with shared gardens and roads"
-            className="h-full w-full object-cover"
-            loading="lazy"
-          />
-        </div>
       </div>
     </section>
   )
@@ -458,7 +394,6 @@ export default function Landing() {
       <Navbar />
       <Hero />
       <ShowcaseSection />
-      <CommunitySection />
       <MoreFeaturesSection />
       <HowItWorks />
       <FaqSection />
