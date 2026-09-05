@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, Suspense, lazy } from 'react'
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { useAuth } from './context/AuthContext'
 import AppLayout from './layouts/AppLayout'
@@ -10,24 +10,36 @@ import Privacy from './pages/Privacy'
 import Terms from './pages/Terms'
 import { Toaster } from './components/ui'
 
-import AdminDashboard from './pages/admin/Dashboard'
-import AdminResidents from './pages/admin/Residents'
-import AdminFees from './pages/admin/Fees'
-import AdminPayments from './pages/admin/Payments'
-import AdminFunds from './pages/admin/Funds'
-import AdminProjects from './pages/admin/Projects'
-import AdminExpenses from './pages/admin/Expenses'
-import AdminReports from './pages/admin/Reports'
-import AdminAuditLog from './pages/admin/AuditLog'
+// Everything behind auth (admin/resident panels) is code-split so the
+// public landing/login pages don't have to download recharts, jspdf,
+// html2canvas etc. on first load. These only fetch once a user actually
+// signs in and navigates into the app shell.
+const AdminDashboard = lazy(() => import('./pages/admin/Dashboard'))
+const AdminResidents = lazy(() => import('./pages/admin/Residents'))
+const AdminFees = lazy(() => import('./pages/admin/Fees'))
+const AdminPayments = lazy(() => import('./pages/admin/Payments'))
+const AdminFunds = lazy(() => import('./pages/admin/Funds'))
+const AdminProjects = lazy(() => import('./pages/admin/Projects'))
+const AdminExpenses = lazy(() => import('./pages/admin/Expenses'))
+const AdminReports = lazy(() => import('./pages/admin/Reports'))
+const AdminAuditLog = lazy(() => import('./pages/admin/AuditLog'))
 
-import ResidentDashboard from './pages/resident/Dashboard'
-import ResidentPayments from './pages/resident/Payments'
-import ResidentFunds from './pages/resident/Funds'
-import ResidentProjects from './pages/resident/Projects'
-import ResidentExpenses from './pages/resident/Expenses'
-import ResidentReports from './pages/resident/Reports'
+const ResidentDashboard = lazy(() => import('./pages/resident/Dashboard'))
+const ResidentPayments = lazy(() => import('./pages/resident/Payments'))
+const ResidentFunds = lazy(() => import('./pages/resident/Funds'))
+const ResidentProjects = lazy(() => import('./pages/resident/Projects'))
+const ResidentExpenses = lazy(() => import('./pages/resident/Expenses'))
+const ResidentReports = lazy(() => import('./pages/resident/Reports'))
 
-import Profile from './pages/shared/Profile'
+const Profile = lazy(() => import('./pages/shared/Profile'))
+
+function RouteFallback() {
+  return (
+    <div className="flex min-h-[60vh] items-center justify-center text-ink-400 text-sm">
+      Loading…
+    </div>
+  )
+}
 
 // Without this, the browser's default scroll restoration carries whatever
 // scroll position a previous page was left at (e.g. half-scrolled down a
@@ -77,27 +89,27 @@ export default function App() {
       <Route path="/reset-password" element={user ? <Navigate to={user.role === 'admin' ? '/admin' : '/resident'} replace /> : <ResetPassword />} />
 
       <Route path="/admin" element={<Protected role="admin"><AppLayout role="admin" /></Protected>}>
-        <Route index element={<AdminDashboard />} />
-        <Route path="residents" element={<AdminResidents />} />
-        <Route path="fees" element={<AdminFees />} />
-        <Route path="payments" element={<AdminPayments />} />
-        <Route path="funds" element={<AdminFunds />} />
-        <Route path="projects" element={<AdminProjects />} />
-        <Route path="expenses" element={<AdminExpenses />} />
-        <Route path="reports" element={<AdminReports />} />
-        <Route path="audit-log" element={<AdminAuditLog />} />
-        <Route path="settings" element={<Profile />} />
-        <Route path="profile" element={<Profile />} />
+        <Route index element={<Suspense fallback={<RouteFallback />}><AdminDashboard /></Suspense>} />
+        <Route path="residents" element={<Suspense fallback={<RouteFallback />}><AdminResidents /></Suspense>} />
+        <Route path="fees" element={<Suspense fallback={<RouteFallback />}><AdminFees /></Suspense>} />
+        <Route path="payments" element={<Suspense fallback={<RouteFallback />}><AdminPayments /></Suspense>} />
+        <Route path="funds" element={<Suspense fallback={<RouteFallback />}><AdminFunds /></Suspense>} />
+        <Route path="projects" element={<Suspense fallback={<RouteFallback />}><AdminProjects /></Suspense>} />
+        <Route path="expenses" element={<Suspense fallback={<RouteFallback />}><AdminExpenses /></Suspense>} />
+        <Route path="reports" element={<Suspense fallback={<RouteFallback />}><AdminReports /></Suspense>} />
+        <Route path="audit-log" element={<Suspense fallback={<RouteFallback />}><AdminAuditLog /></Suspense>} />
+        <Route path="settings" element={<Suspense fallback={<RouteFallback />}><Profile /></Suspense>} />
+        <Route path="profile" element={<Suspense fallback={<RouteFallback />}><Profile /></Suspense>} />
       </Route>
 
       <Route path="/resident" element={<Protected role="resident"><AppLayout role="resident" /></Protected>}>
-        <Route index element={<ResidentDashboard />} />
-        <Route path="payments" element={<ResidentPayments />} />
-        <Route path="funds" element={<ResidentFunds />} />
-        <Route path="projects" element={<ResidentProjects />} />
-        <Route path="expenses" element={<ResidentExpenses />} />
-        <Route path="reports" element={<ResidentReports />} />
-        <Route path="profile" element={<Profile />} />
+        <Route index element={<Suspense fallback={<RouteFallback />}><ResidentDashboard /></Suspense>} />
+        <Route path="payments" element={<Suspense fallback={<RouteFallback />}><ResidentPayments /></Suspense>} />
+        <Route path="funds" element={<Suspense fallback={<RouteFallback />}><ResidentFunds /></Suspense>} />
+        <Route path="projects" element={<Suspense fallback={<RouteFallback />}><ResidentProjects /></Suspense>} />
+        <Route path="expenses" element={<Suspense fallback={<RouteFallback />}><ResidentExpenses /></Suspense>} />
+        <Route path="reports" element={<Suspense fallback={<RouteFallback />}><ResidentReports /></Suspense>} />
+        <Route path="profile" element={<Suspense fallback={<RouteFallback />}><Profile /></Suspense>} />
       </Route>
 
       <Route path="*" element={<Navigate to={user ? (user.role === 'admin' ? '/admin' : '/resident') : '/'} replace />} />
