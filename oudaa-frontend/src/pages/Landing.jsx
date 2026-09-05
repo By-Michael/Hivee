@@ -29,6 +29,8 @@ import {
   Building,
   Star,
   Quote,
+  Activity,
+  Globe2,
 } from 'lucide-react'
 import HexHive from '../components/HexHive'
 import { useTheme } from '../context/ThemeContext'
@@ -201,71 +203,96 @@ function Hero() {
           </dl>
         </div>
 
-        <div className="relative min-h-[440px]">
-          <div
-            className="absolute inset-0 overflow-hidden rounded-3xl"
-            style={{
-              background: 'linear-gradient(135deg, #0c1c44 0%, #155f8b 45%, #17ab93 100%)',
-            }}
-          >
-            <HexHive intensity="vivid" />
+        <DashboardPreview pulse={pulse} />
+      </div>
+    </section>
+  )
+}
+
+/* ------------------------------ Dashboard preview ---------------------------- */
+// Glassmorphism "live" panel styled after the CyberShield reference
+// template's security dashboard \u2014 same grid backdrop, pulse-live badge,
+// stat tiles, mini bar chart and activity feed, retinted to Oudaa's
+// brand teal/blue gradient and real community-finance content.
+
+function DashboardPreview({ pulse }) {
+  const bars = [40, 62, 48, 74, 58, 80, 66]
+  const activity = [
+    { icon: ShieldCheck, label: 'Payment verified \u2014 Unit 12B', tone: 'text-brand-500' },
+    { icon: PiggyBank, label: 'Community fund reconciled', tone: 'text-teal-500' },
+    { icon: Wallet, label: 'Fee collection at 94% this month', tone: 'text-ink-400 dark:text-ink-400' },
+  ]
+  return (
+    <div className="relative min-h-[440px]">
+      <div
+        className="absolute inset-0 overflow-hidden rounded-3xl"
+        style={{ background: 'linear-gradient(135deg, #0c1c44 0%, #155f8b 45%, #0f2b3a 100%)' }}
+      >
+        <HexHive intensity="vivid" />
+        <div className="absolute top-10 left-8 h-32 w-32 rounded-full bg-brand-400/20 blur-3xl" />
+        <div className="absolute bottom-16 right-10 h-40 w-40 rounded-full bg-teal-400/20 blur-3xl" />
+      </div>
+
+      <div className="absolute inset-0 flex items-center justify-center p-6">
+        <div className="relative w-full max-w-sm overflow-hidden rounded-2xl border border-white/15 bg-white/10 p-5 shadow-glow backdrop-blur-xl">
+          <div className="pointer-events-none absolute inset-0 grid-pattern-bg opacity-30" />
+
+          <div className="relative z-10">
+            <div className="flex items-center justify-between">
+              <h3 className="font-display text-sm font-semibold text-white">Community Dashboard</h3>
+              <div className="flex items-center gap-1.5">
+                <span className="relative flex h-1.5 w-1.5">
+                  <span className={`absolute inline-flex h-full w-full rounded-full bg-brand-400 ${pulse ? 'animate-ping' : ''}`} />
+                  <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-brand-400" />
+                </span>
+                <span className="text-[0.65rem] font-semibold uppercase tracking-wide text-white/60">Live</span>
+              </div>
+            </div>
+
+            <div className="mt-4 grid grid-cols-2 gap-3">
+              <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+                <p className="text-[0.65rem] text-white/50">Community fund</p>
+                <p className="mt-1 font-display text-xl font-bold text-white">ETB 482,300</p>
+              </div>
+              <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+                <p className="text-[0.65rem] text-white/50">Fee collection</p>
+                <p className="mt-1 font-display text-xl font-bold text-brand-300">94%</p>
+              </div>
+            </div>
+
+            <div className="mt-4 flex h-24 items-end justify-center gap-1.5 rounded-xl border border-white/10 bg-white/5 p-3">
+              {bars.map((h, i) => (
+                <div
+                  key={i}
+                  className="flex-1 rounded-sm bg-gradient-to-t from-brand-500 to-teal-300 opacity-80"
+                  style={{ height: `${h}%` }}
+                />
+              ))}
+            </div>
+
+            <div className="mt-4 space-y-2">
+              <p className="text-[0.65rem] font-semibold uppercase tracking-wide text-white/40">Recent activity</p>
+              {activity.map((a, i) => (
+                <div key={i} className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-2.5 py-2">
+                  <a.icon size={13} className="text-brand-300" />
+                  <span className="text-[0.72rem] text-white/80">{a.label}</span>
+                </div>
+              ))}
+            </div>
           </div>
 
-          <img
-            src="/oudaa-icon-dark-bg.png"
-            alt=""
-            aria-hidden="true"
-            className="pointer-events-none absolute -right-10 -top-10 h-40 w-40 object-contain opacity-20"
-          />
-
-          <div className="absolute inset-0 flex items-center justify-center p-6">
-            <div className="relative w-full max-w-sm rounded-2xl border border-white/10 bg-white p-5 shadow-glow dark:border-[#263255] dark:bg-[#131b30]">
-              <div className="flex items-center justify-between">
-                <span className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-ink-400">
-                  <span className="relative flex h-1.5 w-1.5">
-                    <span
-                      className={`absolute inline-flex h-full w-full rounded-full bg-brand-400 ${pulse ? 'animate-ping' : ''}`}
-                    />
-                    <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-brand-500" />
-                  </span>
-                  Community fund
-                </span>
-                <ShieldCheck size={16} className="text-brand-500" />
-              </div>
-              <p className="mt-2 font-display text-3xl font-bold text-ink-900 dark:text-white">ETB 482,300</p>
-              <p className="mt-1 text-xs text-brand-600 dark:text-brand-300">+12,400 verified this week</p>
-              <div className="mt-5 space-y-3 border-t border-ink-100 pt-4 dark:border-[#263255]">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-ink-500 dark:text-ink-400">Fee collection</span>
-                  <span className="font-semibold text-ink-800 dark:text-ink-100">94%</span>
-                </div>
-                <div className="h-1.5 w-full overflow-hidden rounded-full bg-ink-100 dark:bg-[#1f2a49]">
-                  <div className="h-full w-[94%] rounded-full bg-brand-gradient" />
-                </div>
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-ink-500 dark:text-ink-400">Pending review</span>
-                  <span className="font-semibold text-ink-800 dark:text-ink-100">3 payments</span>
-                </div>
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-ink-500 dark:text-ink-400">Open projects</span>
-                  <span className="font-semibold text-ink-800 dark:text-ink-100">2</span>
-                </div>
-              </div>
-
-              <div className="float-badge absolute -bottom-16 -left-6 flex items-center gap-2 rounded-xl border border-ink-100 bg-white px-3.5 py-2.5 shadow-card dark:border-[#263255] dark:bg-[#131b30]">
-                <span className="flex h-7 w-7 items-center justify-center rounded-full bg-brand-50 text-brand-600 dark:bg-brand-500/10 dark:text-brand-300">
-                  <ShieldCheck size={14} />
-                </span>
-                <div className="leading-tight">
-                  <p className="text-xs font-semibold text-ink-800 dark:text-ink-100">Payment verified</p>
-                  <p className="text-[0.7rem] text-ink-400">2 minutes ago</p>
-                </div>
-              </div>
+          <div className="float-badge absolute -bottom-14 -left-6 z-20 flex items-center gap-2 rounded-xl border border-ink-100 bg-white px-3.5 py-2.5 shadow-card dark:border-[#263255] dark:bg-[#131b30]">
+            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-brand-50 text-brand-600 dark:bg-brand-500/10 dark:text-brand-300">
+              <ShieldCheck size={14} />
+            </span>
+            <div className="leading-tight">
+              <p className="text-xs font-semibold text-ink-800 dark:text-ink-100">Payment verified</p>
+              <p className="text-[0.7rem] text-ink-400">2 minutes ago</p>
             </div>
           </div>
         </div>
       </div>
-    </section>
+    </div>
   )
 }
 
@@ -301,7 +328,7 @@ function ProblemSection() {
         </div>
         <div className="mt-10 grid gap-5 sm:grid-cols-3">
           {PROBLEMS.map((p) => (
-            <div key={p.stat} className="card p-6">
+            <div key={p.stat} className="glow-card p-6">
               <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-ink-100 text-ink-500 dark:bg-[#1c2947] dark:text-ink-300">
                 <p.icon size={19} />
               </span>
@@ -354,7 +381,7 @@ function SolutionSection() {
         {SOLUTION.map((item) => (
           <div
             key={item.title}
-            className={`card relative overflow-hidden p-7 ${item.big ? 'lg:col-span-2' : ''}`}
+            className={`glow-card relative overflow-hidden p-7 ${item.big ? 'lg:col-span-2' : ''}`}
           >
             <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-mesh opacity-70" />
             <div className="relative z-10 flex h-11 w-11 items-center justify-center rounded-xl bg-brand-gradient text-white shadow-glow">
@@ -390,7 +417,7 @@ function FeaturesSection() {
         <h2 className="mt-2 font-display text-3xl font-bold text-ink-900 dark:text-white">Everything a committee tracks, in one place</h2>
         <div className="mt-10 grid gap-x-6 gap-y-6 sm:grid-cols-2 lg:grid-cols-3">
           {FEATURES.map((f) => (
-            <div key={f.title} className="card flex gap-3.5 p-5 transition-shadow hover:shadow-glow">
+            <div key={f.title} className="glow-card flex gap-3.5 p-5">
               <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-600 dark:bg-brand-500/10 dark:text-brand-300">
                 <f.icon size={18} />
               </span>
@@ -431,7 +458,7 @@ function UseCasesSection() {
       </div>
       <div className="mt-10 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
         {USE_CASES.map((u) => (
-          <div key={u.title} className="card p-6">
+          <div key={u.title} className="glow-card p-6">
             <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-50 text-brand-600 dark:bg-brand-500/10 dark:text-brand-300">
               <u.icon size={19} />
             </span>
@@ -472,7 +499,7 @@ function TestimonialsSection() {
         <h2 className="mt-2 font-display text-3xl font-bold text-ink-900 dark:text-white">Built around how committees actually work</h2>
         <div className="mt-10 grid gap-5 lg:grid-cols-3">
           {TESTIMONIALS.map((t) => (
-            <div key={t.author} className="card p-6">
+            <div key={t.author} className="glow-card p-6">
               <Quote size={20} className="text-brand-400" />
               <p className="mt-3 text-sm leading-relaxed text-ink-700 dark:text-ink-200">{t.quote}</p>
               <div className="mt-5 flex items-center gap-1 text-brand-500">

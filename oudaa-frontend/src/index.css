@@ -86,6 +86,38 @@
   }
 }
 
+/* =============================================================
+   LANDING PAGE — glassmorphism / glow treatment borrowed from the
+   CyberShield reference template, retinted to the brand teal/blue
+   gradient instead of the template's neon green/magenta.
+   ============================================================= */
+.glow-card {
+  @apply relative rounded-2xl border bg-white/70 backdrop-blur-sm transition-all duration-200;
+  border-color: rgba(37, 112, 245, 0.15);
+}
+.glow-card:hover {
+  border-color: rgba(47, 195, 157, 0.45);
+  box-shadow: 0 0 0 1px rgba(47, 195, 157, 0.15), 0 16px 40px -12px rgba(37, 112, 245, 0.25);
+}
+.dark .glow-card {
+  background-color: rgba(19, 27, 48, 0.6);
+  border-color: rgba(38, 50, 85, 0.8);
+}
+.dark .glow-card:hover {
+  border-color: rgba(47, 195, 157, 0.5);
+  box-shadow: 0 0 0 1px rgba(47, 195, 157, 0.25), 0 16px 40px -12px rgba(47, 195, 157, 0.3);
+}
+
+.grid-pattern-bg {
+  background-image: linear-gradient(rgba(148, 163, 184, 0.12) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.12) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+.dark .grid-pattern-bg {
+  background-image: linear-gradient(rgba(148, 163, 184, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.08) 1px, transparent 1px);
+}
+
 @keyframes fadeUp {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
