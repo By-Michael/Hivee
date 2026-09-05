@@ -169,7 +169,7 @@ function Hero() {
               background: 'linear-gradient(135deg, #0c1c44 0%, #155f8b 45%, #17ab93 100%)',
             }}
           >
-            <HexHive />
+            <HexHive intensity="vivid" />
           </div>
 
           <div className="absolute inset-0 flex items-center justify-center p-6">
@@ -203,7 +203,7 @@ function Hero() {
                 </div>
               </div>
 
-              <div className="float-badge absolute -bottom-6 -left-6 flex items-center gap-2 rounded-xl border border-ink-100 bg-white px-3.5 py-2.5 shadow-card dark:border-[#263255] dark:bg-[#131b30]">
+              <div className="float-badge absolute -bottom-16 -left-6 flex items-center gap-2 rounded-xl border border-ink-100 bg-white px-3.5 py-2.5 shadow-card dark:border-[#263255] dark:bg-[#131b30]">
                 <span className="flex h-7 w-7 items-center justify-center rounded-full bg-brand-50 text-brand-600 dark:bg-brand-500/10 dark:text-brand-300">
                   <ShieldCheck size={14} />
                 </span>

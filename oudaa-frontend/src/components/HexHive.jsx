@@ -4,7 +4,7 @@ import { useMemo } from 'react'
  * Animated, blurred hex-grid background used behind the login brand panel.
  * Pure SVG + CSS animation — no external assets, cheap to render.
  */
-export default function HexHive({ className = '' }) {
+export default function HexHive({ className = '', intensity = 'subtle' }) {
   const { cells, viewBox } = useMemo(() => {
     const HEX_R = 34
     const GAP = 3
@@ -44,7 +44,7 @@ export default function HexHive({ className = '' }) {
 
   return (
     <svg
-      className={`hex-hive-drift ${className}`}
+      className={`hex-hive-drift ${intensity === 'vivid' ? 'hex-hive-vivid' : ''} ${className}`}
       viewBox={viewBox}
       preserveAspectRatio="xMidYMid slice"
       style={{
@@ -52,8 +52,8 @@ export default function HexHive({ className = '' }) {
         inset: '-6%',
         width: '112%',
         height: '112%',
-        filter: 'blur(2.5px)',
-        opacity: 0.55,
+        filter: intensity === 'vivid' ? 'blur(0.5px)' : 'blur(2.5px)',
+        opacity: intensity === 'vivid' ? 0.9 : 0.55,
       }}
     >
       {cells.map((c, i) => (

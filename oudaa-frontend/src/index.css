@@ -131,6 +131,19 @@
   0%, 100% { fill: rgba(255, 255, 255, 0.06); stroke: rgba(255, 255, 255, 0.22); }
   50% { fill: rgba(255, 214, 130, var(--peak, 0.28)); stroke: rgba(255, 224, 160, 0.7); }
 }
+/* Stronger, more saturated variant for use as the primary visual (e.g.
+   the landing-page hero panel) rather than a subtle backdrop behind
+   text — same shapes and timing, just louder. */
+.hex-hive-vivid .hex-cell {
+  fill: rgba(255, 255, 255, 0.14);
+  stroke: rgba(255, 255, 255, 0.4);
+  stroke-width: 1.5;
+  animation-name: hexPulseVivid;
+}
+@keyframes hexPulseVivid {
+  0%, 100% { fill: rgba(255, 255, 255, 0.14); stroke: rgba(255, 255, 255, 0.4); }
+  50% { fill: rgba(255, 214, 130, var(--peak, 0.55)); stroke: rgba(255, 224, 160, 0.9); }
+}
 @keyframes hexDrift {
   0%, 100% { transform: scale(1) translate(0, 0); }
   50% { transform: scale(1.04) translate(-1.2%, -1.2%); }
