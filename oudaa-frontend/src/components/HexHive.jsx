@@ -46,12 +46,12 @@ export default function HexHive({ className = '', intensity = 'subtle' }) {
     <svg
       className={`hex-hive-drift ${intensity === 'vivid' ? 'hex-hive-vivid' : ''} ${className}`}
       viewBox={viewBox}
-      preserveAspectRatio="xMidYMid slice"
+      preserveAspectRatio="none"
       style={{
         position: 'absolute',
-        inset: '-6%',
-        width: '112%',
-        height: '112%',
+        inset: '-8%',
+        width: '116%',
+        height: '116%',
         filter: intensity === 'vivid' ? 'blur(0.5px)' : 'blur(2.5px)',
         opacity: intensity === 'vivid' ? 0.9 : 0.55,
       }}
