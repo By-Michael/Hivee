@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Users,
@@ -117,10 +117,16 @@ function Navbar() {
 }
 
 function Hero() {
+  const [pulse, setPulse] = useState(false)
+  useEffect(() => {
+    const id = setInterval(() => setPulse((p) => !p), 2400)
+    return () => clearInterval(id)
+  }, [])
+
   return (
     <section id="top" className="relative overflow-hidden">
-      <div className="mx-auto grid max-w-6xl gap-12 px-5 pb-20 pt-16 md:grid-cols-[1.1fr_0.9fr] md:pt-24">
-        <div className="relative z-10">
+      <div className="mx-auto grid max-w-6xl items-stretch gap-12 px-5 pb-24 pt-16 md:grid-cols-[1.1fr_0.9fr] md:pt-24">
+        <div className="relative z-10 flex flex-col justify-center">
           <span className="inline-flex items-center gap-1.5 rounded-full border border-brand-200 bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-700 dark:border-[#1f3a44] dark:bg-brand-500/10 dark:text-brand-300">
             Built for committees, trusted by residents
           </span>
@@ -156,7 +162,7 @@ function Hero() {
           </dl>
         </div>
 
-        <div className="relative flex min-h-[380px] items-center justify-center md:min-h-[440px]">
+        <div className="relative min-h-[420px]">
           <div
             className="absolute inset-0 overflow-hidden rounded-3xl"
             style={{
@@ -165,25 +171,46 @@ function Hero() {
           >
             <HexHive />
           </div>
-          <div className="relative w-full max-w-sm rounded-2xl border border-white/10 bg-white p-5 shadow-glow dark:border-[#263255] dark:bg-[#131b30]">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold uppercase tracking-wide text-ink-400">Community fund</span>
-              <ShieldCheck size={16} className="text-brand-500" />
-            </div>
-            <p className="mt-2 font-display text-3xl font-bold text-ink-900 dark:text-white">ETB 482,300</p>
-            <p className="mt-1 text-xs text-brand-600 dark:text-brand-300">+12,400 verified this week</p>
-            <div className="mt-5 space-y-3 border-t border-ink-100 pt-4 dark:border-[#263255]">
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-ink-500 dark:text-ink-400">Fee collection</span>
-                <span className="font-semibold text-ink-800 dark:text-ink-100">94%</span>
+
+          <div className="absolute inset-0 flex items-center justify-center p-6">
+            <div className="relative w-full max-w-sm rounded-2xl border border-white/10 bg-white p-5 shadow-glow dark:border-[#263255] dark:bg-[#131b30]">
+              <div className="flex items-center justify-between">
+                <span className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-ink-400">
+                  <span className="relative flex h-1.5 w-1.5">
+                    <span
+                      className={`absolute inline-flex h-full w-full rounded-full bg-brand-400 ${pulse ? 'animate-ping' : ''}`}
+                    />
+                    <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-brand-500" />
+                  </span>
+                  Community fund
+                </span>
+                <ShieldCheck size={16} className="text-brand-500" />
               </div>
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-ink-500 dark:text-ink-400">Pending review</span>
-                <span className="font-semibold text-ink-800 dark:text-ink-100">3 payments</span>
+              <p className="mt-2 font-display text-3xl font-bold text-ink-900 dark:text-white">ETB 482,300</p>
+              <p className="mt-1 text-xs text-brand-600 dark:text-brand-300">+12,400 verified this week</p>
+              <div className="mt-5 space-y-3 border-t border-ink-100 pt-4 dark:border-[#263255]">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-ink-500 dark:text-ink-400">Fee collection</span>
+                  <span className="font-semibold text-ink-800 dark:text-ink-100">94%</span>
+                </div>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-ink-500 dark:text-ink-400">Pending review</span>
+                  <span className="font-semibold text-ink-800 dark:text-ink-100">3 payments</span>
+                </div>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-ink-500 dark:text-ink-400">Open projects</span>
+                  <span className="font-semibold text-ink-800 dark:text-ink-100">2</span>
+                </div>
               </div>
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-ink-500 dark:text-ink-400">Open projects</span>
-                <span className="font-semibold text-ink-800 dark:text-ink-100">2</span>
+
+              <div className="float-badge absolute -bottom-6 -left-6 flex items-center gap-2 rounded-xl border border-ink-100 bg-white px-3.5 py-2.5 shadow-card dark:border-[#263255] dark:bg-[#131b30]">
+                <span className="flex h-7 w-7 items-center justify-center rounded-full bg-brand-50 text-brand-600 dark:bg-brand-500/10 dark:text-brand-300">
+                  <ShieldCheck size={14} />
+                </span>
+                <div className="leading-tight">
+                  <p className="text-xs font-semibold text-ink-800 dark:text-ink-100">Payment verified</p>
+                  <p className="text-[0.7rem] text-ink-400">2 minutes ago</p>
+                </div>
               </div>
             </div>
           </div>

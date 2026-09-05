@@ -136,6 +136,22 @@
   50% { transform: scale(1.04) translate(-1.2%, -1.2%); }
 }
 
+/* Gentle vertical float for the small badge that peeks off the hero's
+   stat card — the one deliberate bit of "always moving" motion on the
+   landing page, kept subtle and slow. */
+@keyframes floatY {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+.float-badge {
+  animation: floatY 4.5s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .float-badge, .hex-hive-drift, .hex-cell {
+    animation: none !important;
+  }
+}
+
 /* =============================================================
    DARK MODE
    Scope: the toggle sets `.dark` on <html>, so it covers the whole
